@@ -1,0 +1,45 @@
+# dependencies
+/node_modules
+/.pnp
+.pnp.js
+
+# next.js
+/.next/
+/out/
+
+# production
+/build
+
+# misc
+.DS_Store
+*.pem
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# local env files
+.env*.local
+.env
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
+
+# editor
+.vscode/
+.idea/
+
+# ========================================================
+# 含个人信息的参考文档 —— 不进仓库
+# 保留方法论文档（科学算命-2.docx）以便项目自洽
+# ========================================================
+Xue Nian Results.pdf
+畅 刘 Results.pdf
+问卷.xlsx
+年雪 - 科学算命分析.docx
+*.pdf
+*.xlsx
+!科学算命-2.docx
+

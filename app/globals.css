@@ -1,0 +1,62 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+}
+
+html, body {
+  background-color: #f8f7f4;
+  color: #19170f;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue",
+    "Segoe UI", "Microsoft YaHei", sans-serif;
+  font-feature-settings: "ss01" on;
+}
+
+.serif {
+  font-family: "Noto Serif SC", "Songti SC", "Source Han Serif SC", ui-serif, Georgia, serif;
+}
+
+/* 移动端竖向布局容器 */
+.mobile-frame {
+  max-width: 480px;
+  margin: 0 auto;
+  min-height: 100vh;
+  position: relative;
+}
+
+/* 中式书法分隔线 */
+.divider-ink {
+  height: 1px;
+  background: linear-gradient(to right, transparent, #bcb4a1 50%, transparent);
+}
+
+/* 卡片基本款 */
+.card-soft {
+  background: white;
+  border-radius: 16px;
+  box-shadow:
+    0 1px 0 rgba(25, 23, 15, 0.04),
+    0 2px 6px rgba(25, 23, 15, 0.06),
+    0 10px 30px rgba(25, 23, 15, 0.04);
+}
+
+/* 滚动条小化 */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-thumb {
+  background-color: rgba(25, 23, 15, 0.2);
+  border-radius: 999px;
+}
