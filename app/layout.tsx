@@ -17,6 +17,17 @@ export const viewport: Viewport = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="zh-CN">
+      <head>
+        {/* 外链 CSS/JS 失败时，仍保证有底色和正文色，避免「纯白啥也没有」 */}
+        <style
+          dangerouslySetInnerHTML={{
+            __html: `
+html,body{margin:0;min-height:100%;background:#f8f7f4;color:#19170f}
+body{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Helvetica Neue","Segoe UI","Microsoft YaHei",sans-serif}
+            `.trim(),
+          }}
+        />
+      </head>
       <body>
         <noscript>
           <div

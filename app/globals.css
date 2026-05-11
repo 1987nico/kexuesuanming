@@ -60,3 +60,33 @@ body {
   background-color: rgba(25, 23, 15, 0.2);
   border-radius: 999px;
 }
+
+/* 加载三点 —— 不依赖 framer-motion，避免脚本失败时整页崩掉 */
+.thinking-dots {
+  display: flex;
+  gap: 8px;
+}
+.thinking-dots .thinking-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background-color: #19170f;
+  animation: thinking-bounce 1.2s ease-in-out infinite;
+}
+.thinking-dots .thinking-dot:nth-child(2) {
+  animation-delay: 0.18s;
+}
+.thinking-dots .thinking-dot:nth-child(3) {
+  animation-delay: 0.36s;
+}
+@keyframes thinking-bounce {
+  0%,
+  100% {
+    opacity: 0.35;
+    transform: translateY(0);
+  }
+  50% {
+    opacity: 1;
+    transform: translateY(-4px);
+  }
+}
