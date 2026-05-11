@@ -1,24 +1,6 @@
-"use client";
-
-import { useRouter } from "next/navigation";
-import { useState } from "react";
-import { Button } from "@/components/ui/Button";
+import { HomeStartButton } from "./HomeStartButton";
 
 export default function HomePage() {
-  const router = useRouter();
-  const [loading, setLoading] = useState(false);
-
-  async function start() {
-    setLoading(true);
-    try {
-      const r = await fetch("/api/runs", { method: "POST" });
-      const { run } = await r.json();
-      router.push(`/run/${run.id}/survey`);
-    } finally {
-      setLoading(false);
-    }
-  }
-
   return (
     <main className="min-h-screen flex flex-col">
       <div className="flex-1 px-7 pt-20 pb-8">
@@ -43,12 +25,7 @@ export default function HomePage() {
         </div>
       </div>
       <div className="px-7 pb-10">
-        <Button size="lg" className="w-full" onClick={start} disabled={loading}>
-          {loading ? "准备中…" : "开始一次完整诊断"}
-        </Button>
-        <p className="text-center text-xs text-ink-400 mt-4">
-          全程约 35–60 分钟 · Step 3 需本人逐条打分
-        </p>
+        <HomeStartButton />
       </div>
     </main>
   );

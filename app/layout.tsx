@@ -18,6 +18,26 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="zh-CN">
       <body>
+        <noscript>
+          <div
+            style={{
+              padding: "24px",
+              fontFamily: "system-ui, sans-serif",
+              lineHeight: 1.6,
+              color: "#19170f",
+              background: "#f8f7f4",
+              minHeight: "100vh",
+            }}
+          >
+            <p style={{ marginBottom: "12px", fontWeight: 600 }}>需要启用 JavaScript</p>
+            <p style={{ marginBottom: "8px", fontSize: "14px", color: "#564f3c" }}>
+              本页依赖脚本才能交互。请在浏览器设置里关闭对本站的脚本拦截，或换用 Chrome / Edge 再试。
+            </p>
+            <p style={{ fontSize: "14px", color: "#564f3c" }}>
+              快速打分直达：将地址改为 <code>/quick/xuenian-30</code>
+            </p>
+          </div>
+        </noscript>
         <div className="mobile-frame">{children}</div>
       </body>
     </html>
