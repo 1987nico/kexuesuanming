@@ -83,7 +83,7 @@ export default function ReportPage({ params }: { params: { id: string } }) {
                       <div className="w-10 text-center serif text-gold-600 font-medium shrink-0">{s.score}</div>
                       <div className="flex-1 min-w-0">
                         <div className="text-ink-900">#{s.opp_idx} {opp?.title}</div>
-                        <div className="text-ink-500 text-xs italic">"{s.reason}"</div>
+                        <div className="text-ink-500 text-xs italic">「{s.reason}」</div>
                       </div>
                     </div>
                   );
