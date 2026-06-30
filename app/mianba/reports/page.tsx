@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { AssessmentProfile } from "@/lib/reports/assessmentProfile";
 
 const defaultValueProfile = {
@@ -11,21 +11,26 @@ const defaultValueProfile = {
   filter_sentence: "能持续学习、连接更大的世界、让个人判断被看见。",
 };
 
-function neutralAnswers() {
-  const answers: Record<number, number> = {};
-  for (let index = 1; index <= 252; index++) answers[index] = 4;
-  return answers;
-}
-
 export default function MianbaReportsPage() {
   const [customerName, setCustomerName] = useState("测试用户");
   const [customerContact, setCustomerContact] = useState("");
   const [surveyAnswers, setSurveyAnswers] = useState("{}");
   const [valueProfile, setValueProfile] = useState(JSON.stringify(defaultValueProfile, null, 2));
-  const [talentAnswers, setTalentAnswers] = useState(JSON.stringify(neutralAnswers(), null, 2));
+  const [talentAnswers, setTalentAnswers] = useState("{}");
   const [profile, setProfile] = useState<AssessmentProfile | null>(null);
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    fetch("/api/reports/talent-template")
+      .then((res) => res.json())
+      .then((data) => {
+        setTalentAnswers(JSON.stringify(data.neutral_answers || {}, null, 2));
+      })
+      .catch(() => {
+        setMessage("未能加载 252 题模板，请手动粘贴答案 JSON。");
+      });
+  }, []);
 
   async function createProfile() {
     setLoading(true);
