@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import type { CoverBrief } from "@/lib/growth/coverBrief";
 import type { ContentDraft, GrowthAccount, GrowthPlan, GrowthRun } from "@/lib/growth/types";
 import type { TitleScoreResult } from "@/lib/growth/titleScore";
 
@@ -26,6 +27,8 @@ export default function MianbaWorkspacePage() {
   const [recentSignals, setRecentSignals] = useState("");
   const [titleScore, setTitleScore] = useState<TitleScoreResult | null>(null);
   const [scoringTitle, setScoringTitle] = useState(false);
+  const [coverBrief, setCoverBrief] = useState<CoverBrief | null>(null);
+  const [buildingCoverBrief, setBuildingCoverBrief] = useState(false);
 
   const latestRun = state.runs[0] ?? null;
   const latestDraft = state.drafts[0] ?? latestRun?.draft ?? null;
@@ -48,6 +51,7 @@ export default function MianbaWorkspacePage() {
 
   useEffect(() => {
     setTitleScore(null);
+    setCoverBrief(null);
   }, [latestDraft?.id]);
 
   async function runAction(label: string, action: () => Promise<void>) {
@@ -139,6 +143,33 @@ export default function MianbaWorkspacePage() {
       setMessage((error as Error).message || "标题打分失败");
     } finally {
       setScoringTitle(false);
+    }
+  }
+
+  async function buildLatestCoverBrief() {
+    if (!latestDraft) return;
+    setBuildingCoverBrief(true);
+    setMessage("生成封面 brief 中...");
+    try {
+      const res = await fetch("/api/growth/cover-brief", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          title: latestDraft.title,
+          coverText: latestDraft.cover_text,
+          targetUser: latestDraft.target_user,
+          contentType: latestDraft.content_type,
+          testVariable: latestDraft.test_variable,
+        }),
+      });
+      if (!res.ok) throw new Error("封面 brief 生成失败");
+      const data = (await res.json()) as { brief: CoverBrief };
+      setCoverBrief(data.brief);
+      setMessage("封面 brief 生成完成");
+    } catch (error) {
+      setMessage((error as Error).message || "封面 brief 生成失败");
+    } finally {
+      setBuildingCoverBrief(false);
     }
   }
 
@@ -288,6 +319,19 @@ export default function MianbaWorkspacePage() {
                     <li key={suggestion}>{suggestion}</li>
                   ))}
                 </ul>
+              </div>
+            )}
+            <button className="btn-primary mt-5 w-full" disabled={loading || buildingCoverBrief} onClick={buildLatestCoverBrief}>
+              {buildingCoverBrief ? "生成封面 brief 中..." : "生成封面 brief"}
+            </button>
+            {coverBrief && (
+              <div className="mt-4 rounded-2xl bg-ink-50 p-4 text-xs leading-6 text-ink-700">
+                <ScoreLine label="封面句" value={coverBrief.coverText} />
+                <ScoreLine label="场景" value={coverBrief.scene} />
+                <div className="mt-3 text-ink-500">文生图 Prompt</div>
+                <p className="mt-1 whitespace-pre-wrap text-ink-800">{coverBrief.imagePrompt}</p>
+                <div className="mt-3 text-ink-500">负向 Prompt</div>
+                <p className="mt-1 whitespace-pre-wrap text-ink-800">{coverBrief.negativePrompt}</p>
               </div>
             )}
             <button className="btn-primary mt-5 w-full" disabled={loading} onClick={markPublished}>
