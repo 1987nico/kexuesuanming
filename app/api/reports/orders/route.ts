@@ -1,14 +1,13 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { DEFAULT_REPORT_TENANT_ID, getReportAuthContextFromRequest } from "@/lib/auth/tenant";
 import { REPORT_ORDER_STATUSES, reportStore } from "@/lib/reports/store";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const DEFAULT_TENANT_ID = "mianbajun";
-
 const bodySchema = z.object({
-  tenant_id: z.string().min(1).default(DEFAULT_TENANT_ID),
+  tenant_id: z.string().min(1).default(DEFAULT_REPORT_TENANT_ID),
   assessment_profile_id: z.string().uuid(),
   report_type: z.enum(["lite", "deep"]),
   price_cents: z.number().int().nonnegative().nullable().optional(),
@@ -19,8 +18,8 @@ const bodySchema = z.object({
 
 export async function GET(req: Request) {
   const url = new URL(req.url);
-  const tenantId = url.searchParams.get("tenant_id") || DEFAULT_TENANT_ID;
-  const orders = await reportStore().listReportOrders(tenantId);
+  const auth = getReportAuthContextFromRequest(req, { tenantId: url.searchParams.get("tenant_id") });
+  const orders = await reportStore().listReportOrders(auth.tenantId);
   return NextResponse.json({ orders });
 }
 
@@ -33,9 +32,11 @@ export async function POST(req: Request) {
 
   const profile = await reportStore().getAssessmentProfile(parsed.data.assessment_profile_id);
   if (!profile) return NextResponse.json({ error: "assessment_profile_not_found" }, { status: 404 });
+  const auth = getReportAuthContextFromRequest(req, { tenantId: parsed.data.tenant_id });
 
   const order = await reportStore().createReportOrder({
     ...parsed.data,
+    tenant_id: auth.tenantId,
     customer_name: parsed.data.customer_name ?? profile.customer_name,
     customer_contact: parsed.data.customer_contact ?? profile.customer_contact,
   });
