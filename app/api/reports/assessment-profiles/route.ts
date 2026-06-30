@@ -46,6 +46,12 @@ export async function POST(req: Request) {
   if (!parsed.success) {
     return NextResponse.json({ error: "validation", issues: parsed.error.flatten() }, { status: 400 });
   }
+  if (Object.keys(parsed.data.talent_answers).length < 252) {
+    return NextResponse.json(
+      { error: "incomplete_talent_answers", message: "需要完整提交 252 题天赋测评答案。" },
+      { status: 400 }
+    );
+  }
 
   const timestamp = new Date().toISOString();
   const talentResult = await generateTalentProfileWithFallback(numericAnswers(parsed.data.talent_answers));
