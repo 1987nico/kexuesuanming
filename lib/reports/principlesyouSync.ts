@@ -77,6 +77,9 @@ function mapOriginalResultsToTalentProfile(
 
 async function importCollector() {
   const collectPath = process.env.PRINCIPLESYOU_COLLECT_PATH || DEFAULT_COLLECT_PATH;
+  // collect.mjs compares import.meta.url with process.argv[1] at module load time.
+  // Some embedded runtimes (or node --eval smoke checks) do not set argv[1].
+  process.argv[1] ||= "next-server.mjs";
   return import(/* webpackIgnore: true */ pathToFileURL(collectPath).href) as Promise<{
     createSession: () => Promise<any>;
     getQuestions: (session: any) => Promise<any>;
