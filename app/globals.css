@@ -165,6 +165,163 @@ body {
   line-height: 1.85;
 }
 
+.lite-cover {
+  min-height: 225mm;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.lite-cover-kicker,
+.lite-label {
+  color: #a17925;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+}
+
+.lite-cover h1 {
+  margin-top: 12px;
+  font-size: 34px;
+  line-height: 1.18;
+  font-weight: 800;
+}
+
+.lite-cover p {
+  margin-top: 12px;
+  max-width: 520px;
+  color: #615842;
+}
+
+.lite-cover-meta {
+  border-left: 4px solid #d9a441;
+  padding-left: 16px;
+  color: #3f3828;
+  line-height: 2;
+}
+
+.lite-cover-conclusion {
+  border-radius: 24px;
+  background: #f8f2e4;
+  padding: 24px;
+  font-size: 20px;
+  line-height: 1.7;
+  font-weight: 700;
+}
+
+.lite-diagnosis-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.lite-diagnosis-card,
+.lite-circle-card,
+.lite-wide-card,
+.lite-three-cards > div {
+  border: 1px solid #eee8dc;
+  border-radius: 22px;
+  background: #fffdf8;
+  padding: 18px;
+}
+
+.lite-diagnosis-card p,
+.lite-circle-card p,
+.lite-wide-card p {
+  margin-top: 8px;
+  color: #3f3828;
+}
+
+.lite-two-column {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.lite-wide-card {
+  grid-column: 1 / -1;
+}
+
+.lite-circle-muted {
+  background: #f7f5f0;
+}
+
+.lite-muted-text {
+  color: #6b6251;
+  font-size: 12px;
+}
+
+.lite-pill-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.lite-pill-list > li {
+  border-radius: 999px;
+  background: #f3ead8;
+  padding: 6px 10px;
+  color: #3f3828;
+  font-size: 12px;
+}
+
+.lite-three-cards {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.lite-trait-table {
+  width: 100%;
+  border-collapse: collapse;
+  overflow: hidden;
+  border-radius: 16px;
+  font-size: 12px;
+}
+
+.lite-trait-table th,
+.lite-trait-table td {
+  border-bottom: 1px solid #eee8dc;
+  padding: 10px 8px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.lite-trait-table th {
+  background: #f7f0df;
+  color: #6b4a00;
+  font-weight: 700;
+}
+
+.lite-distribution {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 10px;
+  margin: 18px 0;
+}
+
+.lite-distribution > div {
+  border-radius: 16px;
+  background: #f8f2e4;
+  padding: 14px 8px;
+  text-align: center;
+}
+
+.lite-distribution strong,
+.lite-distribution span {
+  display: block;
+}
+
+.lite-distribution span {
+  margin-top: 4px;
+  color: #6b6251;
+  font-size: 12px;
+}
+
 .report-list {
   margin: 0;
   padding-left: 18px;
