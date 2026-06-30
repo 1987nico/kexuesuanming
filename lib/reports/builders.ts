@@ -1,4 +1,5 @@
 import type { AssessmentProfile, ReportProfileReference } from "./assessmentProfile";
+import type { DeepReportInputs, VRINScore } from "./deepReportInputs";
 import { DEEP_REPORT_SECTIONS, LITE_REPORT_SECTIONS, type DeepReportShape, type LiteReportShape } from "./reportShapes";
 
 function topNames(items: Array<{ name: string; percentile?: number }>, limit = 3) {
@@ -17,6 +18,26 @@ function strongestTalentSentence(profile: AssessmentProfile) {
 function weakestTalentSentence(profile: AssessmentProfile) {
   const lowTraits = profile.talent_profile.low_traits.slice(0, 3).map((trait) => trait.name).join("、");
   return lowTraits ? `最需要补偿的特质包括：${lowTraits}。` : "低分特质需要结合具体场景解释。";
+}
+
+function vrinTotal(score: VRINScore) {
+  return score.overall_score ?? score.value + score.rarity + score.imitability + score.non_substitutability;
+}
+
+function vrinTop3(scores: VRINScore[] = []) {
+  return [...scores]
+    .sort((left, right) => vrinTotal(right) - vrinTotal(left))
+    .slice(0, 3)
+    .map((score) => ({
+      direction: score.direction,
+      total: vrinTotal(score),
+      value: score.value,
+      rarity: score.rarity,
+      imitability: score.imitability,
+      non_substitutability: score.non_substitutability,
+      evidence: score.evidence,
+      blind_spot: score.blind_spot,
+    }));
 }
 
 export function buildReportProfileReference(profile: AssessmentProfile): ReportProfileReference {
@@ -106,7 +127,10 @@ export function buildLiteReport(profile: AssessmentProfile): LiteReportShape & {
   return { kind: "lite", sections, profile_reference: buildReportProfileReference(profile) };
 }
 
-export function buildDeepReport(profile: AssessmentProfile): DeepReportShape & { profile_reference: ReportProfileReference } {
+export function buildDeepReport(
+  profile: AssessmentProfile,
+  deepInputs?: DeepReportInputs
+): DeepReportShape & { profile_reference: ReportProfileReference } {
   const sections: DeepReportShape["sections"] = {
     conclusion_first: {
       final_advice: "大报告结论必须在小报告初筛基础上进一步收敛，不得无解释翻案。",
@@ -126,23 +150,40 @@ export function buildDeepReport(profile: AssessmentProfile): DeepReportShape & {
     },
     step2_direction_expansion: {
       rule: "只能在 Step1 喜欢区内发散，不能违反排除带。",
-      placeholder: "后续由六步漏斗根据履历与输入生成 30 个方向。",
+      ...(deepInputs
+        ? { directions: deepInputs.direction_expansion ?? [] }
+        : { placeholder: "后续由六步漏斗根据履历与输入生成 30 个方向。" }),
     },
     step3_sensory_validation: {
       rule: "只保留本人感性打分 ≥7 的方向进入市场分析。",
-      placeholder: "后续接入多轮感性打分文档。",
+      ...(deepInputs
+        ? {
+            sensory_scores: deepInputs.sensory_scores ?? [],
+            qualified_directions: (deepInputs.sensory_scores ?? [])
+              .filter((score) => score.score >= 7)
+              .map((score) => score.direction),
+          }
+        : { placeholder: "后续接入多轮感性打分文档。" }),
     },
     step4_market_analysis: {
       framework: "PEST 修正波特五力：现状威胁 + P/E/S/T = 未来威胁。",
       requires_external_evidence: true,
+      ...(deepInputs ? { market_evidence: deepInputs.market_evidence ?? [] } : {}),
     },
     step5_vrin: {
       framework: "V/R/I/N 判断个人胜算，结合 Step4 机会分收敛 Top3。",
       talent_reuse: profile.talent_profile.high_traits,
+      ...(deepInputs
+        ? {
+            scores: deepInputs.vrin_scores ?? [],
+            top3: vrinTop3(deepInputs.vrin_scores),
+          }
+        : {}),
     },
     step6_premortem: {
       framework: "先写 12 个月后怎么输，再设早期信号和止损线。",
       must_not_conflict_with_lite_risks: true,
+      ...(deepInputs ? { scenarios: deepInputs.premortem ?? [] } : {}),
     },
     final_recommendations: {
       rule: "若推荐与小报告初步方向不同，必须解释新增证据和收敛逻辑。",
