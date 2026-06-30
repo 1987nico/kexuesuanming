@@ -1,9 +1,29 @@
 import data from "@/zhichang-canmou/src/lib/principlesyou/data.json";
+import zh from "@/zhichang-canmou/src/lib/principlesyou/zh.json";
 
 const DATA = data as any;
+const ZH = zh as any;
+
+export interface TalentQuestionForClient {
+  number: number;
+  order: number;
+  text: string;
+}
 
 export function talentQuestionNumbers(): number[] {
   return (DATA.questions || []).map((question: { number: number }) => question.number);
+}
+
+export function talentQuestionsForClient(): TalentQuestionForClient[] {
+  return (DATA.questions || []).map((question: { number: number; order: number; text: string }) => ({
+    number: question.number,
+    order: question.order,
+    text: ZH.questions?.[question.number] || question.text,
+  }));
+}
+
+export function talentScaleLabels(): string[] {
+  return ZH.labels || DATA.labels || ["1", "2", "3", "4", "5", "6", "7"];
 }
 
 export function buildNeutralTalentAnswers() {

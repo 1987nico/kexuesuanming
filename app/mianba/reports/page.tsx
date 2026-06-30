@@ -106,6 +106,9 @@ export default function MianbaReportsPage() {
         <a className="rounded-full bg-white px-4 py-2 text-sm text-ink-600 shadow-sm" href="/mianba">
           返回增长工作台
         </a>
+        <a className="rounded-full bg-ink-900 px-4 py-2 text-sm text-white shadow-sm" href="/mianba/reports/new">
+          新建 252 题底稿
+        </a>
       </header>
 
       <section className="grid gap-4 md:grid-cols-[0.9fr_1.1fr]">
