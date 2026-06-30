@@ -200,3 +200,199 @@ create table if not exists quick_scores (
 
 create index if not exists idx_quick_respondents_panel on quick_respondents(panel_id);
 create index if not exists idx_quick_scores_respondent on quick_scores(respondent_id);
+
+-- ============================================================
+-- 面霸君 · 小红书 V3 内容工厂与多租户地基
+-- 本期单租户上线，但所有业务表预留 tenant_id。
+-- ============================================================
+
+create table if not exists tenants (
+  id text primary key,
+  name text not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists tenant_users (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id text not null references tenants(id) on delete cascade,
+  email text,
+  phone text,
+  password_hash text,
+  role text not null default 'tenant_admin'
+    check (role in ('owner', 'tenant_admin', 'member')),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (tenant_id, email),
+  unique (tenant_id, phone)
+);
+
+create table if not exists growth_accounts (
+  id uuid primary key,
+  tenant_id text not null references tenants(id) on delete cascade,
+  name text not null,
+  target_user text not null,
+  core_problem text not null,
+  payload jsonb not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists growth_plans (
+  id uuid primary key,
+  tenant_id text not null references tenants(id) on delete cascade,
+  account_id uuid not null references growth_accounts(id) on delete cascade,
+  title text not null,
+  payload jsonb not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists growth_runs (
+  id uuid primary key,
+  tenant_id text not null references tenants(id) on delete cascade,
+  account_id uuid not null references growth_accounts(id) on delete cascade,
+  plan_id uuid references growth_plans(id) on delete set null,
+  status text not null default 'draft'
+    check (status in ('draft', 'ready', 'published', 'reviewed')),
+  week int not null default 1 check (week between 1 and 4),
+  objective text,
+  payload jsonb not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists content_drafts (
+  id uuid primary key,
+  tenant_id text not null references tenants(id) on delete cascade,
+  account_id uuid not null references growth_accounts(id) on delete cascade,
+  run_id uuid not null references growth_runs(id) on delete cascade,
+  status text not null default 'draft'
+    check (status in ('draft', 'ready', 'published', 'reviewed')),
+  title text not null,
+  direction text not null check (direction in ('A', 'B', 'C')),
+  content_type text not null check (content_type in ('diagnostic', 'tool', 'story')),
+  payload jsonb not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists content_assets (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id text not null references tenants(id) on delete cascade,
+  draft_id uuid not null references content_drafts(id) on delete cascade,
+  asset_type text not null check (asset_type in ('cover_base', 'cover_final', 'image')),
+  url text,
+  prompt text,
+  metadata jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists growth_reviews (
+  id uuid primary key,
+  tenant_id text not null references tenants(id) on delete cascade,
+  draft_id uuid not null references content_drafts(id) on delete cascade,
+  classification text not null
+    check (classification in ('scale', 'retest', 'weak_entry', 'weak_conversion', 'wrong_audience', 'pause')),
+  payload jsonb not null,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists title_scores (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id text not null references tenants(id) on delete cascade,
+  draft_id uuid references content_drafts(id) on delete cascade,
+  title text not null,
+  payload jsonb not null,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists hot_notes (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id text not null references tenants(id) on delete cascade,
+  keyword text not null,
+  source text not null default 'manual',
+  payload jsonb not null,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists benchmark_accounts (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id text not null references tenants(id) on delete cascade,
+  source_account_id text,
+  payload jsonb not null,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists assessment_profiles (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id text not null references tenants(id) on delete cascade,
+  customer_name text not null,
+  customer_contact text,
+  value_profile jsonb not null,
+  talent_mode text not null check (talent_mode in ('original-sync', 'local')),
+  talent_answers jsonb not null,
+  talent_profile jsonb not null,
+  survey_answers jsonb not null default '{}'::jsonb,
+  payload jsonb not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists report_lite_sessions (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id text not null references tenants(id) on delete cascade,
+  assessment_profile_id uuid references assessment_profiles(id) on delete set null,
+  customer_name text,
+  customer_contact text,
+  status text not null default 'draft'
+    check (status in ('draft', 'submitted', 'report_ready', 'failed')),
+  mode text check (mode in ('original-sync', 'local')),
+  sync_evidence jsonb,
+  answers jsonb,
+  report jsonb,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists report_orders (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id text not null references tenants(id) on delete cascade,
+  report_type text not null check (report_type in ('lite', 'deep')),
+  price_cents int,
+  customer_name text,
+  customer_contact text,
+  status text not null default 'unpaid'
+    check (status in ('unpaid', 'paid', 'delivering', 'delivered', 'refunded')),
+  assessment_profile_id uuid references assessment_profiles(id) on delete set null,
+  run_id uuid references runs(id) on delete set null,
+  lite_session_id uuid references report_lite_sessions(id) on delete set null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists usage_events (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id text not null references tenants(id) on delete cascade,
+  feature text not null,
+  provider text,
+  model text,
+  input_tokens int,
+  output_tokens int,
+  units int,
+  cost_cents int,
+  metadata jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now()
+);
+
+insert into tenants (id, name)
+values ('mianbajun', '面霸君')
+on conflict (id) do nothing;
+
+create index if not exists idx_growth_accounts_tenant on growth_accounts(tenant_id, created_at desc);
+create index if not exists idx_growth_plans_account on growth_plans(account_id, created_at desc);
+create index if not exists idx_growth_runs_account on growth_runs(account_id, created_at desc);
+create index if not exists idx_content_drafts_account on content_drafts(account_id, created_at desc);
+create index if not exists idx_growth_reviews_draft on growth_reviews(draft_id, created_at desc);
+create index if not exists idx_assessment_profiles_tenant on assessment_profiles(tenant_id, created_at desc);
+create index if not exists idx_usage_events_tenant on usage_events(tenant_id, created_at desc);

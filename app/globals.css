@@ -35,6 +35,10 @@ body {
   position: relative;
 }
 
+.mobile-frame:has(.mianba-workspace) {
+  max-width: 1180px;
+}
+
 /* 中式书法分隔线 */
 .divider-ink {
   height: 1px;
@@ -49,6 +53,24 @@ body {
     0 1px 0 rgba(25, 23, 15, 0.04),
     0 2px 6px rgba(25, 23, 15, 0.06),
     0 10px 30px rgba(25, 23, 15, 0.04);
+}
+
+.btn-primary {
+  border-radius: 999px;
+  background: #19170f;
+  color: white;
+  padding: 12px 18px;
+  font-size: 14px;
+  font-weight: 600;
+  transition: opacity 0.16s ease, transform 0.16s ease;
+}
+
+.btn-primary:disabled {
+  opacity: 0.45;
+}
+
+.btn-primary:not(:disabled):active {
+  transform: translateY(1px);
 }
 
 /* 滚动条小化 */
