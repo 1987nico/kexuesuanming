@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import type { ContentDraft, GrowthAccount, GrowthPlan, GrowthRun } from "@/lib/growth/types";
+import type { TitleScoreResult } from "@/lib/growth/titleScore";
 
 interface BootstrapState {
   account: GrowthAccount | null;
@@ -23,6 +24,8 @@ export default function MianbaWorkspacePage() {
   const [message, setMessage] = useState("");
   const [week, setWeek] = useState(1);
   const [recentSignals, setRecentSignals] = useState("");
+  const [titleScore, setTitleScore] = useState<TitleScoreResult | null>(null);
+  const [scoringTitle, setScoringTitle] = useState(false);
 
   const latestRun = state.runs[0] ?? null;
   const latestDraft = state.drafts[0] ?? latestRun?.draft ?? null;
@@ -42,6 +45,10 @@ export default function MianbaWorkspacePage() {
   useEffect(() => {
     refresh().catch((error) => setMessage(error.message));
   }, []);
+
+  useEffect(() => {
+    setTitleScore(null);
+  }, [latestDraft?.id]);
 
   async function runAction(label: string, action: () => Promise<void>) {
     setLoading(true);
@@ -107,6 +114,32 @@ export default function MianbaWorkspacePage() {
       const res = await fetch(`/api/growth/drafts/${latestDraft.id}/publish`, { method: "POST" });
       if (!res.ok) throw new Error("标记发布失败");
     });
+  }
+
+  async function scoreLatestTitle() {
+    if (!latestDraft) return;
+    setScoringTitle(true);
+    setMessage("标题打分中...");
+    try {
+      const res = await fetch("/api/growth/title-score", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          title: latestDraft.title,
+          targetUser: latestDraft.target_user,
+          coreProblem: state.account?.core_problem,
+          topic: latestRun?.selected_topic?.title ?? latestDraft.test_variable,
+        }),
+      });
+      if (!res.ok) throw new Error("标题打分失败");
+      const data = (await res.json()) as { score: TitleScoreResult };
+      setTitleScore(data.score);
+      setMessage("标题打分完成");
+    } catch (error) {
+      setMessage((error as Error).message || "标题打分失败");
+    } finally {
+      setScoringTitle(false);
+    }
   }
 
   return (
@@ -235,6 +268,28 @@ export default function MianbaWorkspacePage() {
             <Field label="封面句" value={latestDraft.cover_text} />
             <Field label="评论区引导" value={latestDraft.comment_prompt} />
             <Field label="字数自检" value={`${latestDraft.word_count.total} 字 / ${latestDraft.word_count.within_limit ? "通过" : "超限"}`} />
+            <button className="btn-primary mt-5 w-full" disabled={loading || scoringTitle} onClick={scoreLatestTitle}>
+              {scoringTitle ? "标题打分中..." : "标题打分"}
+            </button>
+            {titleScore && (
+              <div className="mt-4 rounded-2xl bg-ink-50 p-4 text-sm leading-6 text-ink-700">
+                <div className="mb-3 flex items-center justify-between">
+                  <span className="font-medium text-ink-900">标题总分 {titleScore.totalScore}</span>
+                  <span className="rounded-full bg-gold-50 px-3 py-1 text-xs text-gold-700">Grade {titleScore.grade}</span>
+                </div>
+                <div className="grid gap-2 text-xs">
+                  <ScoreLine label="主题匹配" value={titleScore.topicMatch.score} />
+                  <ScoreLine label="利益清晰" value={titleScore.benefitClarity.score} />
+                  <ScoreLine label="情绪唤醒" value={titleScore.emotionalActivation.score} />
+                  <ScoreLine label="合规风险" value={`${titleScore.complianceRisk.level} / ${titleScore.complianceRisk.score}`} />
+                </div>
+                <ul className="mt-3 list-disc space-y-1 pl-4 text-xs text-ink-600">
+                  {titleScore.suggestions.map((suggestion) => (
+                    <li key={suggestion}>{suggestion}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
             <button className="btn-primary mt-5 w-full" disabled={loading} onClick={markPublished}>
               标记为已发布
             </button>
@@ -277,6 +332,15 @@ function Field({ label, value }: { label: string; value: string | number }) {
     <div>
       <div className="text-xs font-medium text-ink-400">{label}</div>
       <div className="mt-1 leading-6 text-ink-800">{value}</div>
+    </div>
+  );
+}
+
+function ScoreLine({ label, value }: { label: string; value: string | number }) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <span className="text-ink-500">{label}</span>
+      <span className="font-medium text-ink-800">{value}</span>
     </div>
   );
 }
