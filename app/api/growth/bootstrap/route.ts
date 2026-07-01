@@ -17,6 +17,7 @@ const bodySchema = z.object({
   targetUser: z.string().max(500).optional(),
   coreProblem: z.string().max(500).optional(),
   trustSource: z.string().max(500).optional(),
+  regenerateAccountId: z.string().min(1).optional(),
 });
 
 function resolvePersona(value: string | null): GrowthPersona {
@@ -41,14 +42,22 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "validation", issues: parsed.error.flatten() }, { status: 400 });
   }
 
+  const store = growthStore();
+  // 原地重生成：保留 id 和 created_at，避免每次点新增账号、并让选题等关联数据不丢。
+  let createdAt: string | undefined;
+  if (parsed.data.regenerateAccountId) {
+    const existing = await store.getAccount(parsed.data.regenerateAccountId);
+    if (existing) createdAt = existing.created_at;
+  }
+
   const { account, plan, usage } = await generateAccountAndPlan({
     tenantId: DEFAULT_TENANT_ID,
     ...parsed.data,
+    createdAt,
   });
 
-  const store = growthStore();
   await store.saveAccount(account);
-  await store.savePlan(plan);
+  if (!parsed.data.regenerateAccountId) await store.savePlan(plan);
   if (usage) {
     await store.saveUsage({
       tenant_id: DEFAULT_TENANT_ID,

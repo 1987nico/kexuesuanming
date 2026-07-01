@@ -84,6 +84,90 @@ function fallbackWeeks(): GrowthPlanWeek[] {
   ];
 }
 
+function pick<T>(arr: T[]): T {
+  return arr[Math.floor(Math.random() * arr.length)];
+}
+
+interface FallbackAccountFields {
+  target_user: string;
+  core_problem: string;
+  account_value: string;
+  one_liner: string;
+  follow_reason: string;
+}
+
+const FALLBACK_ACCOUNT_VARIANTS: Record<GrowthPersona, FallbackAccountFields[]> = {
+  merchant: [
+    {
+      target_user: "想找靠谱服务、怕被割韭菜的中小企业主",
+      core_problem: "选服务商时信息不对称，不知道谁真能交付",
+      account_value: "用真实交付案例和判断标准，帮客户挑对、买对",
+      one_liner: "帮你把钱花在真能交付的服务上",
+      follow_reason: "持续拆解怎么识别靠谱服务商与交付标准",
+    },
+    {
+      target_user: "预算有限但想做出效果的品牌/门店负责人",
+      core_problem: "投入产出算不清，怕花钱听不到响",
+      account_value: "把服务拆成可验证的小步骤，先看效果再放大",
+      one_liner: "先做小验证，再决定要不要加投入",
+      follow_reason: "持续记录真实客户的投入产出复盘",
+    },
+    {
+      target_user: "正在从接单转向做品牌的经营者",
+      core_problem: "只会接单，做不出可复购的产品和信任",
+      account_value: "把一次性服务升级成有复购的产品体系",
+      one_liner: "从接单到做出会复购的产品",
+      follow_reason: "持续拆解产品化和客户信任的搭建",
+    },
+  ],
+  buyer: [
+    {
+      target_user: "在纠结怎么选、怕踩坑的消费者",
+      core_problem: "同类产品太多，测评太水，不知道信谁",
+      account_value: "第三方实测 + 可对比清单，帮你避坑选对",
+      one_liner: "帮你把选择做对，少交智商税",
+      follow_reason: "持续做客观实测和平价替代对比",
+    },
+    {
+      target_user: "想买但预算敏感、追求性价比的人",
+      core_problem: "既怕买贵又怕买错，决策成本高",
+      account_value: "按场景给出高性价比选择和排雷清单",
+      one_liner: "同价位里帮你挑出最值的那个",
+      follow_reason: "持续更新性价比榜单和避坑点",
+    },
+    {
+      target_user: "第一次买某品类、完全没经验的新手",
+      core_problem: "不懂参数和套路，容易被导购带偏",
+      account_value: "用小白能懂的话讲清怎么挑、怎么砍价",
+      one_liner: "新手也能一次买对",
+      follow_reason: "持续做新手向的选购指南",
+    },
+  ],
+  expert: [
+    {
+      target_user: "认可专业判断、可能来咨询的同行与客户",
+      core_problem: "缺的不是信息，而是能落地的判断和方法",
+      account_value: "用方法论密度和真实案例建立专业信任",
+      one_liner: "把复杂问题拆成能落地的判断",
+      follow_reason: "持续输出可复用的判断框架和方法",
+    },
+    {
+      target_user: "想系统提升、不满足于碎片知识的从业者",
+      core_problem: "学了很多却串不成体系，用不起来",
+      account_value: "把零散经验整理成可迁移的体系和清单",
+      one_liner: "帮你把碎片经验变成体系",
+      follow_reason: "持续沉淀行业方法论和体系化拆解",
+    },
+    {
+      target_user: "遇到具体难题、需要专业判断的决策者",
+      core_problem: "关键决策上缺一个真正懂行的判断",
+      account_value: "针对真实难题给出结构化判断和取舍",
+      one_liner: "关键决策前，先听一个懂行的判断",
+      follow_reason: "持续拆解真实难题的判断过程",
+    },
+  ],
+};
+
 export async function generateAccountAndPlan(input: {
   tenantId?: string;
   persona?: GrowthPersona;
@@ -91,9 +175,12 @@ export async function generateAccountAndPlan(input: {
   targetUser?: string;
   coreProblem?: string;
   trustSource?: string;
+  regenerateAccountId?: string;
+  createdAt?: string;
 }): Promise<{ account: GrowthAccount; plan: GrowthPlan; usage?: Record<string, unknown> }> {
   const tenantId = input.tenantId ?? DEFAULT_TENANT_ID;
   const persona: GrowthPersona = input.persona ?? "expert";
+  const fallback = pick(FALLBACK_ACCOUNT_VARIANTS[persona]);
   const timestamp = now();
   let payload: any = null;
   let usage: Record<string, unknown> | undefined;
@@ -117,27 +204,19 @@ export async function generateAccountAndPlan(input: {
   }
 
   const accountData = payload?.account ?? {};
-  const accountId = id();
+  const accountId = input.regenerateAccountId || id();
   const account: GrowthAccount = {
     id: accountId,
     tenant_id: tenantId,
     persona,
     name: input.accountName,
-    target_user:
-      accountData.target_user ||
-      input.targetUser ||
-      "中高层、合伙人、创业者、准创业者和成熟职场人",
-    core_problem:
-      accountData.core_problem ||
-      input.coreProblem ||
-      "如何把公司里的经验和判断转成市场上可被信任、可被定价的资产",
-    account_value:
-      accountData.account_value ||
-      "持续提供目标客户判断、内容资产化、第二曲线和商业化复盘方法。",
+    target_user: accountData.target_user || input.targetUser || fallback.target_user,
+    core_problem: accountData.core_problem || input.coreProblem || fallback.core_problem,
+    account_value: accountData.account_value || fallback.account_value,
     trust_source:
       accountData.trust_source ||
       input.trustSource ||
-      "来自真实创业、合伙、客户和内容增长实践。",
+      "来自真实经营、客户和内容增长实践。",
     not_doing: accountData.not_doing || "不做泛职场鸡汤，不承诺收益，不追无意义爆款。",
     hypotheses:
       Array.isArray(accountData.hypotheses) && accountData.hypotheses.length
@@ -147,8 +226,8 @@ export async function generateAccountAndPlan(input: {
             "工具/清单型内容能带来收藏和主页访问。",
             "创始人过程记录能形成信任锚点。",
           ],
-    one_liner: accountData.one_liner || "",
-    follow_reason: accountData.follow_reason || "账号会持续拆解目标用户的真实决策问题。",
+    one_liner: accountData.one_liner || fallback.one_liner,
+    follow_reason: accountData.follow_reason || fallback.follow_reason,
     content_directions:
       Array.isArray(accountData.content_directions) && accountData.content_directions.length
         ? accountData.content_directions.slice(0, 3)
@@ -161,7 +240,7 @@ export async function generateAccountAndPlan(input: {
     compliance_redline: accountData.compliance_redline || "不承诺收益、不玄学、客户匿名、不用泛焦虑换阅读。",
     private_domain: accountData.private_domain || "",
     persona_specific: emptyPersonaSpecific(persona),
-    created_at: timestamp,
+    created_at: input.createdAt || timestamp,
     updated_at: timestamp,
   };
 

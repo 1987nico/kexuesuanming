@@ -151,14 +151,18 @@ export default function XiaohongshuNotesPage() {
     }
   }
 
-  async function createAccount() {
-    await run("创建账号定位卡", async () => {
+  async function createAccount(regenerate = false) {
+    await run(regenerate ? "系统生成定位卡" : "创建账号定位卡", async () => {
       const res = await fetch("/api/growth/bootstrap", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ persona, accountName: `面霸君 · ${GROWTH_PERSONA_LABELS[persona]}` }),
+        body: JSON.stringify({
+          persona,
+          accountName: state.account?.name || `面霸君 · ${GROWTH_PERSONA_LABELS[persona]}`,
+          ...(regenerate && state.account ? { regenerateAccountId: state.account.id } : {}),
+        }),
       });
-      if (!res.ok) throw new Error("创建账号定位卡失败");
+      if (!res.ok) throw new Error("生成定位卡失败");
       await loadWorkspace(persona);
     });
   }
@@ -351,7 +355,7 @@ export default function XiaohongshuNotesPage() {
             <p className="text-sm leading-6 text-ink-600">
               当前视角「{GROWTH_PERSONA_LABELS[persona]}」还没有定位卡。
             </p>
-            <button className="btn-primary mt-4" disabled={!!busy} onClick={createAccount}>
+            <button className="btn-primary mt-4" disabled={!!busy} onClick={() => createAccount()}>
               生成账号定位卡
             </button>
           </div>
@@ -423,7 +427,7 @@ export default function XiaohongshuNotesPage() {
               )}
             <div className="flex flex-wrap gap-3 pt-2">
               <button className="btn-primary" onClick={() => { setAccountForm(toAccountForm(account)); setEditing(true); }}>编辑定位卡</button>
-              <button className="rounded-full bg-ink-100 px-4 py-3 text-sm font-semibold text-ink-700" disabled={!!busy} onClick={createAccount}>AI 重新生成</button>
+              <button className="rounded-full bg-ink-100 px-4 py-3 text-sm font-semibold text-ink-700" disabled={!!busy} onClick={() => createAccount(true)}>系统生成</button>
             </div>
           </div>
         )}
