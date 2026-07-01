@@ -19,6 +19,7 @@ const defaultValueProfile = {
 export default function NewReportProfilePage() {
   const [questions, setQuestions] = useState<TalentQuestionForClient[]>([]);
   const [labels, setLabels] = useState<string[]>([]);
+  const [neutralAnswers, setNeutralAnswers] = useState<Record<number, number>>({});
   const [answers, setAnswers] = useState<Record<number, number>>({});
   const [page, setPage] = useState(0);
   const [customerName, setCustomerName] = useState("");
@@ -66,6 +67,7 @@ export default function NewReportProfilePage() {
       .then((data) => {
         setQuestions(data.questions || []);
         setLabels(data.labels || []);
+        setNeutralAnswers(data.neutral_answers || {});
         setMessage((current) => (current.includes("草稿") ? current : `已加载 ${data.count || 0} 题。`));
       })
       .catch(() => setMessage("题库加载失败，请刷新重试。"));
@@ -109,6 +111,12 @@ export default function NewReportProfilePage() {
     setPage(0);
     setProfile(null);
     setMessage("本地草稿已清空。");
+  }
+
+  function fillNeutralAnswersForSmoke() {
+    setAnswers(neutralAnswers);
+    setPage(Math.max(0, totalPages - 1));
+    setMessage("已填充中性 4 分答案，仅用于开发验证和快速预览流程。真实交付请让客户逐题作答。");
   }
 
   async function submitProfile() {
@@ -219,6 +227,14 @@ export default function NewReportProfilePage() {
             <br />
             当前页：{page + 1} / {totalPages || 1}
           </div>
+          <button
+            className="mt-4 w-full rounded-full bg-gold-50 px-4 py-3 text-sm font-semibold text-gold-700"
+            type="button"
+            disabled={!questions.length}
+            onClick={fillNeutralAnswersForSmoke}
+          >
+            开发验证：一键填充中性答案
+          </button>
           <button className="btn-primary mt-4 w-full" disabled={loading || !allComplete} onClick={submitProfile}>
             {loading ? "生成中..." : "完成并生成底稿"}
           </button>
