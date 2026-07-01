@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { AssessmentProfile } from "@/lib/reports/assessmentProfile";
 import type { TalentQuestionForClient } from "@/lib/reports/principlesyouQuestions";
+import type { ReportOrder, ReportType } from "@/lib/reports/store";
 
 const QUESTIONS_PER_PAGE = 4;
 const STORAGE_KEY = "mianba.report-intake.v1";
@@ -25,8 +26,11 @@ export default function NewReportProfilePage() {
   const [surveyAnswers, setSurveyAnswers] = useState("{}");
   const [valueProfile, setValueProfile] = useState(JSON.stringify(defaultValueProfile, null, 2));
   const [profile, setProfile] = useState<AssessmentProfile | null>(null);
+  const [latestOrder, setLatestOrder] = useState<ReportOrder | null>(null);
   const [message, setMessage] = useState("加载 252 题模板中...");
+  const [orderMessage, setOrderMessage] = useState("");
   const [loading, setLoading] = useState(false);
+  const [orderLoading, setOrderLoading] = useState<ReportType | null>(null);
   const [draftLoaded, setDraftLoaded] = useState(false);
 
   useEffect(() => {
@@ -129,11 +133,40 @@ export default function NewReportProfilePage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || data.error || "生成底稿失败");
       setProfile(data.profile);
+      setLatestOrder(null);
+      setOrderMessage("");
       setMessage(`底稿生成成功，天赋数据模式：${data.profile.talent_profile.mode}`);
     } catch (error) {
       setMessage((error as Error).message);
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function createReportOrder(reportType: ReportType) {
+    if (!profile) return;
+    setOrderLoading(reportType);
+    setOrderMessage(`创建${reportType === "lite" ? "小" : "大"}报告订单中...`);
+    try {
+      const res = await fetch("/api/reports/orders", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          assessment_profile_id: profile.id,
+          report_type: reportType,
+          price_cents: reportType === "lite" ? 19900 : 699900,
+          customer_name: profile.customer_name,
+          customer_contact: profile.customer_contact,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || data.error || "创建订单失败");
+      setLatestOrder(data.order);
+      setOrderMessage(`已创建${reportType === "lite" ? "小" : "大"}报告订单：${data.order.id}`);
+    } catch (error) {
+      setOrderMessage((error as Error).message);
+    } finally {
+      setOrderLoading(null);
     }
   }
 
@@ -263,7 +296,23 @@ export default function NewReportProfilePage() {
             <a className="btn-primary" href={`/reports/deep/${profile.id}`} target="_blank">
               打开大报告
             </a>
+            <button className="btn-primary" disabled={!!orderLoading} onClick={() => createReportOrder("lite")}>
+              {orderLoading === "lite" ? "创建中..." : "创建小报告订单"}
+            </button>
+            <button className="btn-primary" disabled={!!orderLoading} onClick={() => createReportOrder("deep")}>
+              {orderLoading === "deep" ? "创建中..." : "创建大报告订单"}
+            </button>
+            <a className="btn-primary" href="/mianba/orders" target="_blank">
+              打开订单后台
+            </a>
           </div>
+          {orderMessage && <p className="mt-3 text-sm text-ink-600">{orderMessage}</p>}
+          {latestOrder && (
+            <p className="mt-2 text-xs leading-5 text-ink-500">
+              订单状态：{latestOrder.status} / 类型：{latestOrder.report_type} / 金额：
+              {typeof latestOrder.price_cents === "number" ? `¥${(latestOrder.price_cents / 100).toFixed(2)}` : "未填"}
+            </p>
+          )}
         </section>
       )}
     </main>

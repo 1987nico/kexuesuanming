@@ -273,8 +273,19 @@ export default function MianbaWorkspacePage() {
             小红书 V3 起号实验后台。先跑账号定位卡和 30 天计划，再每天生成题池、发布包、人工发布并回填复盘。
           </p>
         </div>
-        <div className="rounded-full bg-white px-4 py-2 text-sm text-ink-600 shadow-sm">
-          {message || (state.account ? "系统已就绪" : "等待初始化")}
+        <div className="flex flex-wrap items-center gap-2">
+          <a className="rounded-full bg-white px-4 py-2 text-sm text-ink-600 shadow-sm" href="/mianba/reports/new">
+            新建测评
+          </a>
+          <a className="rounded-full bg-white px-4 py-2 text-sm text-ink-600 shadow-sm" href="/mianba/reports">
+            报告工作台
+          </a>
+          <a className="rounded-full bg-white px-4 py-2 text-sm text-ink-600 shadow-sm" href="/mianba/orders">
+            订单后台
+          </a>
+          <div className="rounded-full bg-ink-900 px-4 py-2 text-sm text-white shadow-sm">
+            {message || (state.account ? "系统已就绪" : "等待初始化")}
+          </div>
         </div>
       </header>
 
