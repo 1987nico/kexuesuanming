@@ -1,5 +1,6 @@
 import { isDBConfigured, supabaseServer } from "@/lib/db/supabase";
 import type {
+  BusinessSettings,
   ContentDraft,
   GrowthAccount,
   GrowthPersona,
@@ -8,6 +9,7 @@ import type {
   GrowthRun,
   UsageEvent,
 } from "./types";
+import { DEFAULT_BUSINESS_SETTINGS } from "./types";
 
 export interface GrowthStore {
   saveAccount(account: GrowthAccount): Promise<void>;
@@ -27,6 +29,16 @@ export interface GrowthStore {
   getReviewByDraft(draftId: string): Promise<GrowthReview | null>;
   listReviewsByAccount(accountId: string): Promise<GrowthReview[]>;
   saveUsage(event: Omit<UsageEvent, "id" | "created_at">): Promise<void>;
+  getBusinessSettings(tenantId: string): Promise<BusinessSettings>;
+  saveBusinessSettings(settings: BusinessSettings): Promise<void>;
+}
+
+function defaultBusinessSettings(tenantId: string): BusinessSettings {
+  return {
+    tenant_id: tenantId,
+    ...DEFAULT_BUSINESS_SETTINGS,
+    updated_at: new Date().toISOString(),
+  };
 }
 
 class MemoryGrowthStore implements GrowthStore {
@@ -36,6 +48,7 @@ class MemoryGrowthStore implements GrowthStore {
   private drafts = new Map<string, ContentDraft>();
   private reviews = new Map<string, GrowthReview>();
   private usage: UsageEvent[] = [];
+  private settings = new Map<string, BusinessSettings>();
 
   async saveAccount(account: GrowthAccount) {
     this.accounts.set(account.id, account);
@@ -134,6 +147,14 @@ class MemoryGrowthStore implements GrowthStore {
       created_at: new Date().toISOString(),
       ...event,
     });
+  }
+
+  async getBusinessSettings(tenantId: string) {
+    return this.settings.get(tenantId) ?? defaultBusinessSettings(tenantId);
+  }
+
+  async saveBusinessSettings(settings: BusinessSettings) {
+    this.settings.set(settings.tenant_id, settings);
   }
 }
 
@@ -331,6 +352,25 @@ class SupabaseGrowthStore implements GrowthStore {
       units: event.units,
       cost_cents: event.cost_cents,
       metadata: event.metadata ?? {},
+    });
+    if (error) throw error;
+  }
+
+  async getBusinessSettings(tenantId: string) {
+    const { data, error } = await this.db
+      .from("growth_business_settings")
+      .select("payload")
+      .eq("tenant_id", tenantId)
+      .maybeSingle();
+    if (error) throw error;
+    return (data?.payload as BusinessSettings) ?? defaultBusinessSettings(tenantId);
+  }
+
+  async saveBusinessSettings(settings: BusinessSettings) {
+    const { error } = await this.db.from("growth_business_settings").upsert({
+      tenant_id: settings.tenant_id,
+      payload: settings,
+      updated_at: settings.updated_at,
     });
     if (error) throw error;
   }

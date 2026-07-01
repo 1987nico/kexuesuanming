@@ -23,8 +23,8 @@ import type {
   TopicCandidate,
 } from "./types";
 import { countPublishChars, normalizeTags } from "./validation";
-import { PERSONA_SPECIFIC_FIELDS } from "./types";
-import type { AccountContext } from "./agents";
+import { PERSONA_SPECIFIC_FIELDS, DEFAULT_BUSINESS_SETTINGS } from "./types";
+import type { AccountContext, ReportPrices } from "./agents";
 
 const DEFAULT_TENANT_ID = "mianbajun";
 
@@ -35,11 +35,32 @@ function accountContext(account: GrowthAccount): AccountContext {
     avoidExpressions: account.avoid_expressions,
     contentDirections: account.content_directions,
     personaSpecific: account.persona_specific,
+    notDoing: account.not_doing,
+    complianceRedline: account.compliance_redline,
+    privateDomain: account.private_domain,
   };
 }
 
-function emptyPersonaSpecific(persona: GrowthPersona): Record<string, string> {
-  return Object.fromEntries(PERSONA_SPECIFIC_FIELDS[persona].map((field) => [field.key, ""]));
+// 模型有时把本应是字符串的字段返回成数组，这里统一安全转成字符串（数组用换行拼接）
+function asText(value: unknown): string {
+  if (typeof value === "string") return value.trim();
+  if (Array.isArray(value)) {
+    return value
+      .filter((v) => typeof v === "string" && v.trim())
+      .map((v) => String(v).trim())
+      .join("\n");
+  }
+  return "";
+}
+
+// 只保留当前视角合法的字段 key，用模型返回值填充，缺失或非法值留空
+function mergePersonaSpecific(persona: GrowthPersona, raw: unknown): Record<string, string> {
+  const source = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+  return Object.fromEntries(
+    PERSONA_SPECIFIC_FIELDS[persona].map((field) => {
+      return [field.key, asText(source[field.key])];
+    }),
+  );
 }
 
 function now() {
@@ -144,25 +165,25 @@ const FALLBACK_ACCOUNT_VARIANTS: Record<GrowthPersona, FallbackAccountFields[]> 
   ],
   buyer: [
     {
-      target_user: "在纠结怎么选、怕踩坑的消费者",
-      core_problem: "同类产品太多，测评太水，不知道信谁",
-      account_value: "第三方实测 + 可对比清单，帮你避坑选对",
-      one_liner: "帮你把选择做对，少交智商税",
-      follow_reason: "持续做客观实测和平价替代对比",
+      target_user: "和我一样正卡在职业十字路口的普通职场人",
+      core_problem: "想换方向又不敢动，身边没人能真正聊、只能自己扛",
+      account_value: "一个真人真实记录自己的困惑、求助和一点点想通的过程",
+      one_liner: "34岁想换方向，边迷茫边记录",
+      follow_reason: "想看一个普通人怎么从迷茫里慢慢走出来",
     },
     {
-      target_user: "想买但预算敏感、追求性价比的人",
-      core_problem: "既怕买贵又怕买错，决策成本高",
-      account_value: "按场景给出高性价比选择和排雷清单",
-      one_liner: "同价位里帮你挑出最值的那个",
-      follow_reason: "持续更新性价比榜单和避坑点",
+      target_user: "在纠结要不要裸辞/搞副业、又怕家里不支持的人",
+      core_problem: "每天都在'再忍忍'和'干脆不干了'之间反复横跳",
+      account_value: "把自己纠结、试错、踩坑的真实过程摊开来说",
+      one_liner: "副业和裸辞之间反复纠结的一个普通人",
+      follow_reason: "想找个同样在纠结的人一起搭伙、互相打气",
     },
     {
-      target_user: "第一次买某品类、完全没经验的新手",
-      core_problem: "不懂参数和套路，容易被导购带偏",
-      account_value: "用小白能懂的话讲清怎么挑、怎么砍价",
-      one_liner: "新手也能一次买对",
-      follow_reason: "持续做新手向的选购指南",
+      target_user: "被裁或被优化后、正在重新找方向的中年职场人",
+      core_problem: "离开平台才发现不知道自己还能干啥、值多少钱",
+      account_value: "真实记录一个被裁的人怎么重新找回方向感",
+      one_liner: "被裁之后，我在重新找方向",
+      follow_reason: "想看看同样处境的人后来都怎么走出来的",
     },
   ],
   expert: [
@@ -199,9 +220,14 @@ export async function generateAccountAndPlan(input: {
   trustSource?: string;
   regenerateAccountId?: string;
   createdAt?: string;
+  reportPrices?: ReportPrices;
 }): Promise<{ account: GrowthAccount; plan: GrowthPlan; usage?: Record<string, unknown> }> {
   const tenantId = input.tenantId ?? DEFAULT_TENANT_ID;
   const persona: GrowthPersona = input.persona ?? "expert";
+  const reportPrices: ReportPrices = input.reportPrices ?? {
+    lite: DEFAULT_BUSINESS_SETTINGS.report_lite_price,
+    deep: DEFAULT_BUSINESS_SETTINGS.report_deep_price,
+  };
   const fallback = pick(FALLBACK_ACCOUNT_VARIANTS[persona]);
   const timestamp = now();
   let payload: any = null;
@@ -210,7 +236,7 @@ export async function generateAccountAndPlan(input: {
   try {
     const result = await llmJSON<any>({
       system: GROWTH_SYSTEM_PROMPT,
-      user: buildAccountPlanUserPrompt({ ...input, persona }),
+      user: buildAccountPlanUserPrompt({ ...input, persona, reportPrices }),
       maxTokens: 3000,
       temperature: 0.4,
     });
@@ -259,9 +285,9 @@ export async function generateAccountAndPlan(input: {
     avoid_expressions: Array.isArray(accountData.avoid_expressions)
       ? accountData.avoid_expressions.slice(0, 8)
       : ["逆袭", "暴富", "月入X万", "包成功"],
-    compliance_redline: accountData.compliance_redline || "不承诺收益、不玄学、客户匿名、不用泛焦虑换阅读。",
-    private_domain: accountData.private_domain || "",
-    persona_specific: emptyPersonaSpecific(persona),
+    compliance_redline: asText(accountData.compliance_redline) || "不承诺收益、不玄学、客户匿名、不用泛焦虑换阅读。",
+    private_domain: asText(accountData.private_domain),
+    persona_specific: mergePersonaSpecific(persona, accountData.persona_specific),
     created_at: input.createdAt || timestamp,
     updated_at: timestamp,
   };
@@ -301,6 +327,7 @@ export async function generateTopicPool(input: {
         targetUser: input.account.target_user,
         coreProblem: input.account.core_problem,
         recentSignals: input.recentSignals,
+        context: accountContext(input.account),
       }),
       maxTokens: 5000,
       temperature: 0.55,
@@ -354,6 +381,8 @@ export async function generateDraft(input: {
     const result = await llmJSON<any>({
       system: GROWTH_SYSTEM_PROMPT,
       user: buildDraftUserPrompt({
+        persona: input.account.persona,
+        context: accountContext(input.account),
         targetUser: topic.target_user,
         trustSource: input.account.trust_source,
         direction: topic.direction,
@@ -413,6 +442,8 @@ export async function generateDraft(input: {
     cover_suggestion:
       payload?.cover_suggestion ||
       "真实办公桌面，手写目标客户判断表，画面克制，有真实过程感。",
+    story_mode: asText(payload?.story_mode) || undefined,
+    pictorial_rate: asText(payload?.pictorial_rate) || undefined,
     created_at: timestamp,
     updated_at: timestamp,
   };
@@ -614,6 +645,8 @@ async function generateSingleDraft(input: {
       ? payload.review_points.slice(0, 5)
       : ["收藏", "评论", "主页访问", "新增关注", "评论里是否出现目标用户信号"],
     cover_suggestion: payload?.cover_suggestion || "真实办公桌面，手写目标客户判断表，画面克制。",
+    story_mode: asText(payload?.story_mode) || undefined,
+    pictorial_rate: asText(payload?.pictorial_rate) || undefined,
     created_at: timestamp,
     updated_at: timestamp,
   };
@@ -818,6 +851,14 @@ function normalizeTopics(topics: any): TopicCandidate[] {
         ? topic.content_type
         : "diagnostic",
     hook: String(topic.hook || topic.title || "先判断你的公司外议价权"),
+    origin_force: String(
+      topic.origin_force ||
+        `标题入口「${topic.title || `候选题 ${index + 1}`}」需要靠具体物件、角色、场景或动作承接原力；若这句仍偏抽象，请重新生成。`,
+    ),
+    conflict_judgement: String(
+      topic.conflict_judgement ||
+        "本批选题未返回冲突判断，请重新生成一批；新规则要求每题必须写清反常识、反预期或强落差。",
+    ),
     follow_reason: String(topic.follow_reason || "账号会持续拆解成熟职场人的第二曲线判断。"),
     test_variable: String(topic.test_variable || "标题入口是否能吸引目标用户"),
     expected_signal: String(topic.expected_signal || "出现收藏、评论或主页访问"),
@@ -853,6 +894,8 @@ function fallbackTopics(account: GrowthAccount): TopicCandidate[] {
     pain: account.core_problem,
     content_type: contentType,
     hook: title,
+    origin_force: "标题包含目标受众熟悉的具体角色、场景或资产词，不只用抽象概念做入口。",
+    conflict_judgement: "围绕公司内位置与市场外定价之间的落差，形成反预期冲突。",
     follow_reason: "看完知道这个账号会持续拆解成熟职场人的市场化路径。",
     test_variable: index < 2 ? "目标客户表达" : index < 4 ? "工具收藏价值" : "信任锚点",
     expected_signal: "收藏、评论、主页访问或新增关注中至少出现一个正向信号。",

@@ -56,14 +56,18 @@ export interface PersonaSpecificField {
 
 export const PERSONA_SPECIFIC_FIELDS: Record<GrowthPersona, PersonaSpecificField[]> = {
   merchant: [
+    { key: "what_you_are", label: "你是什么（品类）", placeholder: "用顾客已有的分类词说清你归哪类，一听就懂。例：给中高管做职业决策的顾问，不是测评工具" },
+    { key: "how_different", label: "有何不同（定位）", placeholder: "对顾客有意义且基于竞争的差异，测试：听完不会追问『那又如何』。例：别人只给测评结果，我给能落地的决策框架 + 90 天陪跑" },
+    { key: "why_believe", label: "何以见得（信任状）", placeholder: "给可信证据，三类任选：有效承诺 / 顾客可自行验证 / 第三方证明。例：7 年组织咨询、20+ 成功案例、可看匿名交付样例" },
     { key: "main_offer", label: "主营产品/服务", placeholder: "例如：中高端职业咨询、定制化培训" },
     { key: "price_band", label: "客单价区间", placeholder: "例如：2000-8000 元" },
     { key: "conversion_goal", label: "转化目标", placeholder: "加微 / 到店 / 下单 / 留资" },
   ],
   buyer: [
-    { key: "review_category", label: "测评/对比的品类", placeholder: "例如：职业课程、简历服务" },
-    { key: "stance", label: "立场", placeholder: "第三方实测 / 避坑 / 平价替代" },
-    { key: "monetization", label: "变现方式", placeholder: "带货 / 佣金 / 探店合作" },
+    { key: "identity", label: "真人身份/现状", placeholder: "例如：34 岁被裁的前互联网中层，正在找方向" },
+    { key: "struggle", label: "正在纠结的决策", placeholder: "例如：要不要裸辞、副业该不该做、转不转行" },
+    { key: "growth_arc", label: "成长弧线/人设走向", placeholder: "从迷茫求助 → 边试边记录 → 找到方向" },
+    { key: "bridge", label: "转化桥（转折帖怎么软出场）", placeholder: "例如：做了个职业测评/找人梳理后想通了，引导私信" },
   ],
   expert: [
     { key: "expertise", label: "专业领域", placeholder: "例如：组织发展、职业决策" },
@@ -98,6 +102,8 @@ export interface TopicCandidate {
   pain: string;
   content_type: ContentType;
   hook: string;
+  origin_force?: string;
+  conflict_judgement?: string;
   follow_reason: string;
   test_variable: string;
   expected_signal: string;
@@ -160,6 +166,9 @@ export interface ContentDraft {
   trust_anchor: string;
   review_points: string[];
   cover_suggestion: string;
+  // 买家视角故事化专属（其它视角为空）：所用故事模式与预估画面率
+  story_mode?: string;
+  pictorial_rate?: string;
   created_at: string;
   updated_at: string;
 }
@@ -227,6 +236,19 @@ export interface StageReviewResult {
   by_direction: DirectionAggregate[];
   decision: StageDecision;
 }
+
+// 业务设置：面霸君可在界面里编辑的业务事实（当前只有两个报告价格，后续可扩展）
+export interface BusinessSettings {
+  tenant_id: string;
+  report_lite_price: string; // 小报告价格（字符串，允许写「199」或「199 元」等）
+  report_deep_price: string; // 大报告价格
+  updated_at: string;
+}
+
+export const DEFAULT_BUSINESS_SETTINGS: Omit<BusinessSettings, "tenant_id" | "updated_at"> = {
+  report_lite_price: "199",
+  report_deep_price: "6999",
+};
 
 export interface UsageEvent {
   id: string;

@@ -56,10 +56,12 @@ export async function POST(req: Request) {
     if (existing) createdAt = existing.created_at;
   }
 
+  const settings = await store.getBusinessSettings(DEFAULT_TENANT_ID);
   const { account, plan, usage } = await generateAccountAndPlan({
     tenantId: DEFAULT_TENANT_ID,
     ...parsed.data,
     createdAt,
+    reportPrices: { lite: settings.report_lite_price, deep: settings.report_deep_price },
   });
 
   await store.saveAccount(account);

@@ -164,6 +164,7 @@ export default function XiaohongshuNotesPage() {
   const [busy, setBusy] = useState("");
 
   const [editing, setEditing] = useState(false);
+  const [accountCardOpen, setAccountCardOpen] = useState(false);
   const [accountForm, setAccountForm] = useState<AccountForm | null>(null);
 
   const [selectedTopicId, setSelectedTopicId] = useState<string | null>(null);
@@ -193,6 +194,7 @@ export default function XiaohongshuNotesPage() {
       setState({ account: data.account ?? null, plan: data.plan ?? null, run, drafts });
       setAccountForm(data.account ? toAccountForm(data.account) : null);
       setEditing(false);
+      setAccountCardOpen(false);
       setChosenDraft(drafts[0] || run?.draft || null);
       setVariants([]);
       setSelectedTopicId(run?.selected_topic?.id ?? null);
@@ -206,8 +208,8 @@ export default function XiaohongshuNotesPage() {
     loadWorkspace(persona).catch((error) => setMessage((error as Error).message));
   }, [persona, loadWorkspace]);
 
-  async function run(label: string, action: () => Promise<void>) {
-    setBusy(label);
+  async function run(label: string, action: () => Promise<void>, target = label) {
+    setBusy(target);
     setMessage(`${label}中...`);
     try {
       await action();
@@ -297,7 +299,7 @@ export default function XiaohongshuNotesPage() {
       if (!res.ok) throw new Error(data.message || data.error || "生成正文失败");
       setVariants(data.drafts || []);
       setChosenDraft(null);
-    });
+    }, `生成正文:${topic.id}`);
   }
 
   async function chooseDraft(draft: ContentDraft) {
@@ -312,7 +314,7 @@ export default function XiaohongshuNotesPage() {
       setChosenDraft(data.draft);
       setVariants([]);
       await loadWorkspaceKeepChosen(data.draft);
-    });
+    }, `选正文:${draft.id}`);
   }
 
   async function loadWorkspaceKeepChosen(draft: ContentDraft) {
@@ -330,7 +332,7 @@ export default function XiaohongshuNotesPage() {
       const res = await fetch(`/api/growth/drafts/${draft.id}/publish`, { method: "POST" });
       if (!res.ok) throw new Error("标记发布失败");
       await loadWorkspaceKeepChosen(chosenDraft ?? draft);
-    });
+    }, `发布:${draft.id}`);
   }
 
   async function submitReviewNote(draft: ContentDraft) {
@@ -345,7 +347,7 @@ export default function XiaohongshuNotesPage() {
       if (!res.ok) throw new Error(data.message || data.error || "提交复盘失败");
       setReviews((prev) => ({ ...prev, [draft.id]: data.review }));
       await loadWorkspaceKeepChosen(chosenDraft ?? draft);
-    });
+    }, `复盘:${draft.id}`);
   }
 
   function setNoteMetric(draftId: string, name: keyof ReviewFormState, value: string) {
@@ -415,7 +417,7 @@ export default function XiaohongshuNotesPage() {
               当前视角「{GROWTH_PERSONA_LABELS[persona]}」还没有定位卡。
             </p>
             <button className="btn-primary mt-4" disabled={!!busy} onClick={() => createAccount()}>
-              生成账号定位卡
+              {busy === "创建账号定位卡" ? "生成中..." : "生成账号定位卡"}
             </button>
           </div>
         ) : editing && accountForm ? (
@@ -461,32 +463,59 @@ export default function XiaohongshuNotesPage() {
             <EditArea label="私域承接方式（可选）" value={accountForm.private_domain} onChange={(v) => setAccountForm({ ...accountForm, private_domain: v })} />
 
             <div className="flex gap-3 pt-2">
-              <button className="btn-primary" disabled={!!busy} onClick={saveAccount}>保存</button>
+              <button className="btn-primary" disabled={!!busy} onClick={saveAccount}>
+                {busy === "保存定位卡" ? "保存中..." : "保存"}
+              </button>
               <button className="rounded-full bg-ink-100 px-4 py-3 text-sm font-semibold text-ink-700" onClick={() => { setEditing(false); setAccountForm(toAccountForm(account)); }}>取消</button>
             </div>
           </div>
         ) : (
           <div className="space-y-3 text-sm leading-6 text-ink-700">
             {account.one_liner && <Field label="一句话定位" value={account.one_liner} />}
-            <Field label="目标用户" value={account.target_user} />
-            <Field label="最痛的问题" value={account.core_problem} />
-            <Field label="账号价值" value={account.account_value} />
-            {account.follow_reason && <Field label="关注理由" value={account.follow_reason} />}
-            <Field label="信任来源" value={account.trust_source} />
-            <Field label="不做什么" value={account.not_doing} />
-            {account.content_directions && account.content_directions.length > 0 && (
-              <Field label="内容方向" value={account.content_directions.join(" / ")} />
+            {!account.one_liner && <Field label="账号名称" value={account.name} />}
+            <div className="rounded-2xl bg-ink-50 p-3 text-xs leading-5 text-ink-600">
+              定位卡平时默认收起，需要调整定位、查看三问或专属字段时再展开。
+            </div>
+            {accountCardOpen && (
+              <>
+                <Field label="目标用户" value={account.target_user} />
+                <Field label="最痛的问题" value={account.core_problem} />
+                <Field label="账号价值" value={account.account_value} />
+                {account.follow_reason && <Field label="关注理由" value={account.follow_reason} />}
+                <Field label="信任来源" value={account.trust_source} />
+                <Field label="不做什么" value={account.not_doing} />
+                {account.content_directions && account.content_directions.length > 0 && (
+                  <Field label="内容方向" value={account.content_directions.join(" / ")} />
+                )}
+                {account.tone_style && <Field label="语气风格" value={account.tone_style} />}
+                {account.persona_specific &&
+                  PERSONA_SPECIFIC_FIELDS[persona].map((field) =>
+                    account.persona_specific?.[field.key] ? (
+                      <Field key={field.key} label={field.label} value={account.persona_specific[field.key]} />
+                    ) : null
+                  )}
+              </>
             )}
-            {account.tone_style && <Field label="语气风格" value={account.tone_style} />}
-            {account.persona_specific &&
-              PERSONA_SPECIFIC_FIELDS[persona].map((field) =>
-                account.persona_specific?.[field.key] ? (
-                  <Field key={field.key} label={field.label} value={account.persona_specific[field.key]} />
-                ) : null
-              )}
             <div className="flex flex-wrap gap-3 pt-2">
-              <button className="btn-primary" onClick={() => { setAccountForm(toAccountForm(account)); setEditing(true); }}>编辑定位卡</button>
-              <button className="rounded-full bg-ink-100 px-4 py-3 text-sm font-semibold text-ink-700" disabled={!!busy} onClick={() => createAccount(true)}>系统生成</button>
+              <button
+                className="rounded-full bg-ink-100 px-4 py-3 text-sm font-semibold text-ink-700"
+                onClick={() => setAccountCardOpen((v) => !v)}
+              >
+                {accountCardOpen ? "收起定位卡" : "展开定位卡"}
+              </button>
+              <button
+                className="btn-primary"
+                onClick={() => {
+                  setAccountForm(toAccountForm(account));
+                  setAccountCardOpen(true);
+                  setEditing(true);
+                }}
+              >
+                编辑定位卡
+              </button>
+              <button className="rounded-full bg-ink-100 px-4 py-3 text-sm font-semibold text-ink-700" disabled={!!busy} onClick={() => createAccount(true)}>
+                {busy === "系统生成定位卡" ? "生成中..." : "系统生成"}
+              </button>
             </div>
           </div>
         )}
@@ -516,7 +545,7 @@ export default function XiaohongshuNotesPage() {
                 <p className="mt-1 text-xs leading-5 text-ink-500">验证变量：{topic.test_variable}</p>
                 <div className="mt-3 flex flex-wrap gap-2">
                   <button className="btn-primary" disabled={!!busy} onClick={() => generateVariants(topic)}>
-                    用这个选题写正文
+                    {busy === `生成正文:${topic.id}` ? "生成中..." : "用这个选题写正文"}
                   </button>
                   <CopyButton text={topic.title} label="复制标题" />
                 </div>
@@ -534,10 +563,22 @@ export default function XiaohongshuNotesPage() {
               <div key={draft.id} className="rounded-2xl border border-ink-100 p-4">
                 <div className="mb-2 text-xs text-gold-700">方案 {index + 1} · {index === 0 ? "精简版" : "深度长文"}（{draft.word_count.total} 字）</div>
                 <div className="font-medium leading-6">{draft.title}</div>
+                {(persona === "buyer" || draft.story_mode || draft.pictorial_rate) && (
+                  <div className="mt-1 flex flex-wrap gap-2">
+                    <span className="rounded-full bg-gold-100 px-2 py-0.5 text-xs font-medium text-gold-700">
+                      模式：{draft.story_mode || "本批未返回，请重新生成正文"}
+                    </span>
+                    <span className="rounded-full bg-gold-100 px-2 py-0.5 text-xs font-medium text-gold-700">
+                      画面率：{draft.pictorial_rate || "本批未返回"}
+                    </span>
+                  </div>
+                )}
                 <pre className="mt-3 max-h-64 overflow-auto whitespace-pre-wrap rounded-xl bg-ink-50 p-3 text-xs leading-6 text-ink-700">{draft.body}</pre>
                 <div className="mt-2 text-xs text-ink-500">字数：{draft.word_count.total} / {draft.word_count.within_limit ? "≤1000 通过" : "超限"}</div>
                 <div className="mt-3 flex flex-wrap gap-2">
-                  <button className="btn-primary" disabled={!!busy} onClick={() => chooseDraft(draft)}>选这篇</button>
+                  <button className="btn-primary" disabled={!!busy} onClick={() => chooseDraft(draft)}>
+                    {busy === `选正文:${draft.id}` ? "选定中..." : "选这篇"}
+                  </button>
                   <CopyButton text={draft.title} label="复制标题" />
                   <CopyButton text={`${draft.body}\n\n${draft.hashtags.join(" ")}`} label="复制正文+话题" />
                 </div>
@@ -554,13 +595,23 @@ export default function XiaohongshuNotesPage() {
               if (topic) generateVariants(topic);
             }}
           >
-            再生成 2 篇新的
+            {busy === `生成正文:${selectedTopicId}` ? "生成中..." : "再生成 2 篇新的"}
           </button>
         )}
         {chosenDraft && variants.length === 0 && (
           <div className="rounded-2xl border border-gold-300 bg-gold-50/40 p-4">
             <div className="mb-2 text-xs text-gold-700">已选定正文（状态：{DRAFT_STATUS_LABELS[chosenDraft.status] ?? chosenDraft.status}）</div>
             <div className="font-medium leading-6">{chosenDraft.title}</div>
+            {(persona === "buyer" || chosenDraft.story_mode || chosenDraft.pictorial_rate) && (
+              <div className="mt-1 flex flex-wrap gap-2">
+                <span className="rounded-full bg-gold-100 px-2 py-0.5 text-xs font-medium text-gold-700">
+                  模式：{chosenDraft.story_mode || "本批未返回，请重新生成正文"}
+                </span>
+                <span className="rounded-full bg-gold-100 px-2 py-0.5 text-xs font-medium text-gold-700">
+                  画面率：{chosenDraft.pictorial_rate || "本批未返回"}
+                </span>
+              </div>
+            )}
             <pre className="mt-3 max-h-72 overflow-auto whitespace-pre-wrap rounded-xl bg-white p-3 text-sm leading-7 text-ink-800">{chosenDraft.body}{"\n\n"}{chosenDraft.hashtags.join(" ")}</pre>
             <div className="mt-3 flex flex-wrap gap-2">
               <CopyButton text={chosenDraft.title} label="复制标题" />
@@ -601,7 +652,7 @@ export default function XiaohongshuNotesPage() {
                 note={note}
                 review={reviews[note.id]}
                 form={metricsByDraft[note.id] ?? emptyReviewForm}
-                busy={!!busy}
+                busyKey={busy}
                 onMetric={(name, value) => setNoteMetric(note.id, name, value)}
                 onPublish={() => markPublishedNote(note)}
                 onSubmit={() => submitReviewNote(note)}
@@ -614,7 +665,7 @@ export default function XiaohongshuNotesPage() {
       {/* Step 5 阶段复盘（跨笔记做方向决策） */}
       <StepCard step="5" title="阶段复盘" desc="把多篇笔记按方向汇总，判断哪个方向值得放大、哪个该暂停。不靠单篇爆款下结论。">
         <button className="btn-primary" disabled={!!busy || !account} onClick={generateStageReview}>
-          {busy === "生成阶段复盘" ? "汇总中..." : "生成阶段复盘 / 方向决策"}
+          {busy === "生成阶段复盘" ? "生成中..." : "生成阶段复盘 / 方向决策"}
         </button>
         {stageResult && (
           <div className="mt-5 space-y-4">
@@ -646,7 +697,7 @@ function NoteReviewCard({
   note,
   review,
   form,
-  busy,
+  busyKey,
   onMetric,
   onPublish,
   onSubmit,
@@ -654,7 +705,7 @@ function NoteReviewCard({
   note: ContentDraft;
   review?: GrowthReview;
   form: ReviewFormState;
-  busy: boolean;
+  busyKey: string;
   onMetric: (name: keyof ReviewFormState, value: string) => void;
   onPublish: () => void;
   onSubmit: () => void;
@@ -662,6 +713,8 @@ function NoteReviewCard({
   const [open, setOpen] = useState(false);
   const published = note.status === "published" || note.status === "reviewed";
   const reviewed = note.status === "reviewed" && !!review;
+  const publishing = busyKey === `发布:${note.id}`;
+  const reviewing = busyKey === `复盘:${note.id}`;
 
   return (
     <div className="rounded-2xl border border-ink-100 p-4">
@@ -678,10 +731,10 @@ function NoteReviewCard({
         <div className="flex flex-wrap gap-2">
           <button
             className="rounded-full bg-ink-100 px-4 py-2 text-sm font-semibold text-ink-700 transition hover:bg-ink-200 disabled:opacity-40"
-            disabled={busy || published}
+            disabled={!!busyKey || published}
             onClick={onPublish}
           >
-            {published ? "已发布" : "标记为已发布"}
+            {publishing ? "标记中..." : published ? "已发布" : "标记为已发布"}
           </button>
           <button
             className="rounded-full bg-ink-100 px-4 py-2 text-sm font-semibold text-ink-700 transition hover:bg-ink-200"
@@ -721,8 +774,8 @@ function NoteReviewCard({
               />
             </div>
           </div>
-          <button className="btn-primary mt-4" disabled={busy} onClick={onSubmit}>
-            {reviewed ? "更新复盘" : "提交复盘"}
+          <button className="btn-primary mt-4" disabled={!!busyKey} onClick={onSubmit}>
+            {reviewing ? "提交中..." : reviewed ? "更新复盘" : "提交复盘"}
           </button>
         </div>
       )}

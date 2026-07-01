@@ -307,6 +307,13 @@ create table if not exists title_scores (
   created_at timestamptz not null default now()
 );
 
+-- 业务设置：每租户一行，存报告价格等可编辑的业务事实
+create table if not exists growth_business_settings (
+  tenant_id text primary key references tenants(id) on delete cascade,
+  payload jsonb not null,
+  updated_at timestamptz not null default now()
+);
+
 create table if not exists hot_notes (
   id uuid primary key default gen_random_uuid(),
   tenant_id text not null references tenants(id) on delete cascade,

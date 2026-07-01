@@ -12,17 +12,33 @@ const defaultValueProfile = {
   filter_sentence: "能持续学习、连接更大的世界、让个人判断被看见。",
 };
 
+function formatPriceLabel(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) return "未设置价格";
+  if (/^\d+(\.\d+)?$/.test(trimmed)) return `¥${trimmed}`;
+  return trimmed;
+}
+
+function priceTextToCents(value: string) {
+  const match = value.replace(/,/g, "").match(/\d+(\.\d+)?/);
+  if (!match) return null;
+  return Math.round(Number(match[0]) * 100);
+}
+
 export default function ReportsHubPage() {
   const [customerName, setCustomerName] = useState("测试用户");
   const [customerContact, setCustomerContact] = useState("");
   const [surveyAnswers, setSurveyAnswers] = useState("{}");
   const [valueProfile, setValueProfile] = useState(JSON.stringify(defaultValueProfile, null, 2));
   const [talentAnswers, setTalentAnswers] = useState("{}");
+  const [settingsForm, setSettingsForm] = useState({ report_lite_price: "199", report_deep_price: "6999" });
   const [profile, setProfile] = useState<AssessmentProfile | null>(null);
   const [latestOrder, setLatestOrder] = useState<ReportOrder | null>(null);
   const [message, setMessage] = useState("");
+  const [settingsMessage, setSettingsMessage] = useState("");
   const [orderMessage, setOrderMessage] = useState("");
   const [loading, setLoading] = useState(false);
+  const [settingsLoading, setSettingsLoading] = useState(false);
   const [orderLoading, setOrderLoading] = useState<ReportType | null>(null);
 
   useEffect(() => {
@@ -31,6 +47,43 @@ export default function ReportsHubPage() {
       .then((data) => setTalentAnswers(JSON.stringify(data.neutral_answers || {}, null, 2)))
       .catch(() => setMessage("未能加载 252 题模板，请手动粘贴答案 JSON。"));
   }, []);
+
+  useEffect(() => {
+    fetch("/api/growth/settings", { cache: "no-store" })
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.settings) {
+          setSettingsForm({
+            report_lite_price: data.settings.report_lite_price ?? "199",
+            report_deep_price: data.settings.report_deep_price ?? "6999",
+          });
+        }
+      })
+      .catch(() => setSettingsMessage("价格设置加载失败，请刷新重试。"));
+  }, []);
+
+  async function saveSettings() {
+    setSettingsLoading(true);
+    setSettingsMessage("保存价格中...");
+    try {
+      const res = await fetch("/api/growth/settings", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(settingsForm),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || data.error || "保存价格失败");
+      setSettingsForm({
+        report_lite_price: data.settings.report_lite_price ?? settingsForm.report_lite_price,
+        report_deep_price: data.settings.report_deep_price ?? settingsForm.report_deep_price,
+      });
+      setSettingsMessage("价格已保存。");
+    } catch (error) {
+      setSettingsMessage((error as Error).message);
+    } finally {
+      setSettingsLoading(false);
+    }
+  }
 
   async function createProfile() {
     setLoading(true);
@@ -66,13 +119,14 @@ export default function ReportsHubPage() {
     setOrderLoading(reportType);
     setOrderMessage(`创建${reportType === "lite" ? "小" : "大"}报告订单中...`);
     try {
+      const priceText = reportType === "lite" ? settingsForm.report_lite_price : settingsForm.report_deep_price;
       const res = await fetch("/api/reports/orders", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           assessment_profile_id: profile.id,
           report_type: reportType,
-          price_cents: reportType === "lite" ? 19900 : 699900,
+          price_cents: priceTextToCents(priceText),
           customer_name: profile.customer_name,
           customer_contact: profile.customer_contact,
         }),
@@ -103,6 +157,39 @@ export default function ReportsHubPage() {
           <a className="rounded-full bg-white px-4 py-2 text-sm text-ink-600 shadow-sm" href="/mianba/orders">订单后台</a>
         </div>
       </header>
+
+      {/* 业务设置 */}
+      <section className="mb-4 rounded-3xl bg-white p-5 shadow-sm">
+        <div className="mb-4 text-xs tracking-[0.25em] text-gold-700">00 · 业务设置</div>
+        <h2 className="mb-2 font-semibold">报告价格</h2>
+        <p className="mb-4 text-sm leading-6 text-ink-600">
+          这里设置小报告和大报告价格，会影响报告订单金额，也会同步给增长系统生成内容时引用。
+        </p>
+        <div className="grid gap-3 md:grid-cols-2">
+          <div>
+            <label className="mb-1 block text-xs text-ink-500">小报告价格</label>
+            <input
+              value={settingsForm.report_lite_price}
+              onChange={(e) => setSettingsForm({ ...settingsForm, report_lite_price: e.target.value })}
+              className="w-full rounded-xl border border-ink-100 bg-white px-3 py-2 text-sm"
+              placeholder="例如：199、199 元、免费体验"
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-xs text-ink-500">大报告价格</label>
+            <input
+              value={settingsForm.report_deep_price}
+              onChange={(e) => setSettingsForm({ ...settingsForm, report_deep_price: e.target.value })}
+              className="w-full rounded-xl border border-ink-100 bg-white px-3 py-2 text-sm"
+              placeholder="例如：6999、6999 元"
+            />
+          </div>
+        </div>
+        <button className="btn-primary mt-4" disabled={settingsLoading} onClick={saveSettings}>
+          {settingsLoading ? "保存中..." : "保存价格"}
+        </button>
+        {settingsMessage && <p className="mt-3 text-sm text-ink-600">{settingsMessage}</p>}
+      </section>
 
       {/* 测试链接 */}
       <section className="mb-4 rounded-3xl bg-white p-5 shadow-sm">
@@ -136,7 +223,7 @@ export default function ReportsHubPage() {
       <section className="grid gap-4 md:grid-cols-2">
         <div className="rounded-3xl bg-white p-5 shadow-sm">
           <div className="mb-4 text-xs tracking-[0.25em] text-gold-700">02 · 小报告</div>
-          <h2 className="mb-2 font-semibold">初步诊断报告（约 ¥199）</h2>
+          <h2 className="mb-2 font-semibold">初步诊断报告（{formatPriceLabel(settingsForm.report_lite_price)}）</h2>
           <p className="mb-4 text-sm leading-6 text-ink-600">方向初筛 + 价值观 + 天赋信号 + 90 天验证框架，12 版块。</p>
           {profile ? (
             <div className="flex flex-wrap gap-3">
@@ -152,7 +239,7 @@ export default function ReportsHubPage() {
 
         <div className="rounded-3xl bg-white p-5 shadow-sm">
           <div className="mb-4 text-xs tracking-[0.25em] text-gold-700">03 · 大报告</div>
-          <h2 className="mb-2 font-semibold">完整咨询报告（约 ¥6999）</h2>
+          <h2 className="mb-2 font-semibold">完整咨询报告（{formatPriceLabel(settingsForm.report_deep_price)}）</h2>
           <p className="mb-4 text-sm leading-6 text-ink-600">六步漏斗：喜欢区 → 发散 → 感性 → 市场 → VRIN → 失败验尸 + 90 天计划。</p>
           {profile ? (
             <div className="flex flex-wrap gap-3">
