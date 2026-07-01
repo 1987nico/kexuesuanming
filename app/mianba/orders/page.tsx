@@ -23,7 +23,7 @@ export default async function MianbaOrdersPage() {
             创建报告订单
           </a>
           <a className="rounded-full bg-white px-4 py-2 text-sm text-ink-600 shadow-sm" href="/mianba">
-            返回增长工作台
+            返回首页
           </a>
         </div>
       </header>

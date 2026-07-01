@@ -99,7 +99,7 @@ export default function ReportsHubPage() {
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <a className="rounded-full bg-white px-4 py-2 text-sm text-ink-600 shadow-sm" href="/mianba">小红书笔记</a>
+          <a className="rounded-full bg-white px-4 py-2 text-sm text-ink-600 shadow-sm" href="/mianba">返回首页</a>
           <a className="rounded-full bg-white px-4 py-2 text-sm text-ink-600 shadow-sm" href="/mianba/orders">订单后台</a>
         </div>
       </header>
