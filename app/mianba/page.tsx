@@ -42,6 +42,8 @@ export default function MianbaWorkspacePage() {
   const [scoringTitle, setScoringTitle] = useState(false);
   const [coverBrief, setCoverBrief] = useState<CoverBrief | null>(null);
   const [buildingCoverBrief, setBuildingCoverBrief] = useState(false);
+  const [coverImageUrl, setCoverImageUrl] = useState<string | null>(null);
+  const [generatingCoverImage, setGeneratingCoverImage] = useState(false);
   const [reviewForm, setReviewForm] = useState<ReviewFormState>({
     impressions: "",
     reads: "",
@@ -79,6 +81,7 @@ export default function MianbaWorkspacePage() {
   useEffect(() => {
     setTitleScore(null);
     setCoverBrief(null);
+    setCoverImageUrl(null);
     setLatestReview(null);
   }, [latestDraft?.id]);
 
@@ -198,6 +201,31 @@ export default function MianbaWorkspacePage() {
       setMessage((error as Error).message || "封面 brief 生成失败");
     } finally {
       setBuildingCoverBrief(false);
+    }
+  }
+
+  async function generateCoverImage() {
+    if (!coverBrief) return;
+    setGeneratingCoverImage(true);
+    setMessage("生成 AI 封面图中...");
+    try {
+      const res = await fetch("/api/growth/cover-image", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          prompt: coverBrief.imagePrompt,
+          negativePrompt: coverBrief.negativePrompt,
+          size: "1024x1536",
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || data.error || "AI 封面图生成失败");
+      setCoverImageUrl(data.image?.imageDataUrl || null);
+      setMessage("AI 封面图生成完成");
+    } catch (error) {
+      setMessage((error as Error).message || "AI 封面图生成失败");
+    } finally {
+      setGeneratingCoverImage(false);
     }
   }
 
@@ -394,6 +422,16 @@ export default function MianbaWorkspacePage() {
                 <p className="mt-1 whitespace-pre-wrap text-ink-800">{coverBrief.imagePrompt}</p>
                 <div className="mt-3 text-ink-500">负向 Prompt</div>
                 <p className="mt-1 whitespace-pre-wrap text-ink-800">{coverBrief.negativePrompt}</p>
+                <button className="btn-primary mt-4 w-full" disabled={generatingCoverImage} onClick={generateCoverImage}>
+                  {generatingCoverImage ? "AI 封面生成中..." : "生成 AI 封面图"}
+                </button>
+                {coverImageUrl && (
+                  <div
+                    aria-label="AI 生成封面"
+                    className="mt-4 aspect-[2/3] w-full rounded-2xl bg-cover bg-center"
+                    style={{ backgroundImage: `url(${coverImageUrl})` }}
+                  />
+                )}
               </div>
             )}
             <button className="btn-primary mt-5 w-full" disabled={loading} onClick={markPublished}>
