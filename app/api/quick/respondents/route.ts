@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { store } from "@/lib/db/store";
-import { QUICK_PANEL_ID, QUICK_PANEL_TITLE, SEED_ITEMS } from "@/lib/quickScore/seed";
+import { getQuickPanelDef } from "@/lib/quickScore/registry";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -18,11 +18,12 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "validation", issues: parse.error.flatten() }, { status: 400 });
   }
   const { panelId, name } = parse.data;
-  if (panelId !== QUICK_PANEL_ID) {
+  const def = getQuickPanelDef(panelId);
+  if (!def) {
     return NextResponse.json({ error: "panel_not_found" }, { status: 404 });
   }
 
-  await store().ensureQuickPanel(QUICK_PANEL_ID, QUICK_PANEL_TITLE, SEED_ITEMS);
+  await store().ensureQuickPanel(panelId, def.title, def.items);
   const respondent = await store().createQuickRespondent(panelId, name.trim());
   return NextResponse.json({ respondent });
 }

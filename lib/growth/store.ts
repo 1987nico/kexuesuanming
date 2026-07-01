@@ -24,6 +24,8 @@ export interface GrowthStore {
   getDraft(id: string): Promise<ContentDraft | null>;
   listDrafts(accountId: string): Promise<ContentDraft[]>;
   saveReview(review: GrowthReview): Promise<void>;
+  getReviewByDraft(draftId: string): Promise<GrowthReview | null>;
+  listReviewsByAccount(accountId: string): Promise<GrowthReview[]>;
   saveUsage(event: Omit<UsageEvent, "id" | "created_at">): Promise<void>;
 }
 
@@ -107,6 +109,23 @@ class MemoryGrowthStore implements GrowthStore {
 
   async saveReview(review: GrowthReview) {
     this.reviews.set(review.id, review);
+  }
+
+  async getReviewByDraft(draftId: string) {
+    return (
+      [...this.reviews.values()]
+        .filter((review) => review.draft_id === draftId)
+        .sort((a, b) => b.created_at.localeCompare(a.created_at))[0] ?? null
+    );
+  }
+
+  async listReviewsByAccount(accountId: string) {
+    const draftIds = new Set(
+      [...this.drafts.values()].filter((d) => d.account_id === accountId).map((d) => d.id)
+    );
+    return [...this.reviews.values()]
+      .filter((review) => draftIds.has(review.draft_id))
+      .sort((a, b) => b.created_at.localeCompare(a.created_at));
   }
 
   async saveUsage(event: Omit<UsageEvent, "id" | "created_at">) {
@@ -274,6 +293,31 @@ class SupabaseGrowthStore implements GrowthStore {
       payload: review,
     });
     if (error) throw error;
+  }
+
+  async getReviewByDraft(draftId: string) {
+    const { data, error } = await this.db
+      .from("growth_reviews")
+      .select("payload")
+      .eq("draft_id", draftId)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error) throw error;
+    return (data?.payload as GrowthReview) ?? null;
+  }
+
+  async listReviewsByAccount(accountId: string) {
+    const drafts = await this.listDrafts(accountId);
+    const draftIds = drafts.map((d) => d.id);
+    if (draftIds.length === 0) return [];
+    const { data, error } = await this.db
+      .from("growth_reviews")
+      .select("payload")
+      .in("draft_id", draftIds)
+      .order("created_at", { ascending: false });
+    if (error) throw error;
+    return (data ?? []).map((row) => row.payload as GrowthReview);
   }
 
   async saveUsage(event: Omit<UsageEvent, "id" | "created_at">) {

@@ -3,18 +3,23 @@ import {
   buildAccountPlanUserPrompt,
   buildDraftUserPrompt,
   buildReviewUserPrompt,
+  buildStageReviewUserPrompt,
   buildTopicPoolUserPrompt,
   GROWTH_SYSTEM_PROMPT,
 } from "./agents";
 import type {
   ContentDraft,
+  DirectionAggregate,
   GrowthAccount,
+  GrowthDirection,
   GrowthPersona,
   GrowthPlan,
   GrowthPlanWeek,
   GrowthReview,
   GrowthReviewMetrics,
   GrowthRun,
+  StageDecision,
+  StageReviewResult,
   TopicCandidate,
 } from "./types";
 import { countPublishChars, normalizeTags } from "./validation";
@@ -86,6 +91,23 @@ function fallbackWeeks(): GrowthPlanWeek[] {
 
 function pick<T>(arr: T[]): T {
   return arr[Math.floor(Math.random() * arr.length)];
+}
+
+// 小红书选题标题规则：含标点不超过 20 字。做兜底裁剪，保证入库标题一定合规。
+const TITLE_MAX_CHARS = 20;
+
+export function enforceTitleLimit(raw: string): string {
+  let title = String(raw ?? "").trim();
+  // 去掉用分隔符外挂的副标题（｜ | —— - · 等），只保留主标题
+  title = title.split(/\s*[|｜]\s*|\s*[—-]{2,}\s*|\s+·\s+/)[0].trim();
+  const chars = Array.from(title);
+  if (chars.length <= TITLE_MAX_CHARS) return title;
+  // 仍超长则按字符裁剪，并去掉裁剪处末尾的孤立标点
+  return chars
+    .slice(0, TITLE_MAX_CHARS)
+    .join("")
+    .replace(/[，。、；：,;:!！?？…\-—·（(【\[《]+$/u, "")
+    .trim();
 }
 
 interface FallbackAccountFields {
@@ -356,7 +378,7 @@ export async function generateDraft(input: {
   }
 
   const hashtags = normalizeTags(payload?.hashtags || ["#中高层转型", "#第二曲线", "#小红书运营"]);
-  const title = payload?.title || topic.title;
+  const title = enforceTitleLimit(payload?.title || topic.title);
   const body =
     payload?.body ||
     `如果你已经在公司里做出成绩，但离开这个位置后，客户、预算和信任还会不会跟着你走？\n\n先别急着做个人 IP，也别急着追爆款。先判断三件事：\n\n1. 你现在的价值，是岗位给的，还是市场愿意单独为你付费？\n2. 你手里有没有能被目标客户理解的具体成果？\n3. 你发出的内容，是在吸引目标客户，还是只吸引泛职场围观？\n\n这篇先验证一个变量：${topic.test_variable}。\n\n我会继续记录，一个成熟职场人怎么把经验变成市场上的资产。`;
@@ -372,9 +394,10 @@ export async function generateDraft(input: {
     test_variable: topic.test_variable,
     expected_signal: topic.expected_signal,
     title,
-    alternative_titles: Array.isArray(payload?.alternative_titles)
+    alternative_titles: (Array.isArray(payload?.alternative_titles)
       ? payload.alternative_titles.slice(0, 3)
-      : [`${topic.title}，先看这张表`, "别急着发内容，先判断目标客户", "公司外议价权，先看 5 个信号"],
+      : [`${topic.title}，先看这张表`, "别急着发内容，先判断目标客户", "公司外议价权，先看 5 个信号"]
+    ).map((t: string) => enforceTitleLimit(t)),
     target_user: payload?.target_user || topic.target_user,
     cover_text: payload?.cover_text || topic.hook,
     body,
@@ -559,7 +582,7 @@ async function generateSingleDraft(input: {
   }
 
   const hashtags = normalizeTags(payload?.hashtags || ["#中高层转型", "#第二曲线", "#小红书运营"]);
-  const title = payload?.title || topic.title;
+  const title = enforceTitleLimit(payload?.title || topic.title);
   const shortFallback = `围绕「${topic.title}」，先验证一个变量：${topic.test_variable}。\n\n最锋利的判断：别急着做，先看你现在的价值是岗位给的，还是市场愿意单独为你付费。\n\n3 个信号：\n1. 有没有能被目标客户理解的具体成果？\n2. 你的内容在吸引目标客户，还是只吸引泛围观？\n3. 离开这个位置，客户还会不会找你？`;
   const longFallback = `围绕「${topic.title}」，本篇先验证一个变量：${topic.test_variable}。\n\n先说一个反常识判断：很多人以为自己缺的是流量，其实缺的是“市场愿意单独为你付费的理由”。\n\n一、先自查三件事\n1. 你现在的价值，是岗位给的，还是市场愿意单独为你付费？\n2. 你手里有没有能被目标客户理解的具体成果（案例、数字、可复用方法）？\n3. 你发出的内容，是在吸引目标客户，还是只吸引泛围观？\n\n二、怎么把经验变成可被购买的表达\n把你做过的判断拆成“别人可以照着用”的清单和标准，而不是只讲故事。每一篇只讲清楚一个判断，并给出下一步动作。\n\n三、下一步\n先用一篇内容测试：目标客户看完，会不会主动来问。如果会，说明方向成立；如果只有点赞没有咨询，就换角度。\n\n我会继续记录，一个成熟职场人怎么把经验变成市场上可被信任、可被定价的资产。`;
   const body = payload?.body || (input.lengthKind === "long" ? longFallback : shortFallback);
@@ -575,9 +598,10 @@ async function generateSingleDraft(input: {
     test_variable: topic.test_variable,
     expected_signal: topic.expected_signal,
     title,
-    alternative_titles: Array.isArray(payload?.alternative_titles)
+    alternative_titles: (Array.isArray(payload?.alternative_titles)
       ? payload.alternative_titles.slice(0, 3)
-      : [`${topic.title}，先看这张表`, "别急着发内容，先判断目标客户"],
+      : [`${topic.title}，先看这张表`, "别急着发内容，先判断目标客户"]
+    ).map((t: string) => enforceTitleLimit(t)),
     target_user: payload?.target_user || topic.target_user,
     cover_text: payload?.cover_text || topic.hook,
     body,
@@ -658,12 +682,135 @@ export async function reviewDraft(input: {
   return { review, usage };
 }
 
+/**
+ * 阶段复盘：以笔记为单元，跨笔记按方向聚合，给方向级决策。
+ */
+export async function stageReview(input: {
+  account: GrowthAccount;
+  notes: ContentDraft[];
+  reviews: GrowthReview[];
+}): Promise<{ result: StageReviewResult; usage?: Record<string, unknown> }> {
+  const reviewByDraft = new Map(input.reviews.map((r) => [r.draft_id, r]));
+  const directions: GrowthDirection[] = ["A", "B", "C"];
+
+  const by_direction: DirectionAggregate[] = directions.map((direction) => {
+    const notes = input.notes.filter((n) => n.direction === direction);
+    const reviewed = notes
+      .map((n) => reviewByDraft.get(n.id))
+      .filter((r): r is GrowthReview => Boolean(r));
+    let reads = 0;
+    let saves = 0;
+    let comments = 0;
+    let follows = 0;
+    const classifications: Record<string, number> = {};
+    for (const rv of reviewed) {
+      reads += rv.metrics.reads || 0;
+      saves += rv.metrics.saves || 0;
+      comments += rv.metrics.comments || 0;
+      follows += rv.metrics.follows || 0;
+      classifications[rv.classification] = (classifications[rv.classification] || 0) + 1;
+    }
+    return {
+      direction,
+      note_count: notes.length,
+      reviewed_count: reviewed.length,
+      total_reads: reads,
+      total_saves: saves,
+      total_comments: comments,
+      total_follows: follows,
+      avg_save_rate: reads > 0 ? Number((saves / reads).toFixed(4)) : 0,
+      avg_comment_rate: reads > 0 ? Number((comments / reads).toFixed(4)) : 0,
+      classifications,
+    } satisfies DirectionAggregate;
+  });
+
+  const reviewed_total = by_direction.reduce((sum, d) => sum + d.reviewed_count, 0);
+
+  let decision: Partial<StageDecision> | null = null;
+  let usage: Record<string, unknown> | undefined;
+  try {
+    const result = await llmJSON<StageDecision>({
+      system: GROWTH_SYSTEM_PROMPT,
+      user: buildStageReviewUserPrompt({
+        targetUser: input.account.target_user,
+        directions: input.account.content_directions,
+        aggregate: by_direction,
+      }),
+      maxTokens: 1200,
+      temperature: 0.4,
+    });
+    decision = result.data;
+    usage = {
+      provider: result.raw.provider,
+      model: result.raw.model,
+      input_tokens: result.raw.usage?.inputTokens,
+      output_tokens: result.raw.usage?.outputTokens,
+    };
+  } catch (error) {
+    console.warn("[growth] stage review fallback:", (error as Error).message);
+  }
+
+  const fallback = deterministicStageDecision(by_direction, reviewed_total);
+  const finalDecision: StageDecision = {
+    scale_direction: decision?.scale_direction || fallback.scale_direction,
+    pause_direction: decision?.pause_direction || fallback.pause_direction,
+    next_focus: decision?.next_focus || fallback.next_focus,
+    reusable_pattern: decision?.reusable_pattern || fallback.reusable_pattern,
+    summary: decision?.summary || fallback.summary,
+  };
+
+  const result: StageReviewResult = {
+    account_id: input.account.id,
+    generated_at: now(),
+    note_total: input.notes.length,
+    reviewed_total,
+    by_direction,
+    decision: finalDecision,
+  };
+  return { result, usage };
+}
+
+function deterministicStageDecision(
+  by_direction: DirectionAggregate[],
+  reviewed_total: number
+): StageDecision {
+  if (reviewed_total === 0) {
+    return {
+      scale_direction: "数据不足，需先积累已复盘笔记再判断。",
+      pause_direction: "暂无",
+      next_focus: "三个方向各发几篇并回填数据，先把样本攒起来。",
+      reusable_pattern: "暂无",
+      summary: "还没有已复盘的笔记，无法做方向决策。先按计划发布并逐篇回填数据。",
+    };
+  }
+  const scored = by_direction
+    .filter((d) => d.reviewed_count > 0)
+    .map((d) => ({ d, score: d.avg_save_rate + d.avg_comment_rate + d.total_follows / 1000 }))
+    .sort((a, b) => b.score - a.score);
+  const best = scored[0]?.d;
+  const worst = scored.length > 1 ? scored[scored.length - 1].d : undefined;
+  return {
+    scale_direction: best
+      ? `方向 ${best.direction}：收藏率 ${(best.avg_save_rate * 100).toFixed(1)}%、评论率 ${(best.avg_comment_rate * 100).toFixed(1)}%、累计新增关注 ${best.total_follows}，暂时表现最好。`
+      : "数据不足，需继续验证。",
+    pause_direction:
+      worst && worst.direction !== best?.direction
+        ? `方向 ${worst.direction}：反馈相对最弱，可降低占比继续观察。`
+        : "暂无",
+    next_focus: best ? `围绕方向 ${best.direction} 补 2-3 篇，只改一个变量做二测。` : "继续补样本。",
+    reusable_pattern: "暂无（样本较少，尚未跑出稳定模板）",
+    summary: `已复盘 ${reviewed_total} 篇。${
+      best ? `方向 ${best.direction} 暂时反馈最好，建议下一阶段主攻并二测；` : ""
+    }不要基于单篇爆款下结论，继续以笔记为单元积累数据。`,
+  };
+}
+
 function normalizeTopics(topics: any): TopicCandidate[] {
   if (!Array.isArray(topics)) return [];
   return topics.slice(0, 18).map((topic, index) => ({
     id: id(),
     direction: topic.direction === "B" || topic.direction === "C" ? topic.direction : "A",
-    title: String(topic.title || `候选题 ${index + 1}`),
+    title: enforceTitleLimit(topic.title || `候选题 ${index + 1}`),
     target_user: String(topic.target_user || "成熟职场人"),
     pain: String(topic.pain || "不知道如何把经验转成市场资产"),
     content_type:
@@ -690,18 +837,18 @@ function normalizeTopics(topics: any): TopicCandidate[] {
 
 function fallbackTopics(account: GrowthAccount): TopicCandidate[] {
   const base = [
-    ["A", "判断你有没有公司外议价权，看这 5 个信号", "diagnostic"],
-    ["A", "年薪高的人，最怕发现自己没有市场价格", "diagnostic"],
+    ["A", "公司外你还有议价权吗？看5个信号", "diagnostic"],
+    ["A", "年薪高的人，最怕没有市场价格", "diagnostic"],
     ["B", "中高层做内容，先写目标客户判断表", "tool"],
-    ["B", "离开公司前，先盘一张个人资产负债表", "tool"],
-    ["C", "做过合伙人后，我才知道什么人真正能上桌", "story"],
-    ["C", "我从公司位置走向市场位置，最先改掉的是这件事", "story"],
+    ["B", "离开公司前，先盘个人资产负债表", "tool"],
+    ["C", "做过合伙人，才知道谁能真正上桌", "story"],
+    ["C", "从公司位置到市场位置，我先改了这件事", "story"],
   ] as const;
 
   return base.map(([direction, title, contentType], index) => ({
     id: id(),
     direction,
-    title,
+    title: enforceTitleLimit(title),
     target_user: account.target_user,
     pain: account.core_problem,
     content_type: contentType,

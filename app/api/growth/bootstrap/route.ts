@@ -32,7 +32,13 @@ export async function GET(req: Request) {
   const plan = account ? await store.getLatestPlan(account.id) : null;
   const runs = account ? await store.listRuns(account.id) : [];
   const drafts = account ? await store.listDrafts(account.id) : [];
-  return NextResponse.json({ persona, account, plan, runs, drafts });
+  // 以笔记为单元：返回每篇笔记对应的复盘（draftId -> review），供历史查看
+  const reviewList = account ? await store.listReviewsByAccount(account.id) : [];
+  const reviews: Record<string, (typeof reviewList)[number]> = {};
+  for (const review of reviewList) {
+    if (!reviews[review.draft_id]) reviews[review.draft_id] = review;
+  }
+  return NextResponse.json({ persona, account, plan, runs, drafts, reviews });
 }
 
 export async function POST(req: Request) {

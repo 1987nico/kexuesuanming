@@ -17,10 +17,10 @@ export default function MianbaHomePage() {
         <PortalCard
           eyebrow="增长"
           title="增长系统"
-          desc="小红书内容工厂：账号定位卡 → 选题 → 正文 → 封面 → 复盘。商家 / 买家 / 专家三种视角。"
+          desc="小红书内容工厂：账号定位卡 → 选题 → 正文 → 单篇复盘 → 阶段复盘。商家 / 买家 / 专家三种视角。"
           href="/mianba/growth"
           cta="进入增长系统"
-          points={["账号定位卡可编辑", "每次生成 2 个不重复选题", "正文 2 选 1、封面 2 幅", "发布后复盘与建议"]}
+          points={["账号定位卡可编辑", "每次生成 2 个不重复选题", "正文一短一长 2 选 1", "以笔记为单元复盘 + 阶段方向决策"]}
         />
         <PortalCard
           eyebrow="交付"

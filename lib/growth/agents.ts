@@ -130,6 +130,7 @@ ${accountContextBlock(input.context)}
 
 要求：
 - 生成 ${count} 个候选题，覆盖方向 A/B/C。
+- 【标题硬性规则】每个 title 必须控制在 20 个字以内（含标点符号，按小红书规则），超过一律不合格；不要用「｜」「|」「——」等分隔符外挂副标题来变相加长。
 - 每个候选题必须可比较、可复盘、可延展。
 - 优先进入生产的题必须满足：定位匹配度 >= 8，痛点清晰度 >= 7，关注理由 >= 7，实验价值 >= 8，泛流量风险 <= 5。
 ${exclude.length ? `- 严禁与以下已生成选题重复或近似：${exclude.join(" / ")}` : ""}
@@ -141,7 +142,7 @@ ${exclude.length ? `- 严禁与以下已生成选题重复或近似：${exclude.
   "topics": [
     {
       "direction": "A|B|C",
-      "title": "题目",
+      "title": "题目（20 字以内，含标点）",
       "target_user": "目标用户",
       "pain": "用户痛点",
       "content_type": "diagnostic|tool|story",
@@ -201,6 +202,7 @@ ${exclude.length ? `严禁与以下已生成正文重复或近似（可换结构
 - 诊断型：直接点出处境，给反常识判断，列 3-5 个诊断信号。
 - 工具型：给表格、问题组、清单或步骤，用户能照着用。
 - 故事型：真实过程服务读者判断，不自嗨。
+- 【标题硬性规则】title 与每个 alternative_titles 都必须控制在 20 个字以内（含标点符号，按小红书规则），不要用「｜」「|」「——」外挂副标题。
 - 发布端文字（标题+正文+话题标签）不得超过 1000 字。
 - 给 5 个以内话题标签。
 
@@ -248,6 +250,34 @@ export function buildReviewUserPrompt(input: {
   "manager_instruction": "给总经理 V3 的判断",
   "topic_instruction": "给选题官 V3 的要求",
   "writer_instruction": "给主笔 V3 的要求"
+}
+`.trim();
+}
+
+export function buildStageReviewUserPrompt(input: {
+  targetUser: string;
+  directions?: string[];
+  aggregate: unknown;
+}) {
+  return `
+请以总经理 V3 身份，基于多篇笔记的聚合数据做「阶段复盘 / 方向决策」。不要基于单篇爆款下结论，要看方向层面的趋势。
+
+目标用户：${input.targetUser}
+内容方向说明：${(input.directions ?? ["A 方向", "B 方向", "C 方向"]).join(" / ")}
+各方向聚合数据 JSON（note_count=发布篇数，reviewed_count=已复盘篇数，avg_save_rate=平均收藏率，avg_comment_rate=平均评论率，classifications=各结果分类计数）：
+${JSON.stringify(input.aggregate)}
+
+判断规则：
+- 收藏率、评论率、关注反馈更能代表方向是否成立，单纯曝光/阅读不作数。
+- 数据太少（发布篇数少）时不要急着放大或暂停，标注需继续验证。
+
+输出 JSON：
+{
+  "scale_direction": "建议放大的方向及理由（数据不足就说需继续验证）",
+  "pause_direction": "建议暂停或降权的方向及理由（没有就写暂无）",
+  "next_focus": "下一阶段主攻什么",
+  "reusable_pattern": "已跑出的可复用标题/结构模板（没有就写暂无）",
+  "summary": "一段话阶段结论，给运营者看的大白话"
 }
 `.trim();
 }

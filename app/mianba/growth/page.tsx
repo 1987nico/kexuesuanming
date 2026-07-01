@@ -1,14 +1,16 @@
 "use client";
 
-import { useCallback, useEffect, useState, type Dispatch, type SetStateAction } from "react";
-import type { CoverBrief } from "@/lib/growth/coverBrief";
+import { useCallback, useEffect, useState } from "react";
 import type {
   ContentDraft,
+  DirectionAggregate,
   GrowthAccount,
   GrowthPersona,
   GrowthPlan,
   GrowthReview,
+  GrowthReviewMetrics,
   GrowthRun,
+  StageReviewResult,
   TopicCandidate,
 } from "@/lib/growth/types";
 import { GROWTH_PERSONA_LABELS, GROWTH_PERSONAS, PERSONA_SPECIFIC_FIELDS } from "@/lib/growth/types";
@@ -37,13 +39,6 @@ interface AccountForm {
   private_domain: string;
   hypotheses: string;
   persona_specific: Record<string, string>;
-}
-
-interface CoverResult {
-  variant: string;
-  brief: CoverBrief;
-  imageDataUrl?: string;
-  imageError?: string;
 }
 
 interface ReviewFormState {
@@ -100,6 +95,39 @@ const emptyReviewForm: ReviewFormState = {
   comment_keywords: "",
 };
 
+function num(value?: number) {
+  return typeof value === "number" ? String(value) : "";
+}
+
+function metricsToForm(metrics?: GrowthReviewMetrics): ReviewFormState {
+  if (!metrics) return { ...emptyReviewForm };
+  return {
+    impressions: num(metrics.impressions),
+    reads: num(metrics.reads),
+    likes: num(metrics.likes),
+    saves: num(metrics.saves),
+    comments: num(metrics.comments),
+    shares: num(metrics.shares),
+    profile_visits: num(metrics.profile_visits),
+    follows: num(metrics.follows),
+    private_messages: num(metrics.private_messages),
+    comment_keywords: (metrics.comment_keywords ?? []).join("，"),
+  };
+}
+
+function formToMetricsPayload(form: ReviewFormState): Record<string, unknown> {
+  const payload: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(form) as [keyof ReviewFormState, string][]) {
+    if (!value.trim()) continue;
+    if (key === "comment_keywords") {
+      payload[key] = value.split(/[,，\n]/).map((s) => s.trim()).filter(Boolean);
+    } else {
+      payload[key] = Number(value);
+    }
+  }
+  return payload;
+}
+
 function toAccountForm(account: GrowthAccount): AccountForm {
   const personaSpecific: Record<string, string> = {};
   for (const field of PERSONA_SPECIFIC_FIELDS[account.persona]) {
@@ -142,25 +170,37 @@ export default function XiaohongshuNotesPage() {
   const [variants, setVariants] = useState<ContentDraft[]>([]);
   const [chosenDraft, setChosenDraft] = useState<ContentDraft | null>(null);
 
-  const [covers, setCovers] = useState<CoverResult[]>([]);
-  const [coverNote, setCoverNote] = useState("");
+  // 以笔记为单元：每篇笔记各自的复盘结果与回填表单
+  const [reviews, setReviews] = useState<Record<string, GrowthReview>>({});
+  const [metricsByDraft, setMetricsByDraft] = useState<Record<string, ReviewFormState>>({});
+  const [stageResult, setStageResult] = useState<StageReviewResult | null>(null);
 
-  const [reviewForm, setReviewForm] = useState<ReviewFormState>(emptyReviewForm);
-  const [latestReview, setLatestReview] = useState<GrowthReview | null>(null);
-
-  const loadWorkspace = useCallback(async (p: GrowthPersona) => {
-    const res = await fetch(`/api/growth/bootstrap?persona=${p}`, { cache: "no-store" });
-    const data = await res.json();
-    const run: GrowthRun | null = (data.runs && data.runs[0]) || null;
-    setState({ account: data.account ?? null, plan: data.plan ?? null, run, drafts: data.drafts ?? [] });
-    setAccountForm(data.account ? toAccountForm(data.account) : null);
-    setEditing(false);
-    setChosenDraft((data.drafts && data.drafts[0]) || run?.draft || null);
-    setVariants([]);
-    setSelectedTopicId(run?.selected_topic?.id ?? null);
-    setCovers([]);
-    setLatestReview(run?.review ?? null);
+  const applyReviews = useCallback((reviewMap: Record<string, GrowthReview>, drafts: ContentDraft[]) => {
+    setReviews(reviewMap);
+    const forms: Record<string, ReviewFormState> = {};
+    for (const draft of drafts) {
+      forms[draft.id] = metricsToForm(reviewMap[draft.id]?.metrics);
+    }
+    setMetricsByDraft(forms);
   }, []);
+
+  const loadWorkspace = useCallback(
+    async (p: GrowthPersona) => {
+      const res = await fetch(`/api/growth/bootstrap?persona=${p}`, { cache: "no-store" });
+      const data = await res.json();
+      const run: GrowthRun | null = (data.runs && data.runs[0]) || null;
+      const drafts: ContentDraft[] = data.drafts ?? [];
+      setState({ account: data.account ?? null, plan: data.plan ?? null, run, drafts });
+      setAccountForm(data.account ? toAccountForm(data.account) : null);
+      setEditing(false);
+      setChosenDraft(drafts[0] || run?.draft || null);
+      setVariants([]);
+      setSelectedTopicId(run?.selected_topic?.id ?? null);
+      applyReviews((data.reviews ?? {}) as Record<string, GrowthReview>, drafts);
+      setStageResult(null);
+    },
+    [applyReviews]
+  );
 
   useEffect(() => {
     loadWorkspace(persona).catch((error) => setMessage((error as Error).message));
@@ -257,7 +297,6 @@ export default function XiaohongshuNotesPage() {
       if (!res.ok) throw new Error(data.message || data.error || "生成正文失败");
       setVariants(data.drafts || []);
       setChosenDraft(null);
-      setCovers([]);
     });
   }
 
@@ -280,61 +319,53 @@ export default function XiaohongshuNotesPage() {
     const res = await fetch(`/api/growth/bootstrap?persona=${persona}`, { cache: "no-store" });
     const data = await res.json();
     const run2: GrowthRun | null = (data.runs && data.runs[0]) || null;
-    setState({ account: data.account ?? null, plan: data.plan ?? null, run: run2, drafts: data.drafts ?? [] });
+    const drafts: ContentDraft[] = data.drafts ?? [];
+    setState({ account: data.account ?? null, plan: data.plan ?? null, run: run2, drafts });
     setChosenDraft(draft);
+    applyReviews((data.reviews ?? {}) as Record<string, GrowthReview>, drafts);
   }
 
-  async function generateCovers() {
-    if (!chosenDraft) return;
-    await run("生成 2 幅封面", async () => {
-      const res = await fetch("/api/growth/covers", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          title: chosenDraft.title,
-          body: chosenDraft.body,
-          coverText: chosenDraft.cover_text,
-          targetUser: chosenDraft.target_user,
-          contentType: chosenDraft.content_type,
-          testVariable: chosenDraft.test_variable,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.message || data.error || "生成封面失败");
-      setCovers(data.covers || []);
-      setCoverNote(data.imageProviderConfigured ? "" : "未配置 OPENAI_API_KEY，当前仅生成封面文案与文生图 Prompt。");
-    });
-  }
-
-  async function markPublished() {
-    if (!chosenDraft) return;
+  async function markPublishedNote(draft: ContentDraft) {
     await run("标记已发布", async () => {
-      const res = await fetch(`/api/growth/drafts/${chosenDraft.id}/publish`, { method: "POST" });
+      const res = await fetch(`/api/growth/drafts/${draft.id}/publish`, { method: "POST" });
       if (!res.ok) throw new Error("标记发布失败");
-      await loadWorkspaceKeepChosen({ ...chosenDraft, status: "published" });
+      await loadWorkspaceKeepChosen(chosenDraft ?? draft);
     });
   }
 
-  async function submitReview() {
-    if (!chosenDraft) return;
+  async function submitReviewNote(draft: ContentDraft) {
     await run("提交复盘", async () => {
-      const payload: Record<string, unknown> = {};
-      for (const [key, value] of Object.entries(reviewForm)) {
-        if (!value.trim()) continue;
-        if (key === "comment_keywords") {
-          payload[key] = value.split(/[,，\n]/).map((s: string) => s.trim()).filter(Boolean);
-        } else {
-          payload[key] = Number(value);
-        }
-      }
-      const res = await fetch(`/api/growth/drafts/${chosenDraft.id}/review`, {
+      const payload = formToMetricsPayload(metricsByDraft[draft.id] ?? emptyReviewForm);
+      const res = await fetch(`/api/growth/drafts/${draft.id}/review`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(payload),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || data.error || "提交复盘失败");
-      setLatestReview(data.review);
+      setReviews((prev) => ({ ...prev, [draft.id]: data.review }));
+      await loadWorkspaceKeepChosen(chosenDraft ?? draft);
+    });
+  }
+
+  function setNoteMetric(draftId: string, name: keyof ReviewFormState, value: string) {
+    setMetricsByDraft((prev) => ({
+      ...prev,
+      [draftId]: { ...(prev[draftId] ?? emptyReviewForm), [name]: value },
+    }));
+  }
+
+  async function generateStageReview() {
+    if (!account) return;
+    await run("生成阶段复盘", async () => {
+      const res = await fetch("/api/growth/stage-review", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ accountId: account.id }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || data.error || "生成阶段复盘失败");
+      setStageResult(data.result);
     });
   }
 
@@ -348,7 +379,7 @@ export default function XiaohongshuNotesPage() {
           <div className="mb-3 text-xs tracking-[0.35em] text-gold-700">小红书内容工厂</div>
           <h1 className="serif text-4xl leading-tight md:text-5xl">小红书笔记</h1>
           <p className="mt-3 max-w-2xl text-sm leading-6 text-ink-600">
-            账号定位卡 → 选题 → 正文 → 封面 → 复盘。人工确认后复制发布，系统不自动发帖。
+            账号定位卡 → 选题 → 正文 → 单篇复盘 → 阶段复盘。人工确认后复制发布，系统不自动发帖。
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -536,6 +567,18 @@ export default function XiaohongshuNotesPage() {
               <CopyButton text={`${chosenDraft.body}\n\n${chosenDraft.hashtags.join(" ")}`} label="复制正文+话题" />
               <CopyButton text={chosenDraft.hashtags.join(" ")} label="复制话题" />
             </div>
+            {(chosenDraft.cover_text || chosenDraft.cover_suggestion) && (
+              <div className="mt-4 rounded-xl bg-white/70 p-3 text-sm leading-6 text-ink-700">
+                <div className="mb-1 text-xs font-medium text-gold-700">封面文案（自己做图时参考）</div>
+                {chosenDraft.cover_text && <div>封面句：{chosenDraft.cover_text}</div>}
+                {chosenDraft.cover_suggestion && <div className="mt-1 text-xs text-ink-500">画面建议：{chosenDraft.cover_suggestion}</div>}
+                {chosenDraft.cover_text && (
+                  <div className="mt-2">
+                    <CopyButton text={chosenDraft.cover_text} label="复制封面句" />
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
         {variants.length === 0 && !chosenDraft && (
@@ -543,80 +586,196 @@ export default function XiaohongshuNotesPage() {
         )}
       </StepCard>
 
-      {/* Step 4 封面 */}
-      <StepCard step="4" title="封面" desc="根据选定标题和正文生成 2 幅封面；每点一次生成 2 幅新的。">
-        <button className="btn-primary" disabled={!!busy || !chosenDraft} onClick={generateCovers}>
-          {busy === "生成 2 幅封面" ? "生成中..." : "生成 2 幅封面"}
-        </button>
-        {coverNote && <p className="mt-3 text-xs leading-5 text-gold-700">{coverNote}</p>}
-        {covers.length > 0 && (
-          <div className="mt-4 grid gap-4 md:grid-cols-2">
-            {covers.map((cover, index) => (
-              <div key={index} className="rounded-2xl border border-ink-100 p-4">
-                <div className="mb-2 text-xs text-gold-700">封面 {index + 1} · {cover.variant}</div>
-                {cover.imageDataUrl ? (
-                  <div
-                    aria-label="AI 封面"
-                    className="aspect-[2/3] w-full rounded-xl bg-cover bg-center"
-                    style={{ backgroundImage: `url(${cover.imageDataUrl})` }}
-                  />
-                ) : (
-                  <div className="rounded-xl bg-ink-50 p-4 text-sm leading-6 text-ink-700">
-                    <div className="font-medium text-ink-900">封面句：{cover.brief.coverText}</div>
-                    <p className="mt-2 text-xs text-ink-500">{cover.brief.scene}</p>
-                    <p className="mt-2 text-xs text-ink-500">Prompt：{cover.brief.imagePrompt}</p>
-                    {cover.imageError && <p className="mt-2 text-xs text-red-500">生图失败：{cover.imageError}</p>}
-                  </div>
-                )}
-              </div>
+      {/* Step 4 单篇复盘（以笔记为基本单元） */}
+      <StepCard step="4" title="单篇复盘" desc="每篇笔记都是一个独立单元：逐篇标记发布、回填数据、生成单篇结论。下面列出这个账号的所有笔记。">
+        <div className="mb-4 rounded-2xl border border-dashed border-ink-200 bg-ink-50 p-4 text-xs leading-6 text-ink-600">
+          扫码登录网页版小红书 + 后台自动抓数据：属于后续增强，且需账号主本人扫码授权、有平台风险。当前先按笔记手动/截图回填。
+        </div>
+        {state.drafts.length === 0 ? (
+          <p className="text-sm leading-6 text-ink-600">还没有笔记。先在第 2、3 步选题并选定一篇正文，它就会作为一篇笔记出现在这里。</p>
+        ) : (
+          <div className="grid gap-4">
+            {state.drafts.map((note) => (
+              <NoteReviewCard
+                key={note.id}
+                note={note}
+                review={reviews[note.id]}
+                form={metricsByDraft[note.id] ?? emptyReviewForm}
+                busy={!!busy}
+                onMetric={(name, value) => setNoteMetric(note.id, name, value)}
+                onPublish={() => markPublishedNote(note)}
+                onSubmit={() => submitReviewNote(note)}
+              />
             ))}
           </div>
         )}
       </StepCard>
 
-      {/* Step 5 复盘 */}
-      <StepCard step="5" title="复盘" desc="人工发布后回填数据，系统生成分类和下一步建议。">
-        <div className="mb-4 rounded-2xl border border-dashed border-ink-200 bg-ink-50 p-4 text-sm leading-6 text-ink-600">
-          扫码登录网页版小红书 + 后台自动抓数据：即将上线。当前先手动/截图回填下面的数据。
-          {chosenDraft && (
-            <button className="btn-primary mt-3" disabled={!!busy || chosenDraft.status === "published" || chosenDraft.status === "reviewed"} onClick={markPublished}>
-              {chosenDraft.status === "published" || chosenDraft.status === "reviewed" ? "已标记发布" : "标记为已发布"}
-            </button>
-          )}
-        </div>
-        <div className="grid gap-3 md:grid-cols-5">
-          <MetricInput label="曝光" name="impressions" form={reviewForm} setForm={setReviewForm} />
-          <MetricInput label="阅读" name="reads" form={reviewForm} setForm={setReviewForm} />
-          <MetricInput label="点赞" name="likes" form={reviewForm} setForm={setReviewForm} />
-          <MetricInput label="收藏" name="saves" form={reviewForm} setForm={setReviewForm} />
-          <MetricInput label="评论" name="comments" form={reviewForm} setForm={setReviewForm} />
-          <MetricInput label="分享" name="shares" form={reviewForm} setForm={setReviewForm} />
-          <MetricInput label="主页访问" name="profile_visits" form={reviewForm} setForm={setReviewForm} />
-          <MetricInput label="新增关注" name="follows" form={reviewForm} setForm={setReviewForm} />
-          <MetricInput label="私信线索" name="private_messages" form={reviewForm} setForm={setReviewForm} />
-          <div>
-            <label className="mb-2 block text-xs font-medium text-ink-500">评论关键词</label>
-            <input
-              value={reviewForm.comment_keywords}
-              onChange={(e) => setReviewForm((c) => ({ ...c, comment_keywords: e.target.value }))}
-              className="w-full rounded-xl border border-ink-100 bg-white px-3 py-2 text-sm"
-              placeholder="逗号分隔"
-            />
-          </div>
-        </div>
-        <button className="btn-primary mt-4" disabled={!!busy || !chosenDraft} onClick={submitReview}>提交复盘</button>
-        {latestReview && (
-          <div className="mt-5 grid gap-3 rounded-2xl bg-ink-50 p-4 text-sm leading-6 text-ink-700 md:grid-cols-2">
-            <Field label="结果分类" value={CLASSIFICATION_LABELS[latestReview.classification] ?? latestReview.classification} />
-            <Field label="下一篇只改一个变量" value={latestReview.next_variable} />
-            <Field label="入口判断" value={latestReview.entry_judgement} />
-            <Field label="价值判断" value={latestReview.value_judgement} />
-            <Field label="关注判断" value={latestReview.follow_judgement} />
-            <Field label="人群判断" value={latestReview.audience_judgement} />
+      {/* Step 5 阶段复盘（跨笔记做方向决策） */}
+      <StepCard step="5" title="阶段复盘" desc="把多篇笔记按方向汇总，判断哪个方向值得放大、哪个该暂停。不靠单篇爆款下结论。">
+        <button className="btn-primary" disabled={!!busy || !account} onClick={generateStageReview}>
+          {busy === "生成阶段复盘" ? "汇总中..." : "生成阶段复盘 / 方向决策"}
+        </button>
+        {stageResult && (
+          <div className="mt-5 space-y-4">
+            <div className="text-xs text-ink-500">
+              共 {stageResult.note_total} 篇笔记，已复盘 {stageResult.reviewed_total} 篇。
+            </div>
+            <div className="grid gap-3 md:grid-cols-3">
+              {stageResult.by_direction.map((agg) => (
+                <DirectionAggregateCard key={agg.direction} agg={agg} />
+              ))}
+            </div>
+            <div className="grid gap-3 rounded-2xl bg-gold-50/50 p-4 text-sm leading-6 text-ink-700 md:grid-cols-2">
+              <Field label="建议放大的方向" value={stageResult.decision.scale_direction} />
+              <Field label="建议暂停/降权的方向" value={stageResult.decision.pause_direction} />
+              <Field label="下一阶段主攻" value={stageResult.decision.next_focus} />
+              <Field label="可复用模板" value={stageResult.decision.reusable_pattern} />
+              <div className="md:col-span-2">
+                <Field label="阶段结论" value={stageResult.decision.summary} />
+              </div>
+            </div>
           </div>
         )}
       </StepCard>
     </main>
+  );
+}
+
+function NoteReviewCard({
+  note,
+  review,
+  form,
+  busy,
+  onMetric,
+  onPublish,
+  onSubmit,
+}: {
+  note: ContentDraft;
+  review?: GrowthReview;
+  form: ReviewFormState;
+  busy: boolean;
+  onMetric: (name: keyof ReviewFormState, value: string) => void;
+  onPublish: () => void;
+  onSubmit: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const published = note.status === "published" || note.status === "reviewed";
+  const reviewed = note.status === "reviewed" && !!review;
+
+  return (
+    <div className="rounded-2xl border border-ink-100 p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 text-xs text-gold-700">
+            <span>{DIRECTION_LABELS[note.direction] ?? note.direction}</span>
+            <span>· {CONTENT_TYPE_LABELS[note.content_type] ?? note.content_type}</span>
+            <span>· {DRAFT_STATUS_LABELS[note.status] ?? note.status}</span>
+          </div>
+          <div className="mt-1 font-medium leading-6">{note.title}</div>
+          <div className="mt-1 text-xs text-ink-400">验证变量：{note.test_variable}</div>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button
+            className="rounded-full bg-ink-100 px-4 py-2 text-sm font-semibold text-ink-700 transition hover:bg-ink-200 disabled:opacity-40"
+            disabled={busy || published}
+            onClick={onPublish}
+          >
+            {published ? "已发布" : "标记为已发布"}
+          </button>
+          <button
+            className="rounded-full bg-ink-100 px-4 py-2 text-sm font-semibold text-ink-700 transition hover:bg-ink-200"
+            onClick={() => setOpen((v) => !v)}
+          >
+            {open ? "收起数据" : reviewed ? "查看/修改数据" : "回填数据"}
+          </button>
+        </div>
+      </div>
+
+      {reviewed && review && (
+        <div className="mt-3 grid gap-2 rounded-xl bg-ink-50 p-3 text-xs leading-5 text-ink-700 md:grid-cols-2">
+          <Field label="结果分类" value={CLASSIFICATION_LABELS[review.classification] ?? review.classification} />
+          <Field label="下一篇只改一个变量" value={review.next_variable} />
+        </div>
+      )}
+
+      {open && (
+        <div className="mt-4">
+          <div className="grid gap-3 md:grid-cols-5">
+            <NoteMetricInput label="曝光" name="impressions" form={form} onMetric={onMetric} />
+            <NoteMetricInput label="阅读" name="reads" form={form} onMetric={onMetric} />
+            <NoteMetricInput label="点赞" name="likes" form={form} onMetric={onMetric} />
+            <NoteMetricInput label="收藏" name="saves" form={form} onMetric={onMetric} />
+            <NoteMetricInput label="评论" name="comments" form={form} onMetric={onMetric} />
+            <NoteMetricInput label="分享" name="shares" form={form} onMetric={onMetric} />
+            <NoteMetricInput label="主页访问" name="profile_visits" form={form} onMetric={onMetric} />
+            <NoteMetricInput label="新增关注" name="follows" form={form} onMetric={onMetric} />
+            <NoteMetricInput label="私信线索" name="private_messages" form={form} onMetric={onMetric} />
+            <div>
+              <label className="mb-2 block text-xs font-medium text-ink-500">评论关键词</label>
+              <input
+                value={form.comment_keywords}
+                onChange={(e) => onMetric("comment_keywords", e.target.value)}
+                className="w-full rounded-xl border border-ink-100 bg-white px-3 py-2 text-sm"
+                placeholder="逗号分隔"
+              />
+            </div>
+          </div>
+          <button className="btn-primary mt-4" disabled={busy} onClick={onSubmit}>
+            {reviewed ? "更新复盘" : "提交复盘"}
+          </button>
+        </div>
+      )}
+
+      {reviewed && review && (
+        <div className="mt-4 grid gap-2 rounded-2xl bg-ink-50 p-4 text-sm leading-6 text-ink-700 md:grid-cols-2">
+          <Field label="入口判断" value={review.entry_judgement} />
+          <Field label="价值判断" value={review.value_judgement} />
+          <Field label="关注判断" value={review.follow_judgement} />
+          <Field label="人群判断" value={review.audience_judgement} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function NoteMetricInput({
+  label,
+  name,
+  form,
+  onMetric,
+}: {
+  label: string;
+  name: keyof ReviewFormState;
+  form: ReviewFormState;
+  onMetric: (name: keyof ReviewFormState, value: string) => void;
+}) {
+  return (
+    <div>
+      <label className="mb-2 block text-xs font-medium text-ink-500">{label}</label>
+      <input
+        value={form[name]}
+        onChange={(e) => onMetric(name, e.target.value)}
+        inputMode="numeric"
+        className="w-full rounded-xl border border-ink-100 bg-white px-3 py-2 text-sm"
+        placeholder="0"
+      />
+    </div>
+  );
+}
+
+function DirectionAggregateCard({ agg }: { agg: DirectionAggregate }) {
+  return (
+    <div className="rounded-2xl border border-ink-100 p-4 text-sm leading-6 text-ink-700">
+      <div className="mb-2 font-semibold text-ink-900">{DIRECTION_LABELS[agg.direction] ?? agg.direction}</div>
+      <div className="text-xs text-ink-500">发布 {agg.note_count} 篇 · 已复盘 {agg.reviewed_count} 篇</div>
+      <div className="mt-2 grid grid-cols-2 gap-1 text-xs">
+        <div>收藏率：{(agg.avg_save_rate * 100).toFixed(1)}%</div>
+        <div>评论率：{(agg.avg_comment_rate * 100).toFixed(1)}%</div>
+        <div>累计收藏：{agg.total_saves}</div>
+        <div>累计关注：{agg.total_follows}</div>
+      </div>
+    </div>
   );
 }
 
@@ -695,27 +854,3 @@ function EditArea({ label, value, onChange }: { label: string; value: string; on
   );
 }
 
-function MetricInput({
-  label,
-  name,
-  form,
-  setForm,
-}: {
-  label: string;
-  name: keyof ReviewFormState;
-  form: ReviewFormState;
-  setForm: Dispatch<SetStateAction<ReviewFormState>>;
-}) {
-  return (
-    <div>
-      <label className="mb-2 block text-xs font-medium text-ink-500">{label}</label>
-      <input
-        type="number"
-        min="0"
-        value={form[name] || ""}
-        onChange={(e) => setForm((c) => ({ ...c, [name]: e.target.value }))}
-        className="w-full rounded-xl border border-ink-100 bg-white px-3 py-2 text-sm"
-      />
-    </div>
-  );
-}

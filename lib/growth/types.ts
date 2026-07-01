@@ -197,6 +197,37 @@ export interface GrowthReview {
   created_at: string;
 }
 
+// 阶段复盘：跨笔记按方向聚合，做方向级决策
+export interface DirectionAggregate {
+  direction: GrowthDirection;
+  note_count: number;
+  reviewed_count: number;
+  total_reads: number;
+  total_saves: number;
+  total_comments: number;
+  total_follows: number;
+  avg_save_rate: number; // saves / reads
+  avg_comment_rate: number; // comments / reads
+  classifications: Record<string, number>; // 各结果分类计数
+}
+
+export interface StageDecision {
+  scale_direction: string; // 建议放大的方向
+  pause_direction: string; // 建议暂停的方向
+  next_focus: string; // 下一阶段主攻
+  reusable_pattern: string; // 可复用的标题/结构模板
+  summary: string; // 一段话决策说明
+}
+
+export interface StageReviewResult {
+  account_id: string;
+  generated_at: string;
+  note_total: number;
+  reviewed_total: number;
+  by_direction: DirectionAggregate[];
+  decision: StageDecision;
+}
+
 export interface UsageEvent {
   id: string;
   tenant_id: string;

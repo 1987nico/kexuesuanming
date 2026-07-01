@@ -7,7 +7,7 @@ const VERSION = "2022-08-31";
 const REGION = "cn-north-1";
 const HOST = "visual.volcengineapi.com";
 const ENDPOINT = `https://${HOST}`;
-const DEFAULT_REQ_KEY = "high_aes_general_v30l_zt2i";
+const DEFAULT_REQ_KEY = "jimeng_t2i_v30";
 
 export function isVolcengineConfigured(env: NodeJS.ProcessEnv = process.env) {
   return !!(env.VOLCENGINE_AK && env.VOLCENGINE_SK);

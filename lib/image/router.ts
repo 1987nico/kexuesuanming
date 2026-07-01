@@ -35,6 +35,18 @@ function parseSize(size?: ImageGenerationRequest["size"]) {
   return { width: w || 1024, height: h || 1536 };
 }
 
+async function toDataUrl(url: string): Promise<string | null> {
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const contentType = res.headers.get("content-type") || "image/jpeg";
+    const buffer = Buffer.from(await res.arrayBuffer());
+    return `data:${contentType};base64,${buffer.toString("base64")}`;
+  } catch {
+    return null;
+  }
+}
+
 export async function generateImageAsset(req: ImageGenerationRequest): Promise<ImageGenerationResult> {
   const provider = resolveProvider();
   if (!provider) {
@@ -45,7 +57,9 @@ export async function generateImageAsset(req: ImageGenerationRequest): Promise<I
     const { width, height } = parseSize(req.size);
     const prompt = req.negativePrompt ? `${req.prompt}\n\n避免出现：${req.negativePrompt}` : req.prompt;
     const { imageUrl, model } = await generateJimengImage({ prompt, width, height });
-    return { provider: "volcengine", model, imageDataUrl: imageUrl };
+    // 即梦返回的是会过期的远程链接，抓取后转 data URL：便于前端一键复制且不受链接失效影响
+    const dataUrl = await toDataUrl(imageUrl);
+    return { provider: "volcengine", model, imageDataUrl: dataUrl ?? imageUrl };
   }
 
   const model = process.env.IMAGE_MODEL || "gpt-image-1";

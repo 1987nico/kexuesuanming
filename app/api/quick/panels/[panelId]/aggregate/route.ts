@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { store } from "@/lib/db/store";
-import { QUICK_PANEL_ID, QUICK_PANEL_TITLE, SEED_ITEMS } from "@/lib/quickScore/seed";
+import { getQuickPanelDef } from "@/lib/quickScore/registry";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -13,7 +13,8 @@ export async function GET(
   req: Request,
   { params }: { params: { panelId: string } }
 ) {
-  if (params.panelId !== QUICK_PANEL_ID) {
+  const def = getQuickPanelDef(params.panelId);
+  if (!def) {
     return NextResponse.json({ error: "panel_not_found" }, { status: 404 });
   }
 
@@ -30,9 +31,9 @@ export async function GET(
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
 
-  await store().ensureQuickPanel(QUICK_PANEL_ID, QUICK_PANEL_TITLE, SEED_ITEMS);
-  const panel = await store().getQuickPanel(QUICK_PANEL_ID);
-  const { respondents, scores } = await store().getQuickPanelAggregate(QUICK_PANEL_ID);
+  await store().ensureQuickPanel(params.panelId, def.title, def.items);
+  const panel = await store().getQuickPanel(params.panelId);
+  const { respondents, scores } = await store().getQuickPanelAggregate(params.panelId);
 
   return NextResponse.json({ panel, respondents, scores });
 }

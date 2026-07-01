@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { store } from "@/lib/db/store";
-import { QUICK_PANEL_ID, QUICK_PANEL_TITLE, SEED_ITEMS } from "@/lib/quickScore/seed";
+import { getQuickPanelDef } from "@/lib/quickScore/registry";
 import type { QuickRespondent, QuickScore } from "@/lib/quickScore/types";
 
 export const runtime = "nodejs";
@@ -10,13 +10,14 @@ export async function GET(
   req: Request,
   { params }: { params: { panelId: string } }
 ) {
-  if (params.panelId !== QUICK_PANEL_ID) {
+  const def = getQuickPanelDef(params.panelId);
+  if (!def) {
     return NextResponse.json({ error: "panel_not_found" }, { status: 404 });
   }
 
   // 首次访问自动 seed
-  await store().ensureQuickPanel(QUICK_PANEL_ID, QUICK_PANEL_TITLE, SEED_ITEMS);
-  const panel = await store().getQuickPanel(QUICK_PANEL_ID);
+  await store().ensureQuickPanel(params.panelId, def.title, def.items);
+  const panel = await store().getQuickPanel(params.panelId);
   if (!panel) {
     return NextResponse.json({ error: "panel_init_failed" }, { status: 500 });
   }
