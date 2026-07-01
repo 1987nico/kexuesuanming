@@ -59,6 +59,18 @@ interface ReviewFormState {
   comment_keywords: string;
 }
 
+const DIRECTION_LABELS: Record<string, string> = {
+  A: "痛点诊断",
+  B: "工具清单",
+  C: "故事过程",
+};
+
+const CONTENT_TYPE_LABELS: Record<string, string> = {
+  diagnostic: "诊断型",
+  tool: "工具型",
+  story: "故事型",
+};
+
 const emptyReviewForm: ReviewFormState = {
   impressions: "",
   reads: "",
@@ -449,8 +461,9 @@ export default function XiaohongshuNotesPage() {
                 }
               >
                 <div className="mb-2 flex items-center gap-2 text-xs text-ink-500">
-                  <span>方向 {topic.direction}</span>
-                  <span>{topic.content_type}</span>
+                  <span>方向 {topic.direction} · {DIRECTION_LABELS[topic.direction] ?? ""}</span>
+                  <span>·</span>
+                  <span>{CONTENT_TYPE_LABELS[topic.content_type] ?? topic.content_type}</span>
                 </div>
                 <div className="font-medium leading-6">{topic.title}</div>
                 <p className="mt-1 text-xs leading-5 text-ink-500">验证变量：{topic.test_variable}</p>
