@@ -71,6 +71,22 @@ const CONTENT_TYPE_LABELS: Record<string, string> = {
   story: "故事型",
 };
 
+const DRAFT_STATUS_LABELS: Record<string, string> = {
+  draft: "草稿",
+  ready: "已选定",
+  published: "已发布",
+  reviewed: "已复盘",
+};
+
+const CLASSIFICATION_LABELS: Record<string, string> = {
+  scale: "明确放大",
+  retest: "值得二测",
+  weak_entry: "入口弱",
+  weak_conversion: "承接弱",
+  wrong_audience: "人群跑偏",
+  pause: "暂停",
+};
+
 const emptyReviewForm: ReviewFormState = {
   impressions: "",
   reads: "",
@@ -329,7 +345,7 @@ export default function XiaohongshuNotesPage() {
     <main className="mianba-workspace min-h-screen px-5 py-8 text-ink-900 md:px-8">
       <header className="mb-6 flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
         <div>
-          <div className="mb-3 text-xs uppercase tracking-[0.35em] text-gold-700">Xiaohongshu Notes</div>
+          <div className="mb-3 text-xs tracking-[0.35em] text-gold-700">小红书内容工厂</div>
           <h1 className="serif text-4xl leading-tight md:text-5xl">小红书笔记</h1>
           <p className="mt-3 max-w-2xl text-sm leading-6 text-ink-600">
             账号定位卡 → 选题 → 正文 → 封面 → 复盘。人工确认后复制发布，系统不自动发帖。
@@ -512,7 +528,7 @@ export default function XiaohongshuNotesPage() {
         )}
         {chosenDraft && variants.length === 0 && (
           <div className="rounded-2xl border border-gold-300 bg-gold-50/40 p-4">
-            <div className="mb-2 text-xs text-gold-700">已选定正文（状态：{chosenDraft.status}）</div>
+            <div className="mb-2 text-xs text-gold-700">已选定正文（状态：{DRAFT_STATUS_LABELS[chosenDraft.status] ?? chosenDraft.status}）</div>
             <div className="font-medium leading-6">{chosenDraft.title}</div>
             <pre className="mt-3 max-h-72 overflow-auto whitespace-pre-wrap rounded-xl bg-white p-3 text-sm leading-7 text-ink-800">{chosenDraft.body}{"\n\n"}{chosenDraft.hashtags.join(" ")}</pre>
             <div className="mt-3 flex flex-wrap gap-2">
@@ -591,7 +607,7 @@ export default function XiaohongshuNotesPage() {
         <button className="btn-primary mt-4" disabled={!!busy || !chosenDraft} onClick={submitReview}>提交复盘</button>
         {latestReview && (
           <div className="mt-5 grid gap-3 rounded-2xl bg-ink-50 p-4 text-sm leading-6 text-ink-700 md:grid-cols-2">
-            <Field label="结果分类" value={latestReview.classification} />
+            <Field label="结果分类" value={CLASSIFICATION_LABELS[latestReview.classification] ?? latestReview.classification} />
             <Field label="下一篇只改一个变量" value={latestReview.next_variable} />
             <Field label="入口判断" value={latestReview.entry_judgement} />
             <Field label="价值判断" value={latestReview.value_judgement} />

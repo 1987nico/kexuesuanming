@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 import { PrintButton } from "@/components/reports/PrintButton";
 import { LiteReportView } from "@/components/reports/ReportViews";
-import { assertReportConsistency } from "@/lib/reports/assessmentProfile";
+import { assertReportConsistency, talentModeLabel } from "@/lib/reports/assessmentProfile";
 import { buildLiteReport } from "@/lib/reports/builders";
 import { reportStore } from "@/lib/reports/store";
 
@@ -18,10 +18,10 @@ export default async function LiteReportPage({ params }: { params: { profileId: 
     <main className="report-shell">
       <div className="report-toolbar">
         <div>
-          <div className="text-xs uppercase tracking-[0.25em] text-gold-700">Lite Report</div>
+          <div className="text-xs tracking-[0.25em] text-gold-700">小报告</div>
           <h1 className="serif mt-1 text-2xl">小报告预览：{profile.customer_name}</h1>
           <p className="mt-1 text-sm text-ink-500">
-            数据模式：{profile.talent_profile.mode}；一致性校验：{consistency.length ? "未通过" : "通过"}
+            天赋数据来源：{talentModeLabel(profile.talent_profile.mode)}；一致性检查：{consistency.length ? "未通过" : "通过"}
           </p>
         </div>
         <PrintButton />

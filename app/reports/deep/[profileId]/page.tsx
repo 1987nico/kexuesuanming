@@ -18,10 +18,10 @@ export default async function DeepReportPage({ params }: { params: { profileId: 
     <main className="report-shell">
       <div className="report-toolbar">
         <div>
-          <div className="text-xs uppercase tracking-[0.25em] text-gold-700">Deep Report</div>
+          <div className="text-xs tracking-[0.25em] text-gold-700">大报告</div>
           <h1 className="serif mt-1 text-2xl">大报告预览：{profile.customer_name}</h1>
           <p className="mt-1 text-sm text-ink-500">
-            复用底稿：{profile.id}；一致性校验：{consistency.length ? "未通过" : "通过"}
+            复用底稿编号：{profile.id}；一致性检查：{consistency.length ? "未通过" : "通过"}
           </p>
         </div>
         <PrintButton />

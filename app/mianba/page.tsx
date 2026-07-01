@@ -6,7 +6,7 @@ export default function MianbaHomePage() {
   return (
     <main className="mianba-workspace min-h-screen px-5 py-8 text-ink-900 md:px-8">
       <header className="mb-10">
-        <div className="mb-3 text-xs uppercase tracking-[0.35em] text-gold-700">Mianba OS</div>
+        <div className="mb-3 text-xs tracking-[0.35em] text-gold-700">面霸君系统</div>
         <h1 className="serif text-4xl leading-tight md:text-5xl">面霸君系统</h1>
         <p className="mt-3 max-w-2xl text-sm leading-6 text-ink-600">
           两套独立系统：增长系统负责小红书内容生产，报告交付系统负责测评报告交付。共用一个账号与后台。
@@ -15,7 +15,7 @@ export default function MianbaHomePage() {
 
       <section className="grid gap-5 md:grid-cols-2">
         <PortalCard
-          eyebrow="Growth"
+          eyebrow="增长"
           title="增长系统"
           desc="小红书内容工厂：账号定位卡 → 选题 → 正文 → 封面 → 复盘。商家 / 买家 / 专家三种视角。"
           href="/mianba/growth"
@@ -23,7 +23,7 @@ export default function MianbaHomePage() {
           points={["账号定位卡可编辑", "每次生成 2 个不重复选题", "正文 2 选 1、封面 2 幅", "发布后复盘与建议"]}
         />
         <PortalCard
-          eyebrow="Delivery"
+          eyebrow="交付"
           title="报告交付系统"
           desc="职场测评报告：测试链接 → 客户答题 → 生成底稿 → 交付小报告 / 大报告 → 订单管理。"
           href="/mianba/reports"
@@ -60,7 +60,7 @@ function PortalCard({
 }) {
   return (
     <div className="flex flex-col rounded-3xl bg-white p-6 shadow-sm">
-      <div className="text-xs uppercase tracking-[0.25em] text-gold-700">{eyebrow}</div>
+      <div className="text-xs tracking-[0.25em] text-gold-700">{eyebrow}</div>
       <h2 className="serif mt-2 text-2xl">{title}</h2>
       <p className="mt-3 text-sm leading-6 text-ink-600">{desc}</p>
       <ul className="mt-4 space-y-2 text-sm text-ink-700">

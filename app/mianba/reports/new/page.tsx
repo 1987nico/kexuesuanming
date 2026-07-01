@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import type { AssessmentProfile } from "@/lib/reports/assessmentProfile";
+import { talentModeLabel, type AssessmentProfile } from "@/lib/reports/assessmentProfile";
 import type { TalentQuestionForClient } from "@/lib/reports/principlesyouQuestions";
 import type { ReportOrder, ReportType } from "@/lib/reports/store";
 
@@ -143,7 +143,7 @@ export default function NewReportProfilePage() {
       setProfile(data.profile);
       setLatestOrder(null);
       setOrderMessage("");
-      setMessage(`底稿生成成功，天赋数据模式：${data.profile.talent_profile.mode}`);
+      setMessage(`底稿生成成功，天赋数据来源：${talentModeLabel(data.profile.talent_profile.mode)}`);
     } catch (error) {
       setMessage((error as Error).message);
     } finally {
@@ -182,7 +182,7 @@ export default function NewReportProfilePage() {
     <main className="mianba-workspace min-h-screen px-5 py-8 text-ink-900 md:px-8">
       <header className="mb-8 flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
         <div>
-          <div className="mb-3 text-xs uppercase tracking-[0.35em] text-gold-700">Assessment</div>
+          <div className="mb-3 text-xs tracking-[0.35em] text-gold-700">客户测评</div>
           <h1 className="serif text-4xl leading-tight md:text-5xl">新建测评底稿</h1>
           <p className="mt-3 max-w-2xl text-sm leading-6 text-ink-600">
             客户在站内完成 252 题后，系统生成统一 assessment_profile；大小报告都从这份底稿派生。
@@ -304,7 +304,7 @@ export default function NewReportProfilePage() {
       {profile && (
         <section className="mt-6 rounded-3xl bg-white p-5 shadow-sm">
           <h2 className="mb-2 font-semibold">底稿已生成</h2>
-          <p className="text-sm leading-6 text-ink-600">ID：{profile.id}；模式：{profile.talent_profile.mode}</p>
+          <p className="text-sm leading-6 text-ink-600">底稿编号：{profile.id}；天赋数据来源：{talentModeLabel(profile.talent_profile.mode)}</p>
           <div className="mt-5 flex flex-wrap gap-3">
             <a className="btn-primary" href={`/reports/lite/${profile.id}`} target="_blank">
               打开小报告

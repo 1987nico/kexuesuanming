@@ -1,5 +1,11 @@
 export type TalentReportMode = "original-sync" | "local";
 
+export function talentModeLabel(mode: TalentReportMode | string): string {
+  if (mode === "original-sync") return "真实同步";
+  if (mode === "local") return "本地兜底";
+  return String(mode);
+}
+
 export interface ValueProfile {
   liked_values: string[];
   excluded_values: string[];

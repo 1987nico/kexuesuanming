@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import type { AssessmentProfile } from "@/lib/reports/assessmentProfile";
+import { talentModeLabel, type AssessmentProfile } from "@/lib/reports/assessmentProfile";
 import type { ReportOrder, ReportType } from "@/lib/reports/store";
 
 const defaultValueProfile = {
@@ -53,7 +53,7 @@ export default function ReportsHubPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || data.error || "创建底稿失败");
       setProfile(data.profile);
-      setMessage(`底稿已生成，天赋数据模式：${data.profile.talent_profile.mode}`);
+      setMessage(`底稿已生成，天赋数据来源：${talentModeLabel(data.profile.talent_profile.mode)}`);
     } catch (error) {
       setMessage((error as Error).message);
     } finally {
@@ -92,7 +92,7 @@ export default function ReportsHubPage() {
     <main className="mianba-workspace min-h-screen px-5 py-8 text-ink-900 md:px-8">
       <header className="mb-8 flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
         <div>
-          <div className="mb-3 text-xs uppercase tracking-[0.35em] text-gold-700">Reports</div>
+          <div className="mb-3 text-xs tracking-[0.35em] text-gold-700">报告交付</div>
           <h1 className="serif text-4xl leading-tight md:text-5xl">报告</h1>
           <p className="mt-3 max-w-2xl text-sm leading-6 text-ink-600">
             测试链接 → 客户答题 → 生成统一底稿 → 交付小报告 / 大报告。大小报告共用同一底稿，价值观与天赋一致。
@@ -106,7 +106,7 @@ export default function ReportsHubPage() {
 
       {/* 测试链接 */}
       <section className="mb-4 rounded-3xl bg-white p-5 shadow-sm">
-        <div className="mb-4 text-xs uppercase tracking-[0.25em] text-gold-700">01 · 测试链接</div>
+        <div className="mb-4 text-xs tracking-[0.25em] text-gold-700">01 · 测试链接</div>
         <h2 className="mb-2 font-semibold">发给客户的测评入口</h2>
         <p className="mb-4 text-sm leading-6 text-ink-600">
           把客户引导到 252 题站内测评页，完成后自动生成统一测评底稿；大小报告都从这份底稿派生。
@@ -135,7 +135,7 @@ export default function ReportsHubPage() {
       {/* 小报告 / 大报告 */}
       <section className="grid gap-4 md:grid-cols-2">
         <div className="rounded-3xl bg-white p-5 shadow-sm">
-          <div className="mb-4 text-xs uppercase tracking-[0.25em] text-gold-700">02 · 小报告</div>
+          <div className="mb-4 text-xs tracking-[0.25em] text-gold-700">02 · 小报告</div>
           <h2 className="mb-2 font-semibold">初步诊断报告（约 ¥199）</h2>
           <p className="mb-4 text-sm leading-6 text-ink-600">方向初筛 + 价值观 + 天赋信号 + 90 天验证框架，12 版块。</p>
           {profile ? (
@@ -151,7 +151,7 @@ export default function ReportsHubPage() {
         </div>
 
         <div className="rounded-3xl bg-white p-5 shadow-sm">
-          <div className="mb-4 text-xs uppercase tracking-[0.25em] text-gold-700">03 · 大报告</div>
+          <div className="mb-4 text-xs tracking-[0.25em] text-gold-700">03 · 大报告</div>
           <h2 className="mb-2 font-semibold">完整咨询报告（约 ¥6999）</h2>
           <p className="mb-4 text-sm leading-6 text-ink-600">六步漏斗：喜欢区 → 发散 → 感性 → 市场 → VRIN → 失败验尸 + 90 天计划。</p>
           {profile ? (
@@ -169,7 +169,7 @@ export default function ReportsHubPage() {
 
       {profile && (
         <section className="mt-4 rounded-3xl bg-white p-5 shadow-sm">
-          <p className="text-sm leading-6 text-ink-600">当前底稿 ID：{profile.id}；天赋模式：{profile.talent_profile.mode}</p>
+          <p className="text-sm leading-6 text-ink-600">当前底稿编号：{profile.id}；天赋数据来源：{talentModeLabel(profile.talent_profile.mode)}</p>
           {orderMessage && <p className="mt-2 text-sm text-ink-600">{orderMessage}</p>}
           {latestOrder && (
             <p className="mt-2 text-xs leading-5 text-ink-500">
