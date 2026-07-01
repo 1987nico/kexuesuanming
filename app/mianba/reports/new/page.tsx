@@ -5,6 +5,7 @@ import type { AssessmentProfile } from "@/lib/reports/assessmentProfile";
 import type { TalentQuestionForClient } from "@/lib/reports/principlesyouQuestions";
 
 const QUESTIONS_PER_PAGE = 4;
+const STORAGE_KEY = "mianba.report-intake.v1";
 
 const defaultValueProfile = {
   liked_values: ["学习/进化", "了解世界", "被爱"],
@@ -26,6 +27,34 @@ export default function NewReportProfilePage() {
   const [profile, setProfile] = useState<AssessmentProfile | null>(null);
   const [message, setMessage] = useState("加载 252 题模板中...");
   const [loading, setLoading] = useState(false);
+  const [draftLoaded, setDraftLoaded] = useState(false);
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (raw) {
+        const draft = JSON.parse(raw) as {
+          customerName?: string;
+          customerContact?: string;
+          surveyAnswers?: string;
+          valueProfile?: string;
+          answers?: Record<number, number>;
+          page?: number;
+        };
+        setCustomerName(draft.customerName || "");
+        setCustomerContact(draft.customerContact || "");
+        setSurveyAnswers(draft.surveyAnswers || "{}");
+        setValueProfile(draft.valueProfile || JSON.stringify(defaultValueProfile, null, 2));
+        setAnswers(draft.answers || {});
+        setPage(typeof draft.page === "number" ? draft.page : 0);
+        setMessage("已恢复本地未完成草稿。");
+      }
+    } catch {
+      setMessage("本地草稿读取失败，已从空白状态开始。");
+    } finally {
+      setDraftLoaded(true);
+    }
+  }, []);
 
   useEffect(() => {
     fetch("/api/reports/talent-template")
@@ -33,10 +62,25 @@ export default function NewReportProfilePage() {
       .then((data) => {
         setQuestions(data.questions || []);
         setLabels(data.labels || []);
-        setMessage(`已加载 ${data.count || 0} 题。`);
+        setMessage((current) => (current.includes("草稿") ? current : `已加载 ${data.count || 0} 题。`));
       })
       .catch(() => setMessage("题库加载失败，请刷新重试。"));
   }, []);
+
+  useEffect(() => {
+    if (!draftLoaded) return;
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        customerName,
+        customerContact,
+        surveyAnswers,
+        valueProfile,
+        answers,
+        page,
+      })
+    );
+  }, [answers, customerContact, customerName, draftLoaded, page, surveyAnswers, valueProfile]);
 
   const totalPages = Math.ceil(questions.length / QUESTIONS_PER_PAGE);
   const currentQuestions = useMemo(
@@ -49,6 +93,18 @@ export default function NewReportProfilePage() {
 
   function setAnswer(questionNumber: number, value: number) {
     setAnswers((current) => ({ ...current, [questionNumber]: value }));
+  }
+
+  function clearLocalDraft() {
+    localStorage.removeItem(STORAGE_KEY);
+    setCustomerName("");
+    setCustomerContact("");
+    setSurveyAnswers("{}");
+    setValueProfile(JSON.stringify(defaultValueProfile, null, 2));
+    setAnswers({});
+    setPage(0);
+    setProfile(null);
+    setMessage("本地草稿已清空。");
   }
 
   async function submitProfile() {
@@ -132,6 +188,13 @@ export default function NewReportProfilePage() {
           </div>
           <button className="btn-primary mt-4 w-full" disabled={loading || !allComplete} onClick={submitProfile}>
             {loading ? "生成中..." : "完成并生成底稿"}
+          </button>
+          <button
+            className="mt-3 w-full rounded-full bg-ink-100 px-4 py-3 text-sm font-semibold text-ink-700"
+            type="button"
+            onClick={clearLocalDraft}
+          >
+            清空本地草稿
           </button>
           {message && <p className="mt-3 text-sm leading-6 text-ink-600">{message}</p>}
         </aside>
