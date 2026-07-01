@@ -122,11 +122,34 @@ describe("report builders", () => {
     const report = buildLiteReport(profile);
 
     expect(Object.keys(report.sections)).toEqual([...LITE_REPORT_SECTIONS]);
+    expect(report.sections.current_problem).toMatchObject({
+      customer_input: {
+        current_decision: "创业",
+        time_window: "3个月内",
+      },
+    });
     expect(report.sections.data_appendix).toMatchObject({
       mode: "local",
       answer_distribution: profile.talent_profile.answer_distribution,
     });
     expect(assertReportConsistency(profile, report.profile_reference)).toEqual([]);
+  });
+
+  it("uses survey desired and avoided directions in the lite report recommendation", () => {
+    const report = buildLiteReport({
+      ...profile,
+      survey_answers: {
+        ...profile.survey_answers,
+        desired_direction: "个人 IP 咨询、AI 视频",
+        avoid_direction: "低价代运营",
+      },
+    });
+
+    expect(report.sections.direction_suggestion).toMatchObject({
+      main_cut: "先围绕「个人 IP 咨询、AI 视频」做最小验证，不直接重投入。",
+      not_recommended_forms: expect.arrayContaining(["低价代运营"]),
+      direction_hypothesis: "先做一个围绕「个人 IP 咨询、AI 视频」的窄版诊断/试点产品，验证是否有人愿意为判断和方案付费。",
+    });
   });
 
   it("builds a nianxue-style deep report that reuses the same assessment_profile", () => {

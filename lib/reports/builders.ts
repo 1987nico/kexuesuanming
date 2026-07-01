@@ -20,6 +20,68 @@ function weakestTalentSentence(profile: AssessmentProfile) {
   return lowTraits ? `最需要补偿的特质包括：${lowTraits}。` : "低分特质需要结合具体场景解释。";
 }
 
+function readSurveyText(profile: AssessmentProfile, keys: string[], fallback = "未填写") {
+  for (const key of keys) {
+    const value = profile.survey_answers[key];
+    if (Array.isArray(value) && value.length > 0) return value.join("、");
+    if (typeof value === "string" && value.trim()) return value.trim();
+    if (typeof value === "number") return String(value);
+  }
+  return fallback;
+}
+
+function buildLiteCustomerInput(profile: AssessmentProfile) {
+  return {
+    current_decision: readSurveyText(profile, ["current_decision", "decision", "正在考虑的选择", "当前决策"]),
+    time_window: readSurveyText(profile, ["time_window", "decision_window", "决策时间窗口", "时间窗口"]),
+    stuck_point: readSurveyText(profile, ["stuck_point", "pain", "career_confusion", "卡点", "当前最主要的职业或事业困惑"]),
+    energy_source: readSurveyText(profile, ["energy_source", "energizing_work", "能量来源"]),
+    transferable_assets: readSurveyText(profile, ["transferable_assets", "assets", "可迁移资产"]),
+    desired_direction: readSurveyText(profile, ["desired_direction", "toward", "想靠近的方向", "正在考虑的方向"]),
+    avoid_direction: readSurveyText(profile, ["avoid_direction", "avoid", "明确不碰的方向", "想避开的状态"]),
+  };
+}
+
+function buildLiteConsultantView(profile: AssessmentProfile) {
+  const input = buildLiteCustomerInput(profile);
+  const desired =
+    input.desired_direction !== "未填写"
+      ? `「${input.desired_direction}」可以进入验证，但必须先拆成小切口。`
+      : "候选方向需要先补充，再进入验证。";
+  const avoid =
+    input.avoid_direction !== "未填写"
+      ? `同时要避开「${input.avoid_direction}」，否则容易滑向长期消耗。`
+      : `同时要避开排除带：${profile.value_profile.exclude_summary}。`;
+  return `${profile.customer_name} 表面上在问「${input.current_decision}」，底层是在问：我适合靠什么形成可持续个人价值。${desired}${avoid} 这次初筛的重点不是鼓励马上投入，而是先把值得验证的方向和必须避开的风险说清楚。`;
+}
+
+function buildLiteDirectionSuggestion(profile: AssessmentProfile) {
+  const input = buildLiteCustomerInput(profile);
+  const mainCut =
+    input.desired_direction !== "未填写"
+      ? `先围绕「${input.desired_direction}」做最小验证，不直接重投入。`
+      : "先补齐候选方向，再结合履历、资源和真实市场反馈收敛主切口。";
+  return {
+    main_cut: mainCut,
+    suitable_forms: [
+      "高客单诊断：先卖判断，不卖无限执行。",
+      "小样本试点：用真实客户反馈验证付费意愿。",
+      "方法论产品：把判断框架沉淀成模板、清单和案例。",
+      "90天验证服务：只承诺验证路径和复盘，不承诺结果。",
+    ],
+    not_recommended_forms: [
+      input.avoid_direction !== "未填写" ? input.avoid_direction : "低价纯执行",
+      "无边界陪跑",
+      "只靠测评结论做重大决策",
+      "过早扩团队或重投入",
+    ],
+    direction_hypothesis:
+      input.desired_direction !== "未填写"
+        ? `先做一个围绕「${input.desired_direction}」的窄版诊断/试点产品，验证是否有人愿意为判断和方案付费。`
+        : "先产出 2-3 个方向假设，再用访谈和付费试点验证。",
+  };
+}
+
 function vrinTotal(score: VRINScore) {
   return score.overall_score ?? score.value + score.rarity + score.imitability + score.non_substitutability;
 }
@@ -53,6 +115,7 @@ export function buildReportProfileReference(profile: AssessmentProfile): ReportP
 }
 
 export function buildLiteReport(profile: AssessmentProfile): LiteReportShape & { profile_reference: ReportProfileReference } {
+  const customerInput = buildLiteCustomerInput(profile);
   const sections: LiteReportShape["sections"] = {
     cover: {
       title: "职场参谋｜初步诊断报告",
@@ -69,8 +132,8 @@ export function buildLiteReport(profile: AssessmentProfile): LiteReportShape & {
       next_action: "用 90 天做小样本验证：访谈、试点、付费转化、复盘。",
     },
     current_problem: {
-      customer_input: profile.survey_answers,
-      consultant_view: `表层问题需要放回价值观边界看：${profile.value_profile.like_summary}；同时避开：${profile.value_profile.exclude_summary}。`,
+      customer_input: customerInput,
+      consultant_view: buildLiteConsultantView(profile),
     },
     value_profile: {
       liked_values: profile.value_profile.liked_values,
@@ -92,11 +155,7 @@ export function buildLiteReport(profile: AssessmentProfile): LiteReportShape & {
       self_drive: profile.talent_profile.high_traits.slice(4, 6),
       key_traits: [...profile.talent_profile.high_traits, ...profile.talent_profile.low_traits],
     },
-    direction_suggestion: {
-      main_cut: "待结合履历、资源和真实市场反馈进一步收敛。",
-      suitable_forms: ["高客单诊断", "小样本试点", "方法论产品", "90天验证服务"],
-      not_recommended_forms: ["低价纯执行", "无边界陪跑", "只靠测评结论做重大决策"],
-    },
+    direction_suggestion: buildLiteDirectionSuggestion(profile),
     ninety_day_validation: {
       weeks_1_2: "锁定一个窄人群，访谈 10 人，记录真实付费问题。",
       weeks_3_4: "做 3 个诊断样本，产出前后对比。",
