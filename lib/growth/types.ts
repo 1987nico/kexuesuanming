@@ -125,6 +125,8 @@ export interface GrowthRun {
   experiment_hypothesis: string;
   selected_topic?: TopicCandidate;
   topic_pool: TopicCandidate[];
+  // 已生成过的选题标题历史（用于换一批时不与历史重复）
+  seen_titles?: string[];
   draft?: ContentDraft;
   review?: GrowthReview;
   created_at: string;

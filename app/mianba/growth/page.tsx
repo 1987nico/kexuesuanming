@@ -430,7 +430,7 @@ export default function XiaohongshuNotesPage() {
       </StepCard>
 
       {/* Step 2 选题 */}
-      <StepCard step="2" title="选题" desc="每点一次生成 2 个不重复选题，累积成题池；选一个进入正文。">
+      <StepCard step="2" title="选题" desc="每点一次换成 2 个新选题（不与历史重复）；选一个进入正文。">
         <button className="btn-primary" disabled={!!busy || !account} onClick={addTopics}>
           {busy === "生成 2 个选题" ? "生成中..." : "生成 2 个选题"}
         </button>

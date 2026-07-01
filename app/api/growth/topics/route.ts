@@ -33,17 +33,21 @@ export async function POST(req: Request) {
 
   const runs = await store.listRuns(account.id);
   let run = runs[0] ?? null;
-  const existingTitles = run ? run.topic_pool.map((topic) => topic.title) : [];
+  // 换一批：排除历史出现过的所有标题（含上一批），保证每次点都是新的。
+  const seenTitles = run
+    ? Array.from(new Set([...(run.seen_titles ?? []), ...run.topic_pool.map((topic) => topic.title)]))
+    : [];
 
   const { topics, usage } = await generateTopicBatch({
     account,
     week: parsed.data.week ?? run?.week ?? 1,
     count: parsed.data.count ?? 2,
-    excludeTitles: existingTitles,
+    excludeTitles: seenTitles,
     recentSignals: parsed.data.recentSignals,
   });
 
   const timestamp = now();
+  const nextSeen = Array.from(new Set([...seenTitles, ...topics.map((topic) => topic.title)]));
   if (!run) {
     run = {
       id: crypto.randomUUID(),
@@ -51,14 +55,16 @@ export async function POST(req: Request) {
       account_id: account.id,
       status: "draft",
       week: parsed.data.week ?? 1,
-      objective: "每次生成 2 个不重复选题，累积成可比较的题池。",
-      experiment_hypothesis: "先积累可比较选题，再选题生成正文。",
+      objective: "每点一次换成 2 个新选题（不与历史重复）。",
+      experiment_hypothesis: "换一批看哪个方向/角度更值得写。",
       topic_pool: topics,
+      seen_titles: nextSeen,
       created_at: timestamp,
       updated_at: timestamp,
     } satisfies GrowthRun;
   } else {
-    run = { ...run, topic_pool: [...run.topic_pool, ...topics], updated_at: timestamp };
+    // 用新选题替换整个列表，而不是累加。
+    run = { ...run, topic_pool: topics, seen_titles: nextSeen, updated_at: timestamp };
   }
 
   await store.saveRun(run);
