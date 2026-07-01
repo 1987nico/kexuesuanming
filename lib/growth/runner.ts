@@ -394,22 +394,35 @@ export async function generateDraftVariants(input: {
   excludeBodies?: string[];
 }): Promise<{ drafts: ContentDraft[]; usage?: Record<string, unknown> }> {
   const count = input.count ?? 2;
-  const variantHints = [
-    "开头用一句反常识判断切入，正文用 3-5 个诊断信号。",
-    "开头用一个真实场景/客户提问切入，正文用清单或步骤。",
-    "开头用第一人称过程复盘切入，正文用故事服务判断。",
+  // 一短一长：方案 1 精简版，方案 2 深度长文。
+  const variantSpecs = [
+    {
+      hint: "开头用一句反常识判断切入，正文用 3 个诊断信号，克制精炼。",
+      lengthHint: "精简版：正文控制在 150-300 字，只保留最锋利的判断和 3 个信号，适合快速阅读。",
+    },
+    {
+      hint: "开头用真实场景/过程切入，正文展开清单或步骤 + 案例 + 关注理由。",
+      lengthHint: "深度长文：正文写到 600-900 字（发布端合计仍需 ≤1000 字），把判断讲透、给可执行细节。",
+    },
+    {
+      hint: "开头用第一人称复盘切入，中等篇幅，故事服务判断。",
+      lengthHint: "中等篇幅：正文 400-600 字。",
+    },
   ];
   const drafts: ContentDraft[] = [];
   const usedBodies = [...(input.excludeBodies ?? [])];
   let usage: Record<string, unknown> | undefined;
 
   for (let i = 0; i < count; i++) {
+    const spec = variantSpecs[i % variantSpecs.length];
     const single = await generateSingleDraft({
       tenantId: input.tenantId,
       account: input.account,
       run: input.run,
       topic: input.topic,
-      variantHint: variantHints[i % variantHints.length],
+      variantHint: spec.hint,
+      lengthHint: spec.lengthHint,
+      lengthKind: i === 0 ? "short" : "long",
       excludeBodies: usedBodies,
     });
     drafts.push(single.draft);
@@ -426,6 +439,8 @@ async function generateSingleDraft(input: {
   run: GrowthRun;
   topic: TopicCandidate;
   variantHint?: string;
+  lengthHint?: string;
+  lengthKind?: "short" | "long";
   excludeBodies?: string[];
 }): Promise<{ draft: ContentDraft; usage?: Record<string, unknown> }> {
   const topic = input.topic;
@@ -446,11 +461,11 @@ async function generateSingleDraft(input: {
         testVariable: topic.test_variable,
         expectedSignal: topic.expected_signal,
         followReason: topic.follow_reason,
-        variantHint: input.variantHint,
+        variantHint: [input.variantHint, input.lengthHint].filter(Boolean).join(" "),
         excludeBodies: input.excludeBodies,
         context: accountContext(input.account),
       }),
-      maxTokens: 3500,
+      maxTokens: input.lengthKind === "long" ? 3500 : 1800,
       temperature: 0.7,
     });
     payload = result.data;
@@ -466,9 +481,9 @@ async function generateSingleDraft(input: {
 
   const hashtags = normalizeTags(payload?.hashtags || ["#中高层转型", "#第二曲线", "#小红书运营"]);
   const title = payload?.title || topic.title;
-  const body =
-    payload?.body ||
-    `${input.variantHint || ""}\n\n围绕「${topic.title}」，本篇先验证一个变量：${topic.test_variable}。\n\n1. 你现在的价值，是岗位给的，还是市场愿意单独为你付费？\n2. 你手里有没有能被目标客户理解的具体成果？\n3. 你发出的内容，是在吸引目标客户，还是只吸引泛围观？\n\n我会继续记录，怎么把经验变成市场上的资产。`;
+  const shortFallback = `围绕「${topic.title}」，先验证一个变量：${topic.test_variable}。\n\n最锋利的判断：别急着做，先看你现在的价值是岗位给的，还是市场愿意单独为你付费。\n\n3 个信号：\n1. 有没有能被目标客户理解的具体成果？\n2. 你的内容在吸引目标客户，还是只吸引泛围观？\n3. 离开这个位置，客户还会不会找你？`;
+  const longFallback = `围绕「${topic.title}」，本篇先验证一个变量：${topic.test_variable}。\n\n先说一个反常识判断：很多人以为自己缺的是流量，其实缺的是“市场愿意单独为你付费的理由”。\n\n一、先自查三件事\n1. 你现在的价值，是岗位给的，还是市场愿意单独为你付费？\n2. 你手里有没有能被目标客户理解的具体成果（案例、数字、可复用方法）？\n3. 你发出的内容，是在吸引目标客户，还是只吸引泛围观？\n\n二、怎么把经验变成可被购买的表达\n把你做过的判断拆成“别人可以照着用”的清单和标准，而不是只讲故事。每一篇只讲清楚一个判断，并给出下一步动作。\n\n三、下一步\n先用一篇内容测试：目标客户看完，会不会主动来问。如果会，说明方向成立；如果只有点赞没有咨询，就换角度。\n\n我会继续记录，一个成熟职场人怎么把经验变成市场上可被信任、可被定价的资产。`;
+  const body = payload?.body || (input.lengthKind === "long" ? longFallback : shortFallback);
 
   const draft: ContentDraft = {
     id: id(),

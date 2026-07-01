@@ -464,12 +464,12 @@ export default function XiaohongshuNotesPage() {
       </StepCard>
 
       {/* Step 3 正文 */}
-      <StepCard step="3" title="正文" desc="按选题生成 2 篇，二选一；每点一次生成 2 篇新的、不重复。">
+      <StepCard step="3" title="正文" desc="按选题生成一短一长两篇，二选一；每点一次生成 2 篇新的、不重复。">
         {variants.length > 0 && (
           <div className="grid gap-4 md:grid-cols-2">
             {variants.map((draft, index) => (
               <div key={draft.id} className="rounded-2xl border border-ink-100 p-4">
-                <div className="mb-2 text-xs text-gold-700">方案 {index + 1}</div>
+                <div className="mb-2 text-xs text-gold-700">方案 {index + 1} · {index === 0 ? "精简版" : "深度长文"}（{draft.word_count.total} 字）</div>
                 <div className="font-medium leading-6">{draft.title}</div>
                 <pre className="mt-3 max-h-64 overflow-auto whitespace-pre-wrap rounded-xl bg-ink-50 p-3 text-xs leading-6 text-ink-700">{draft.body}</pre>
                 <div className="mt-2 text-xs text-ink-500">字数：{draft.word_count.total} / {draft.word_count.within_limit ? "≤1000 通过" : "超限"}</div>
