@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from "react";
 import type { CoverBrief } from "@/lib/growth/coverBrief";
-import type { ContentDraft, GrowthAccount, GrowthPlan, GrowthRun } from "@/lib/growth/types";
+import type { ContentDraft, GrowthAccount, GrowthPlan, GrowthReview, GrowthRun } from "@/lib/growth/types";
 import type { TitleScoreResult } from "@/lib/growth/titleScore";
 
 interface BootstrapState {
@@ -19,6 +19,19 @@ const emptyState: BootstrapState = {
   drafts: [],
 };
 
+interface ReviewFormState {
+  impressions: string;
+  reads: string;
+  likes: string;
+  saves: string;
+  comments: string;
+  shares: string;
+  profile_visits: string;
+  follows: string;
+  private_messages: string;
+  comment_keywords: string;
+}
+
 export default function MianbaWorkspacePage() {
   const [state, setState] = useState<BootstrapState>(emptyState);
   const [loading, setLoading] = useState(false);
@@ -29,6 +42,20 @@ export default function MianbaWorkspacePage() {
   const [scoringTitle, setScoringTitle] = useState(false);
   const [coverBrief, setCoverBrief] = useState<CoverBrief | null>(null);
   const [buildingCoverBrief, setBuildingCoverBrief] = useState(false);
+  const [reviewForm, setReviewForm] = useState<ReviewFormState>({
+    impressions: "",
+    reads: "",
+    likes: "",
+    saves: "",
+    comments: "",
+    shares: "",
+    profile_visits: "",
+    follows: "",
+    private_messages: "",
+    comment_keywords: "",
+  });
+  const [submittingReview, setSubmittingReview] = useState(false);
+  const [latestReview, setLatestReview] = useState<GrowthReview | null>(null);
 
   const latestRun = state.runs[0] ?? null;
   const latestDraft = state.drafts[0] ?? latestRun?.draft ?? null;
@@ -52,6 +79,7 @@ export default function MianbaWorkspacePage() {
   useEffect(() => {
     setTitleScore(null);
     setCoverBrief(null);
+    setLatestReview(null);
   }, [latestDraft?.id]);
 
   async function runAction(label: string, action: () => Promise<void>) {
@@ -170,6 +198,40 @@ export default function MianbaWorkspacePage() {
       setMessage((error as Error).message || "封面 brief 生成失败");
     } finally {
       setBuildingCoverBrief(false);
+    }
+  }
+
+  async function submitReview() {
+    if (!latestDraft) return;
+    setSubmittingReview(true);
+    setMessage("提交复盘数据中...");
+    try {
+      const payload: Record<string, unknown> = {};
+      for (const [key, value] of Object.entries(reviewForm)) {
+        if (!value.trim()) continue;
+        if (key === "comment_keywords") {
+          payload[key] = value
+            .split(/[,，\n]/)
+            .map((item: string) => item.trim())
+            .filter(Boolean);
+        } else {
+          payload[key] = Number(value);
+        }
+      }
+      const res = await fetch(`/api/growth/drafts/${latestDraft.id}/review`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) throw new Error("提交复盘失败");
+      const data = (await res.json()) as { review: GrowthReview };
+      setLatestReview(data.review);
+      await refresh();
+      setMessage("复盘完成");
+    } catch (error) {
+      setMessage((error as Error).message || "提交复盘失败");
+    } finally {
+      setSubmittingReview(false);
     }
   }
 
@@ -347,6 +409,43 @@ export default function MianbaWorkspacePage() {
               {latestDraft.hashtags.join(" ")}
             </pre>
           </div>
+          <div className="rounded-3xl bg-white p-5 shadow-sm md:col-span-2">
+            <div className="mb-3 text-xs uppercase tracking-[0.25em] text-gold-700">Review</div>
+            <h2 className="mb-4 font-semibold">发布后复盘回填</h2>
+            <div className="grid gap-3 md:grid-cols-5">
+              <MetricInput label="曝光" name="impressions" form={reviewForm} setForm={setReviewForm} />
+              <MetricInput label="阅读" name="reads" form={reviewForm} setForm={setReviewForm} />
+              <MetricInput label="点赞" name="likes" form={reviewForm} setForm={setReviewForm} />
+              <MetricInput label="收藏" name="saves" form={reviewForm} setForm={setReviewForm} />
+              <MetricInput label="评论" name="comments" form={reviewForm} setForm={setReviewForm} />
+              <MetricInput label="分享" name="shares" form={reviewForm} setForm={setReviewForm} />
+              <MetricInput label="主页访问" name="profile_visits" form={reviewForm} setForm={setReviewForm} />
+              <MetricInput label="新增关注" name="follows" form={reviewForm} setForm={setReviewForm} />
+              <MetricInput label="私信线索" name="private_messages" form={reviewForm} setForm={setReviewForm} />
+              <div>
+                <label className="mb-2 block text-xs font-medium text-ink-500">评论关键词</label>
+                <input
+                  value={reviewForm.comment_keywords}
+                  onChange={(event) => setReviewForm((current) => ({ ...current, comment_keywords: event.target.value }))}
+                  className="w-full rounded-xl border border-ink-100 bg-white px-3 py-2 text-sm"
+                  placeholder="逗号分隔"
+                />
+              </div>
+            </div>
+            <button className="btn-primary mt-5" disabled={submittingReview} onClick={submitReview}>
+              {submittingReview ? "复盘中..." : "提交复盘"}
+            </button>
+            {latestReview && (
+              <div className="mt-5 grid gap-3 rounded-2xl bg-ink-50 p-4 text-sm leading-6 text-ink-700 md:grid-cols-2">
+                <Field label="结果分类" value={latestReview.classification} />
+                <Field label="下一篇只改一个变量" value={latestReview.next_variable} />
+                <Field label="入口判断" value={latestReview.entry_judgement} />
+                <Field label="价值判断" value={latestReview.value_judgement} />
+                <Field label="关注判断" value={latestReview.follow_judgement} />
+                <Field label="人群判断" value={latestReview.audience_judgement} />
+              </div>
+            )}
+          </div>
         </section>
       )}
     </main>
@@ -385,6 +484,31 @@ function ScoreLine({ label, value }: { label: string; value: string | number }) 
     <div className="flex items-center justify-between gap-3">
       <span className="text-ink-500">{label}</span>
       <span className="font-medium text-ink-800">{value}</span>
+    </div>
+  );
+}
+
+function MetricInput({
+  label,
+  name,
+  form,
+  setForm,
+}: {
+  label: string;
+  name: keyof ReviewFormState;
+  form: ReviewFormState;
+  setForm: Dispatch<SetStateAction<ReviewFormState>>;
+}) {
+  return (
+    <div>
+      <label className="mb-2 block text-xs font-medium text-ink-500">{label}</label>
+      <input
+        type="number"
+        min="0"
+        value={form[name] || ""}
+        onChange={(event) => setForm((current) => ({ ...current, [name]: event.target.value }))}
+        className="w-full rounded-xl border border-ink-100 bg-white px-3 py-2 text-sm"
+      />
     </div>
   );
 }
