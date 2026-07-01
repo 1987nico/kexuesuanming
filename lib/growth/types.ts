@@ -1,5 +1,15 @@
 export type GrowthDirection = "A" | "B" | "C";
 
+export type GrowthPersona = "merchant" | "buyer" | "expert";
+
+export const GROWTH_PERSONAS: GrowthPersona[] = ["merchant", "buyer", "expert"];
+
+export const GROWTH_PERSONA_LABELS: Record<GrowthPersona, string> = {
+  merchant: "商家",
+  buyer: "买家",
+  expert: "专家",
+};
+
 export type ContentType = "diagnostic" | "tool" | "story";
 
 export type ContentStatus = "draft" | "ready" | "published" | "reviewed";
@@ -15,6 +25,7 @@ export type ReviewClassification =
 export interface GrowthAccount {
   id: string;
   tenant_id: string;
+  persona: GrowthPersona;
   name: string;
   target_user: string;
   core_problem: string;

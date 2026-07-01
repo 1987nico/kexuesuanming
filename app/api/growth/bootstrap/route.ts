@@ -2,26 +2,36 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { generateAccountAndPlan } from "@/lib/growth/runner";
 import { growthStore } from "@/lib/growth/store";
+import { GROWTH_PERSONAS, type GrowthPersona } from "@/lib/growth/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const DEFAULT_TENANT_ID = "mianbajun";
 
+const personaSchema = z.enum(["merchant", "buyer", "expert"]);
+
 const bodySchema = z.object({
+  persona: personaSchema.default("expert"),
   accountName: z.string().min(1).max(80).default("面霸君"),
   targetUser: z.string().max(500).optional(),
   coreProblem: z.string().max(500).optional(),
   trustSource: z.string().max(500).optional(),
 });
 
-export async function GET() {
+function resolvePersona(value: string | null): GrowthPersona {
+  return (GROWTH_PERSONAS as string[]).includes(value ?? "") ? (value as GrowthPersona) : "expert";
+}
+
+export async function GET(req: Request) {
+  const url = new URL(req.url);
+  const persona = resolvePersona(url.searchParams.get("persona"));
   const store = growthStore();
-  const account = await store.getLatestAccount(DEFAULT_TENANT_ID);
+  const account = await store.getLatestAccountByPersona(DEFAULT_TENANT_ID, persona);
   const plan = account ? await store.getLatestPlan(account.id) : null;
   const runs = account ? await store.listRuns(account.id) : [];
   const drafts = account ? await store.listDrafts(account.id) : [];
-  return NextResponse.json({ account, plan, runs, drafts });
+  return NextResponse.json({ persona, account, plan, runs, drafts });
 }
 
 export async function POST(req: Request) {
@@ -44,7 +54,7 @@ export async function POST(req: Request) {
       tenant_id: DEFAULT_TENANT_ID,
       feature: "growth_text",
       ...usage,
-      metadata: { action: "bootstrap" },
+      metadata: { action: "bootstrap", persona: parsed.data.persona },
     });
   }
 

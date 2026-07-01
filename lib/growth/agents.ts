@@ -1,4 +1,17 @@
-import type { ContentType, GrowthDirection } from "./types";
+import type { ContentType, GrowthDirection, GrowthPersona } from "./types";
+
+const PERSONA_GUIDE: Record<GrowthPersona, string> = {
+  merchant:
+    "视角：商家。账号是要卖产品/服务的经营者，内容要建立专业信任并把关注者转成客户，突出交付力、案例和转化。",
+  buyer:
+    "视角：买家/消费者决策者。账号帮读者做购买/选择决策，内容要客观、避坑、可对比，突出第三方视角和实测。",
+  expert:
+    "视角：专家/从业者。账号靠专业判断建立个人品牌，内容要有方法论密度和行业洞察，突出判断力与体系。",
+};
+
+export function personaGuide(persona: GrowthPersona) {
+  return PERSONA_GUIDE[persona];
+}
 
 export const GROWTH_SYSTEM_PROMPT = `
 你是「小红书内容工厂 V3：30 天起号实验版」。
@@ -30,6 +43,7 @@ C 创始人故事/过程记录：验证信任锚点和人设承接。
 
 export function buildAccountPlanUserPrompt(input: {
   accountName: string;
+  persona?: GrowthPersona;
   targetUser?: string;
   coreProblem?: string;
   trustSource?: string;
@@ -37,6 +51,7 @@ export function buildAccountPlanUserPrompt(input: {
   return `
 请以总经理 V3 身份，为这个账号生成账号定位卡和 30 天实验计划。
 
+${input.persona ? personaGuide(input.persona) : ""}
 账号名称：${input.accountName}
 目标用户线索：${input.targetUser || "使用默认账号方向"}
 核心问题线索：${input.coreProblem || "使用默认账号方向"}
@@ -70,19 +85,26 @@ export function buildTopicPoolUserPrompt(input: {
   targetUser: string;
   coreProblem: string;
   recentSignals?: string;
+  persona?: GrowthPersona;
+  count?: number;
+  excludeTitles?: string[];
 }) {
+  const count = input.count ?? 15;
+  const exclude = (input.excludeTitles ?? []).filter(Boolean);
   return `
 请以选题官 V3 身份，围绕账号当前阶段生成候选题池。
 
+${input.persona ? personaGuide(input.persona) : ""}
 当前第 ${input.week} 周。
 目标用户：${input.targetUser}
 核心问题：${input.coreProblem}
 最近复盘信号：${input.recentSignals || "暂无真实数据，不得编造，用当前阶段目标继续生产。"}
 
 要求：
-- 方向 A/B/C 各至少 5 个候选题。
+- 生成 ${count} 个候选题，覆盖方向 A/B/C。
 - 每个候选题必须可比较、可复盘、可延展。
 - 优先进入生产的题必须满足：定位匹配度 >= 8，痛点清晰度 >= 7，关注理由 >= 7，实验价值 >= 8，泛流量风险 <= 5。
+${exclude.length ? `- 严禁与以下已生成选题重复或近似：${exclude.join(" / ")}` : ""}
 
 输出 JSON：
 {
@@ -125,10 +147,15 @@ export function buildDraftUserPrompt(input: {
   testVariable: string;
   expectedSignal: string;
   followReason: string;
+  persona?: GrowthPersona;
+  variantHint?: string;
+  excludeBodies?: string[];
 }) {
+  const exclude = (input.excludeBodies ?? []).filter(Boolean);
   return `
 请以主笔 V3 身份，把最终选题写成可直接发布的小红书发布包。
 
+${input.persona ? personaGuide(input.persona) : ""}
 目标用户：${input.targetUser}
 信任来源：${input.trustSource}
 方向：${input.direction}
@@ -137,6 +164,8 @@ export function buildDraftUserPrompt(input: {
 本篇验证变量：${input.testVariable}
 预期有效信号：${input.expectedSignal}
 关注理由：${input.followReason}
+${input.variantHint ? `本次写作角度：${input.variantHint}` : ""}
+${exclude.length ? `严禁与以下已生成正文重复或近似（可换结构、开头、案例）：\n${exclude.map((b) => b.slice(0, 120)).join("\n---\n")}` : ""}
 
 写作要求：
 - 诊断型：直接点出处境，给反常识判断，列 3-5 个诊断信号。

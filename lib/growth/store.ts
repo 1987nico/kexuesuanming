@@ -2,6 +2,7 @@ import { isDBConfigured, supabaseServer } from "@/lib/db/supabase";
 import type {
   ContentDraft,
   GrowthAccount,
+  GrowthPersona,
   GrowthPlan,
   GrowthReview,
   GrowthRun,
@@ -12,6 +13,7 @@ export interface GrowthStore {
   saveAccount(account: GrowthAccount): Promise<void>;
   getAccount(id: string): Promise<GrowthAccount | null>;
   getLatestAccount(tenantId: string): Promise<GrowthAccount | null>;
+  getLatestAccountByPersona(tenantId: string, persona: GrowthPersona): Promise<GrowthAccount | null>;
   savePlan(plan: GrowthPlan): Promise<void>;
   getPlan(id: string): Promise<GrowthPlan | null>;
   getLatestPlan(accountId: string): Promise<GrowthPlan | null>;
@@ -45,6 +47,14 @@ class MemoryGrowthStore implements GrowthStore {
     return (
       [...this.accounts.values()]
         .filter((account) => account.tenant_id === tenantId)
+        .sort((a, b) => b.created_at.localeCompare(a.created_at))[0] ?? null
+    );
+  }
+
+  async getLatestAccountByPersona(tenantId: string, persona: GrowthPersona) {
+    return (
+      [...this.accounts.values()]
+        .filter((account) => account.tenant_id === tenantId && account.persona === persona)
         .sort((a, b) => b.created_at.localeCompare(a.created_at))[0] ?? null
     );
   }
@@ -146,6 +156,18 @@ class SupabaseGrowthStore implements GrowthStore {
       .maybeSingle();
     if (error) throw error;
     return (data?.payload as GrowthAccount) ?? null;
+  }
+
+  async getLatestAccountByPersona(tenantId: string, persona: GrowthPersona) {
+    const { data, error } = await this.db
+      .from("growth_accounts")
+      .select("payload")
+      .eq("tenant_id", tenantId)
+      .order("created_at", { ascending: false })
+      .limit(50);
+    if (error) throw error;
+    const accounts = (data ?? []).map((row) => row.payload as GrowthAccount);
+    return accounts.find((account) => account.persona === persona) ?? null;
   }
 
   async savePlan(plan: GrowthPlan) {
