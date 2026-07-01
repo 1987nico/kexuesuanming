@@ -563,16 +563,6 @@ export default function XiaohongshuNotesPage() {
               <div key={draft.id} className="rounded-2xl border border-ink-100 p-4">
                 <div className="mb-2 text-xs text-gold-700">方案 {index + 1} · {index === 0 ? "精简版" : "深度长文"}（{draft.word_count.total} 字）</div>
                 <div className="font-medium leading-6">{draft.title}</div>
-                {(persona === "buyer" || draft.story_mode || draft.pictorial_rate) && (
-                  <div className="mt-1 flex flex-wrap gap-2">
-                    <span className="rounded-full bg-gold-100 px-2 py-0.5 text-xs font-medium text-gold-700">
-                      模式：{draft.story_mode || "本批未返回，请重新生成正文"}
-                    </span>
-                    <span className="rounded-full bg-gold-100 px-2 py-0.5 text-xs font-medium text-gold-700">
-                      画面率：{draft.pictorial_rate || "本批未返回"}
-                    </span>
-                  </div>
-                )}
                 <pre className="mt-3 max-h-64 overflow-auto whitespace-pre-wrap rounded-xl bg-ink-50 p-3 text-xs leading-6 text-ink-700">{draft.body}</pre>
                 <div className="mt-2 text-xs text-ink-500">字数：{draft.word_count.total} / {draft.word_count.within_limit ? "≤1000 通过" : "超限"}</div>
                 <div className="mt-3 flex flex-wrap gap-2">
@@ -602,16 +592,6 @@ export default function XiaohongshuNotesPage() {
           <div className="rounded-2xl border border-gold-300 bg-gold-50/40 p-4">
             <div className="mb-2 text-xs text-gold-700">已选定正文（状态：{DRAFT_STATUS_LABELS[chosenDraft.status] ?? chosenDraft.status}）</div>
             <div className="font-medium leading-6">{chosenDraft.title}</div>
-            {(persona === "buyer" || chosenDraft.story_mode || chosenDraft.pictorial_rate) && (
-              <div className="mt-1 flex flex-wrap gap-2">
-                <span className="rounded-full bg-gold-100 px-2 py-0.5 text-xs font-medium text-gold-700">
-                  模式：{chosenDraft.story_mode || "本批未返回，请重新生成正文"}
-                </span>
-                <span className="rounded-full bg-gold-100 px-2 py-0.5 text-xs font-medium text-gold-700">
-                  画面率：{chosenDraft.pictorial_rate || "本批未返回"}
-                </span>
-              </div>
-            )}
             <pre className="mt-3 max-h-72 overflow-auto whitespace-pre-wrap rounded-xl bg-white p-3 text-sm leading-7 text-ink-800">{chosenDraft.body}{"\n\n"}{chosenDraft.hashtags.join(" ")}</pre>
             <div className="mt-3 flex flex-wrap gap-2">
               <CopyButton text={chosenDraft.title} label="复制标题" />
