@@ -450,13 +450,12 @@ export default function XiaohongshuNotesPage() {
                 </div>
                 <div className="font-medium leading-6">{topic.title}</div>
                 <p className="mt-1 text-xs leading-5 text-ink-500">验证变量：{topic.test_variable}</p>
-                <button
-                  className="btn-primary mt-3"
-                  disabled={!!busy}
-                  onClick={() => generateVariants(topic)}
-                >
-                  用这个选题写正文
-                </button>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button className="btn-primary" disabled={!!busy} onClick={() => generateVariants(topic)}>
+                    用这个选题写正文
+                  </button>
+                  <CopyButton text={topic.title} label="复制标题" />
+                </div>
               </div>
             ))}
           </div>
@@ -473,7 +472,11 @@ export default function XiaohongshuNotesPage() {
                 <div className="font-medium leading-6">{draft.title}</div>
                 <pre className="mt-3 max-h-64 overflow-auto whitespace-pre-wrap rounded-xl bg-ink-50 p-3 text-xs leading-6 text-ink-700">{draft.body}</pre>
                 <div className="mt-2 text-xs text-ink-500">字数：{draft.word_count.total} / {draft.word_count.within_limit ? "≤1000 通过" : "超限"}</div>
-                <button className="btn-primary mt-3" disabled={!!busy} onClick={() => chooseDraft(draft)}>选这篇</button>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button className="btn-primary" disabled={!!busy} onClick={() => chooseDraft(draft)}>选这篇</button>
+                  <CopyButton text={draft.title} label="复制标题" />
+                  <CopyButton text={`${draft.body}\n\n${draft.hashtags.join(" ")}`} label="复制正文+话题" />
+                </div>
               </div>
             ))}
           </div>
@@ -495,6 +498,11 @@ export default function XiaohongshuNotesPage() {
             <div className="mb-2 text-xs text-gold-700">已选定正文（状态：{chosenDraft.status}）</div>
             <div className="font-medium leading-6">{chosenDraft.title}</div>
             <pre className="mt-3 max-h-72 overflow-auto whitespace-pre-wrap rounded-xl bg-white p-3 text-sm leading-7 text-ink-800">{chosenDraft.body}{"\n\n"}{chosenDraft.hashtags.join(" ")}</pre>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <CopyButton text={chosenDraft.title} label="复制标题" />
+              <CopyButton text={`${chosenDraft.body}\n\n${chosenDraft.hashtags.join(" ")}`} label="复制正文+话题" />
+              <CopyButton text={chosenDraft.hashtags.join(" ")} label="复制话题" />
+            </div>
           </div>
         )}
         {variants.length === 0 && !chosenDraft && (
@@ -576,6 +584,39 @@ export default function XiaohongshuNotesPage() {
         )}
       </StepCard>
     </main>
+  );
+}
+
+function CopyButton({ text, label = "一键复制", className = "" }: { text: string; label?: string; className?: string }) {
+  const [copied, setCopied] = useState(false);
+  async function copy() {
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const ta = document.createElement("textarea");
+        ta.value = text;
+        ta.style.position = "fixed";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand("copy");
+        document.body.removeChild(ta);
+      }
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      setCopied(false);
+    }
+  }
+  return (
+    <button
+      type="button"
+      onClick={copy}
+      className={"rounded-full bg-ink-100 px-4 py-2 text-sm font-semibold text-ink-700 transition hover:bg-ink-200 " + className}
+    >
+      {copied ? "已复制 ✓" : label}
+    </button>
   );
 }
 
