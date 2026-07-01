@@ -33,9 +33,44 @@ export interface GrowthAccount {
   trust_source: string;
   not_doing: string;
   hypotheses: string[];
+  // 扩展字段（可选，向后兼容旧数据）
+  one_liner?: string;
+  follow_reason?: string;
+  content_directions?: string[];
+  tone_style?: string;
+  filter_words?: string[];
+  avoid_expressions?: string[];
+  compliance_redline?: string;
+  private_domain?: string;
+  // 视角专属字段：key -> value
+  persona_specific?: Record<string, string>;
   created_at: string;
   updated_at: string;
 }
+
+export interface PersonaSpecificField {
+  key: string;
+  label: string;
+  placeholder: string;
+}
+
+export const PERSONA_SPECIFIC_FIELDS: Record<GrowthPersona, PersonaSpecificField[]> = {
+  merchant: [
+    { key: "main_offer", label: "主营产品/服务", placeholder: "例如：中高端职业咨询、定制化培训" },
+    { key: "price_band", label: "客单价区间", placeholder: "例如：2000-8000 元" },
+    { key: "conversion_goal", label: "转化目标", placeholder: "加微 / 到店 / 下单 / 留资" },
+  ],
+  buyer: [
+    { key: "review_category", label: "测评/对比的品类", placeholder: "例如：职业课程、简历服务" },
+    { key: "stance", label: "立场", placeholder: "第三方实测 / 避坑 / 平价替代" },
+    { key: "monetization", label: "变现方式", placeholder: "带货 / 佣金 / 探店合作" },
+  ],
+  expert: [
+    { key: "expertise", label: "专业领域", placeholder: "例如：组织发展、职业决策" },
+    { key: "methodology", label: "代表方法论/成果", placeholder: "例如：六步职业决策漏斗" },
+    { key: "monetization", label: "变现方式", placeholder: "咨询 / 课程 / 知识付费 / 训练营" },
+  ],
+};
 
 export interface GrowthPlan {
   id: string;

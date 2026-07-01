@@ -18,8 +18,24 @@ import type {
   TopicCandidate,
 } from "./types";
 import { countPublishChars, normalizeTags } from "./validation";
+import { PERSONA_SPECIFIC_FIELDS } from "./types";
+import type { AccountContext } from "./agents";
 
 const DEFAULT_TENANT_ID = "mianbajun";
+
+function accountContext(account: GrowthAccount): AccountContext {
+  return {
+    toneStyle: account.tone_style,
+    filterWords: account.filter_words,
+    avoidExpressions: account.avoid_expressions,
+    contentDirections: account.content_directions,
+    personaSpecific: account.persona_specific,
+  };
+}
+
+function emptyPersonaSpecific(persona: GrowthPersona): Record<string, string> {
+  return Object.fromEntries(PERSONA_SPECIFIC_FIELDS[persona].map((field) => [field.key, ""]));
+}
 
 function now() {
   return new Date().toISOString();
@@ -131,6 +147,20 @@ export async function generateAccountAndPlan(input: {
             "工具/清单型内容能带来收藏和主页访问。",
             "创始人过程记录能形成信任锚点。",
           ],
+    one_liner: accountData.one_liner || "",
+    follow_reason: accountData.follow_reason || "账号会持续拆解目标用户的真实决策问题。",
+    content_directions:
+      Array.isArray(accountData.content_directions) && accountData.content_directions.length
+        ? accountData.content_directions.slice(0, 3)
+        : ["A 目标客户痛点诊断", "B 可收藏工具/清单", "C 创始人故事/过程记录"],
+    tone_style: accountData.tone_style || "具体、克制、有判断、有下一步，不鸡汤。",
+    filter_words: Array.isArray(accountData.filter_words) ? accountData.filter_words.slice(0, 8) : [],
+    avoid_expressions: Array.isArray(accountData.avoid_expressions)
+      ? accountData.avoid_expressions.slice(0, 8)
+      : ["逆袭", "暴富", "月入X万", "包成功"],
+    compliance_redline: accountData.compliance_redline || "不承诺收益、不玄学、客户匿名、不用泛焦虑换阅读。",
+    private_domain: accountData.private_domain || "",
+    persona_specific: emptyPersonaSpecific(persona),
     created_at: timestamp,
     updated_at: timestamp,
   };
@@ -323,6 +353,7 @@ export async function generateTopicBatch(input: {
         recentSignals: input.recentSignals,
         count,
         excludeTitles,
+        context: accountContext(input.account),
       }),
       maxTokens: 2000,
       temperature: 0.75,
@@ -417,6 +448,7 @@ async function generateSingleDraft(input: {
         followReason: topic.follow_reason,
         variantHint: input.variantHint,
         excludeBodies: input.excludeBodies,
+        context: accountContext(input.account),
       }),
       maxTokens: 3500,
       temperature: 0.7,

@@ -11,7 +11,7 @@ import type {
   GrowthRun,
   TopicCandidate,
 } from "@/lib/growth/types";
-import { GROWTH_PERSONA_LABELS, GROWTH_PERSONAS } from "@/lib/growth/types";
+import { GROWTH_PERSONA_LABELS, GROWTH_PERSONAS, PERSONA_SPECIFIC_FIELDS } from "@/lib/growth/types";
 
 interface WorkspaceState {
   account: GrowthAccount | null;
@@ -22,12 +22,21 @@ interface WorkspaceState {
 
 interface AccountForm {
   name: string;
+  one_liner: string;
   target_user: string;
   core_problem: string;
   account_value: string;
+  follow_reason: string;
   trust_source: string;
   not_doing: string;
+  content_directions: string;
+  tone_style: string;
+  filter_words: string;
+  avoid_expressions: string;
+  compliance_redline: string;
+  private_domain: string;
   hypotheses: string;
+  persona_specific: Record<string, string>;
 }
 
 interface CoverResult {
@@ -64,15 +73,32 @@ const emptyReviewForm: ReviewFormState = {
 };
 
 function toAccountForm(account: GrowthAccount): AccountForm {
+  const personaSpecific: Record<string, string> = {};
+  for (const field of PERSONA_SPECIFIC_FIELDS[account.persona]) {
+    personaSpecific[field.key] = account.persona_specific?.[field.key] ?? "";
+  }
   return {
     name: account.name,
+    one_liner: account.one_liner ?? "",
     target_user: account.target_user,
     core_problem: account.core_problem,
     account_value: account.account_value,
+    follow_reason: account.follow_reason ?? "",
     trust_source: account.trust_source,
     not_doing: account.not_doing,
+    content_directions: (account.content_directions ?? []).join("\n"),
+    tone_style: account.tone_style ?? "",
+    filter_words: (account.filter_words ?? []).join("、"),
+    avoid_expressions: (account.avoid_expressions ?? []).join("、"),
+    compliance_redline: account.compliance_redline ?? "",
+    private_domain: account.private_domain ?? "",
     hypotheses: account.hypotheses.join("\n"),
+    persona_specific: personaSpecific,
   };
+}
+
+function splitList(value: string, sep: RegExp) {
+  return value.split(sep).map((s) => s.trim()).filter(Boolean);
 }
 
 export default function XiaohongshuNotesPage() {
@@ -146,12 +172,21 @@ export default function XiaohongshuNotesPage() {
         body: JSON.stringify({
           id: state.account!.id,
           name: accountForm.name,
+          one_liner: accountForm.one_liner,
           target_user: accountForm.target_user,
           core_problem: accountForm.core_problem,
           account_value: accountForm.account_value,
+          follow_reason: accountForm.follow_reason,
           trust_source: accountForm.trust_source,
           not_doing: accountForm.not_doing,
-          hypotheses: accountForm.hypotheses.split("\n").map((s) => s.trim()).filter(Boolean),
+          content_directions: splitList(accountForm.content_directions, /\n/),
+          tone_style: accountForm.tone_style,
+          filter_words: splitList(accountForm.filter_words, /[,，、\n]/),
+          avoid_expressions: splitList(accountForm.avoid_expressions, /[,，、\n]/),
+          compliance_redline: accountForm.compliance_redline,
+          private_domain: accountForm.private_domain,
+          hypotheses: splitList(accountForm.hypotheses, /\n/),
+          persona_specific: accountForm.persona_specific,
         }),
       });
       if (!res.ok) throw new Error("保存定位卡失败");
@@ -322,25 +357,70 @@ export default function XiaohongshuNotesPage() {
           </div>
         ) : editing && accountForm ? (
           <div className="space-y-3">
+            <div className="text-xs font-semibold text-gold-700">基础定位</div>
             <EditField label="账号名称" value={accountForm.name} onChange={(v) => setAccountForm({ ...accountForm, name: v })} />
+            <EditField label="一句话定位（10-20 字）" value={accountForm.one_liner} onChange={(v) => setAccountForm({ ...accountForm, one_liner: v })} />
+
+            <div className="pt-2 text-xs font-semibold text-gold-700">用户与价值</div>
             <EditArea label="目标用户" value={accountForm.target_user} onChange={(v) => setAccountForm({ ...accountForm, target_user: v })} />
-            <EditArea label="核心问题" value={accountForm.core_problem} onChange={(v) => setAccountForm({ ...accountForm, core_problem: v })} />
+            <EditArea label="最痛的问题 / 在为什么付代价" value={accountForm.core_problem} onChange={(v) => setAccountForm({ ...accountForm, core_problem: v })} />
             <EditArea label="账号价值" value={accountForm.account_value} onChange={(v) => setAccountForm({ ...accountForm, account_value: v })} />
-            <EditArea label="信任来源" value={accountForm.trust_source} onChange={(v) => setAccountForm({ ...accountForm, trust_source: v })} />
-            <EditArea label="不做什么" value={accountForm.not_doing} onChange={(v) => setAccountForm({ ...accountForm, not_doing: v })} />
-            <EditArea label="待验证假设（每行一个）" value={accountForm.hypotheses} onChange={(v) => setAccountForm({ ...accountForm, hypotheses: v })} />
-            <div className="flex gap-3">
+            <EditArea label="关注理由" value={accountForm.follow_reason} onChange={(v) => setAccountForm({ ...accountForm, follow_reason: v })} />
+
+            <div className="pt-2 text-xs font-semibold text-gold-700">信任与边界</div>
+            <EditArea label="信任来源（创始人凭什么讲）" value={accountForm.trust_source} onChange={(v) => setAccountForm({ ...accountForm, trust_source: v })} />
+            <EditArea label="不做什么（排除带）" value={accountForm.not_doing} onChange={(v) => setAccountForm({ ...accountForm, not_doing: v })} />
+            <EditArea label="合规红线" value={accountForm.compliance_redline} onChange={(v) => setAccountForm({ ...accountForm, compliance_redline: v })} />
+
+            <div className="pt-2 text-xs font-semibold text-gold-700">内容策略</div>
+            <EditArea label="3 个内容方向（每行一个）" value={accountForm.content_directions} onChange={(v) => setAccountForm({ ...accountForm, content_directions: v })} />
+            <EditField label="语气与风格" value={accountForm.tone_style} onChange={(v) => setAccountForm({ ...accountForm, tone_style: v })} />
+            <EditField label="必须出现的筛选词（顿号/逗号分隔）" value={accountForm.filter_words} onChange={(v) => setAccountForm({ ...accountForm, filter_words: v })} />
+            <EditField label="要避免的表达（顿号/逗号分隔）" value={accountForm.avoid_expressions} onChange={(v) => setAccountForm({ ...accountForm, avoid_expressions: v })} />
+
+            <div className="pt-2 text-xs font-semibold text-gold-700">{GROWTH_PERSONA_LABELS[persona]}视角专属</div>
+            {PERSONA_SPECIFIC_FIELDS[persona].map((field) => (
+              <EditField
+                key={field.key}
+                label={field.label}
+                value={accountForm.persona_specific[field.key] ?? ""}
+                onChange={(v) =>
+                  setAccountForm({
+                    ...accountForm,
+                    persona_specific: { ...accountForm.persona_specific, [field.key]: v },
+                  })
+                }
+              />
+            ))}
+
+            <div className="pt-2 text-xs font-semibold text-gold-700">实验管理</div>
+            <EditArea label="30 天待验证假设（每行一个）" value={accountForm.hypotheses} onChange={(v) => setAccountForm({ ...accountForm, hypotheses: v })} />
+            <EditArea label="私域承接方式（可选）" value={accountForm.private_domain} onChange={(v) => setAccountForm({ ...accountForm, private_domain: v })} />
+
+            <div className="flex gap-3 pt-2">
               <button className="btn-primary" disabled={!!busy} onClick={saveAccount}>保存</button>
               <button className="rounded-full bg-ink-100 px-4 py-3 text-sm font-semibold text-ink-700" onClick={() => { setEditing(false); setAccountForm(toAccountForm(account)); }}>取消</button>
             </div>
           </div>
         ) : (
           <div className="space-y-3 text-sm leading-6 text-ink-700">
+            {account.one_liner && <Field label="一句话定位" value={account.one_liner} />}
             <Field label="目标用户" value={account.target_user} />
-            <Field label="核心问题" value={account.core_problem} />
+            <Field label="最痛的问题" value={account.core_problem} />
             <Field label="账号价值" value={account.account_value} />
+            {account.follow_reason && <Field label="关注理由" value={account.follow_reason} />}
             <Field label="信任来源" value={account.trust_source} />
             <Field label="不做什么" value={account.not_doing} />
+            {account.content_directions && account.content_directions.length > 0 && (
+              <Field label="内容方向" value={account.content_directions.join(" / ")} />
+            )}
+            {account.tone_style && <Field label="语气风格" value={account.tone_style} />}
+            {account.persona_specific &&
+              PERSONA_SPECIFIC_FIELDS[persona].map((field) =>
+                account.persona_specific?.[field.key] ? (
+                  <Field key={field.key} label={field.label} value={account.persona_specific[field.key]} />
+                ) : null
+              )}
             <div className="flex flex-wrap gap-3 pt-2">
               <button className="btn-primary" onClick={() => { setAccountForm(toAccountForm(account)); setEditing(true); }}>编辑定位卡</button>
               <button className="rounded-full bg-ink-100 px-4 py-3 text-sm font-semibold text-ink-700" disabled={!!busy} onClick={createAccount}>AI 重新生成</button>

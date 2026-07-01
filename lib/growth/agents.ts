@@ -13,6 +13,26 @@ export function personaGuide(persona: GrowthPersona) {
   return PERSONA_GUIDE[persona];
 }
 
+export interface AccountContext {
+  toneStyle?: string;
+  filterWords?: string[];
+  avoidExpressions?: string[];
+  contentDirections?: string[];
+  personaSpecific?: Record<string, string>;
+}
+
+export function accountContextBlock(ctx?: AccountContext) {
+  if (!ctx) return "";
+  const lines: string[] = [];
+  if (ctx.toneStyle) lines.push(`语气与风格：${ctx.toneStyle}`);
+  if (ctx.contentDirections?.length) lines.push(`内容方向：${ctx.contentDirections.join(" / ")}`);
+  if (ctx.filterWords?.length) lines.push(`必须出现的筛选词：${ctx.filterWords.join("、")}`);
+  if (ctx.avoidExpressions?.length) lines.push(`要避免的表达：${ctx.avoidExpressions.join("、")}`);
+  const specific = Object.entries(ctx.personaSpecific ?? {}).filter(([, v]) => v && v.trim());
+  if (specific.length) lines.push(`视角专属信息：${specific.map(([k, v]) => `${k}=${v}`).join("；")}`);
+  return lines.length ? `账号定位补充：\n${lines.join("\n")}` : "";
+}
+
 export const GROWTH_SYSTEM_PROMPT = `
 你是「小红书内容工厂 V3：30 天起号实验版」。
 
@@ -60,11 +80,17 @@ ${input.persona ? personaGuide(input.persona) : ""}
 输出 JSON，字段：
 {
   "account": {
-    "target_user": "目标用户",
-    "core_problem": "核心问题",
+    "one_liner": "一句话定位（10-20 字，可当简介）",
+    "target_user": "目标用户（写清身份+场景）",
+    "core_problem": "目标用户最痛的问题/在为什么付代价",
     "account_value": "账号持续提供什么价值",
+    "follow_reason": "用户为什么要长期关注",
     "trust_source": "创始人凭什么讲",
     "not_doing": "账号不做什么",
+    "content_directions": ["方向A 痛点诊断一句话", "方向B 工具清单一句话", "方向C 故事过程一句话"],
+    "tone_style": "语气与风格（如克制、有判断、不鸡汤）",
+    "filter_words": ["必须出现的筛选词1", "筛选词2"],
+    "avoid_expressions": ["要避免的表达1", "表达2"],
     "hypotheses": ["30 天待验证假设 1", "假设 2", "假设 3"]
   },
   "plan": {
@@ -88,6 +114,7 @@ export function buildTopicPoolUserPrompt(input: {
   persona?: GrowthPersona;
   count?: number;
   excludeTitles?: string[];
+  context?: AccountContext;
 }) {
   const count = input.count ?? 15;
   const exclude = (input.excludeTitles ?? []).filter(Boolean);
@@ -95,6 +122,7 @@ export function buildTopicPoolUserPrompt(input: {
 请以选题官 V3 身份，围绕账号当前阶段生成候选题池。
 
 ${input.persona ? personaGuide(input.persona) : ""}
+${accountContextBlock(input.context)}
 当前第 ${input.week} 周。
 目标用户：${input.targetUser}
 核心问题：${input.coreProblem}
@@ -150,12 +178,14 @@ export function buildDraftUserPrompt(input: {
   persona?: GrowthPersona;
   variantHint?: string;
   excludeBodies?: string[];
+  context?: AccountContext;
 }) {
   const exclude = (input.excludeBodies ?? []).filter(Boolean);
   return `
 请以主笔 V3 身份，把最终选题写成可直接发布的小红书发布包。
 
 ${input.persona ? personaGuide(input.persona) : ""}
+${accountContextBlock(input.context)}
 目标用户：${input.targetUser}
 信任来源：${input.trustSource}
 方向：${input.direction}

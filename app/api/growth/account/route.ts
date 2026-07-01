@@ -14,6 +14,15 @@ const bodySchema = z.object({
   trust_source: z.string().min(1).max(1000),
   not_doing: z.string().min(1).max(1000),
   hypotheses: z.array(z.string().max(300)).max(8).default([]),
+  one_liner: z.string().max(200).optional(),
+  follow_reason: z.string().max(500).optional(),
+  content_directions: z.array(z.string().max(200)).max(6).optional(),
+  tone_style: z.string().max(300).optional(),
+  filter_words: z.array(z.string().max(40)).max(12).optional(),
+  avoid_expressions: z.array(z.string().max(40)).max(12).optional(),
+  compliance_redline: z.string().max(500).optional(),
+  private_domain: z.string().max(500).optional(),
+  persona_specific: z.record(z.string().max(500)).optional(),
 });
 
 export async function PUT(req: Request) {
@@ -31,13 +40,7 @@ export async function PUT(req: Request) {
 
   const account = {
     ...existing,
-    name: parsed.data.name,
-    target_user: parsed.data.target_user,
-    core_problem: parsed.data.core_problem,
-    account_value: parsed.data.account_value,
-    trust_source: parsed.data.trust_source,
-    not_doing: parsed.data.not_doing,
-    hypotheses: parsed.data.hypotheses,
+    ...parsed.data,
     updated_at: new Date().toISOString(),
   };
   await store.saveAccount(account);
