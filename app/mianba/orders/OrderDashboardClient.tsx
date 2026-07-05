@@ -48,6 +48,25 @@ export default function OrderDashboardClient({ initialOrders, canManageOrders }:
     return orders.filter((order) => order.status === activeStatus);
   }, [activeStatus, orders]);
 
+  function reportPathFor(order: ReportOrder) {
+    if (!order.assessment_profile_id) return null;
+    return order.report_type === "deep"
+      ? `/reports/deep/${order.assessment_profile_id}`
+      : `/reports/initial/${order.assessment_profile_id}`;
+  }
+
+  async function copyDeliveryLink(order: ReportOrder) {
+    const path = reportPathFor(order);
+    if (!path) return;
+    const url = new URL(path, window.location.origin).toString();
+    try {
+      await navigator.clipboard.writeText(url);
+      setMessage(`订单 ${shortId(order.id)} 的交付链接已复制：${url}`);
+    } catch {
+      setMessage(`复制失败，请手动复制：${url}`);
+    }
+  }
+
   async function updateStatus(orderId: string, status: ReportOrderStatus) {
     setUpdatingOrderId(orderId);
     setMessage("");
@@ -108,7 +127,8 @@ export default function OrderDashboardClient({ initialOrders, canManageOrders }:
                 <th className="px-3 py-2 font-medium">类型 / 金额</th>
                 <th className="px-3 py-2 font-medium">状态</th>
                 <th className="px-3 py-2 font-medium">创建时间</th>
-                <th className="px-3 py-2 font-medium">操作</th>
+                <th className="px-3 py-2 font-medium">报告交付</th>
+                <th className="px-3 py-2 font-medium">状态操作</th>
               </tr>
             </thead>
             <tbody>
@@ -120,13 +140,43 @@ export default function OrderDashboardClient({ initialOrders, canManageOrders }:
                     <div className="mt-1 text-xs text-ink-400">{order.customer_contact || "未填联系方式"}</div>
                   </td>
                   <td className="px-3 py-3">
-                    <div>{order.report_type === "lite" ? "小报告" : "大报告"}</div>
+                    <div>{order.report_type === "lite" ? "初步诊断报告" : "完整咨询报告"}</div>
                     <div className="mt-1 text-xs text-ink-400">{formatPrice(order.price_cents)}</div>
                   </td>
                   <td className="px-3 py-3">
                     <span className="rounded-full bg-white px-3 py-1 text-xs text-ink-700 shadow-sm">{STATUS_LABELS[order.status]}</span>
                   </td>
                   <td className="px-3 py-3 text-xs text-ink-500">{formatDate(order.created_at)}</td>
+                  <td className="px-3 py-3">
+                    {reportPathFor(order) ? (
+                      <div className="flex flex-wrap gap-2">
+                        <a
+                          className="rounded-full bg-white px-3 py-1.5 text-xs text-ink-600 shadow-sm transition hover:text-ink-900"
+                          href={reportPathFor(order)!}
+                          target="_blank"
+                        >
+                          打开报告
+                        </a>
+                        {order.report_type === "lite" && (
+                          <a
+                            className="rounded-full bg-white px-3 py-1.5 text-xs text-ink-600 shadow-sm transition hover:text-ink-900"
+                            href={`/api/reports/initial/${order.assessment_profile_id}/pdf`}
+                            target="_blank"
+                          >
+                            下载 PDF
+                          </a>
+                        )}
+                        <button
+                          onClick={() => copyDeliveryLink(order)}
+                          className="rounded-full bg-white px-3 py-1.5 text-xs text-ink-600 shadow-sm transition hover:text-ink-900"
+                        >
+                          复制交付链接
+                        </button>
+                      </div>
+                    ) : (
+                      <span className="text-xs text-ink-400">未关联底稿</span>
+                    )}
+                  </td>
                   <td className="rounded-r-2xl px-3 py-3">
                     <div className="flex flex-wrap gap-2">
                       {STATUS_ACTIONS.map((status) => (

@@ -31,12 +31,16 @@ function quintile(percentile: number) {
   return "very_high";
 }
 
-function zhName(key: string, fallback = key) {
+export function zhName(key: string, fallback = key) {
   return ZH.names?.[key] || fallback;
 }
 
+export function zhArchetypeNameByKey(key: string, fallback = key) {
+  return ZH.archetypes?.[key]?.[0] || fallback;
+}
+
 function zhArchetypeName(archetype: any) {
-  return ZH.archetypes?.[archetype.key]?.[0] || archetype.display_name || archetype.key;
+  return zhArchetypeNameByKey(archetype.key, archetype.display_name || archetype.key);
 }
 
 function keyedScore(item: { direction?: string }, answer: number) {

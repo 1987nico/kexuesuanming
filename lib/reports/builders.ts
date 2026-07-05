@@ -1,5 +1,5 @@
 import type { AssessmentProfile, ReportProfileReference } from "./assessmentProfile";
-import type { DeepReportInputs, VRINScore } from "./deepReportInputs";
+import type { DeepReportGenerated } from "./deepReport";
 import { DEEP_REPORT_SECTIONS, LITE_REPORT_SECTIONS, type DeepReportShape, type LiteReportShape } from "./reportShapes";
 
 function topNames(items: Array<{ name: string; percentile?: number }>, limit = 3) {
@@ -30,15 +30,16 @@ function readSurveyText(profile: AssessmentProfile, keys: string[], fallback = "
   return fallback;
 }
 
-function buildLiteCustomerInput(profile: AssessmentProfile) {
+export function buildLiteCustomerInput(profile: AssessmentProfile) {
   return {
-    current_decision: readSurveyText(profile, ["current_decision", "decision", "正在考虑的选择", "当前决策"]),
-    time_window: readSurveyText(profile, ["time_window", "decision_window", "决策时间窗口", "时间窗口"]),
+    current_decision: readSurveyText(profile, ["decision_type", "current_decision", "decision", "正在考虑的选择", "当前决策"]),
+    time_window: readSurveyText(profile, ["decision_timing", "time_window", "decision_window", "决策时间窗口", "时间窗口"]),
     stuck_point: readSurveyText(profile, ["stuck_point", "pain", "career_confusion", "卡点", "当前最主要的职业或事业困惑"]),
     energy_source: readSurveyText(profile, ["energy_source", "energizing_work", "能量来源"]),
-    transferable_assets: readSurveyText(profile, ["transferable_assets", "assets", "可迁移资产"]),
-    desired_direction: readSurveyText(profile, ["desired_direction", "toward", "想靠近的方向", "正在考虑的方向"]),
-    avoid_direction: readSurveyText(profile, ["avoid_direction", "avoid", "明确不碰的方向", "想避开的状态"]),
+    avoid_state: readSurveyText(profile, ["avoid_state", "想避开的状态"]),
+    transferable_assets: readSurveyText(profile, ["transferable_asset", "transferable_assets", "assets", "可迁移资产"]),
+    desired_direction: readSurveyText(profile, ["interested_direction", "desired_direction", "toward", "想靠近的方向", "正在考虑的方向"]),
+    avoid_direction: readSurveyText(profile, ["excluded_direction", "avoid_direction", "avoid", "明确不碰的方向"]),
   };
 }
 
@@ -80,26 +81,6 @@ function buildLiteDirectionSuggestion(profile: AssessmentProfile) {
         ? `先做一个围绕「${input.desired_direction}」的窄版诊断/试点产品，验证是否有人愿意为判断和方案付费。`
         : "先产出 2-3 个方向假设，再用访谈和付费试点验证。",
   };
-}
-
-function vrinTotal(score: VRINScore) {
-  return score.overall_score ?? score.value + score.rarity + score.imitability + score.non_substitutability;
-}
-
-function vrinTop3(scores: VRINScore[] = []) {
-  return [...scores]
-    .sort((left, right) => vrinTotal(right) - vrinTotal(left))
-    .slice(0, 3)
-    .map((score) => ({
-      direction: score.direction,
-      total: vrinTotal(score),
-      value: score.value,
-      rarity: score.rarity,
-      imitability: score.imitability,
-      non_substitutability: score.non_substitutability,
-      evidence: score.evidence,
-      blind_spot: score.blind_spot,
-    }));
 }
 
 export function buildReportProfileReference(profile: AssessmentProfile): ReportProfileReference {
@@ -186,73 +167,54 @@ export function buildLiteReport(profile: AssessmentProfile): LiteReportShape & {
   return { kind: "lite", sections, profile_reference: buildReportProfileReference(profile) };
 }
 
+const DEEP_PENDING = { 提示: "大报告内容尚未生成。请在大报告页面点击「生成大报告」，由系统结合价值观、天赋与小报告初筛自动生成。" };
+
 export function buildDeepReport(
   profile: AssessmentProfile,
-  deepInputs?: DeepReportInputs
+  generated?: DeepReportGenerated
 ): DeepReportShape & { profile_reference: ReportProfileReference } {
+  const g = generated ?? profile.deep_report;
+  const highTraitNames = profile.talent_profile.high_traits.slice(0, 8).map((t) => t.name);
+
   const sections: DeepReportShape["sections"] = {
-    conclusion_first: {
-      final_advice: "大报告结论必须在小报告初筛基础上进一步收敛，不得无解释翻案。",
-      source_profile_id: profile.id,
-    },
+    conclusion_first: g
+      ? { ...g.conclusion_first, 复用底稿编号: profile.id }
+      : { ...DEEP_PENDING, 复用底稿编号: profile.id },
     methodology: {
-      input: ["问卷", "价值观双三圈", `PrinciplesYou 252题结果(${profile.talent_profile.mode})`, "感性打分", "外部市场事实"],
-      reasoning: ["Step1 喜欢区", "Step2 方向发散", "Step3 感性验证", "Step4 市场分析", "Step5 VRIN", "Step6 失败验尸"],
-      output: "主线、切口、暗线、止损线和 90 天实验。",
+      输入: ["问卷", "价值观双三圈", `PrinciplesYou 252题结果（${profile.talent_profile.mode === "original-sync" ? "真实同步" : "本地兜底"}）`, "本人感性打分", "外部市场事实（待人工核实）"],
+      推理链: ["Step1 喜欢区", "Step2 方向发散", "Step3 感性验证", "Step4 市场分析", "Step5 资源验证 VRIN", "Step6 失败验尸"],
+      输出: "主线、切口、暗线、止损线和 90 天验证实验。",
     },
     step1_value_profile: {
-      liked_values: profile.value_profile.liked_values,
-      excluded_values: profile.value_profile.excluded_values,
-      like_summary: profile.value_profile.like_summary,
-      exclude_summary: profile.value_profile.exclude_summary,
-      talent_cross_check: strongestTalentSentence(profile),
+      喜欢区: profile.value_profile.liked_values,
+      排除带: profile.value_profile.excluded_values,
+      喜欢区小结: profile.value_profile.like_summary,
+      排除带小结: profile.value_profile.exclude_summary,
+      筛选句: profile.value_profile.filter_sentence,
+      天赋交叉验证: strongestTalentSentence(profile),
     },
-    step2_direction_expansion: {
-      rule: "只能在 Step1 喜欢区内发散，不能违反排除带。",
-      ...(deepInputs
-        ? { directions: deepInputs.direction_expansion ?? [] }
-        : { placeholder: "后续由六步漏斗根据履历与输入生成 30 个方向。" }),
-    },
-    step3_sensory_validation: {
-      rule: "只保留本人感性打分 ≥7 的方向进入市场分析。",
-      ...(deepInputs
-        ? {
-            sensory_scores: deepInputs.sensory_scores ?? [],
-            qualified_directions: (deepInputs.sensory_scores ?? [])
-              .filter((score) => score.score >= 7)
-              .map((score) => score.direction),
-          }
-        : { placeholder: "后续接入多轮感性打分文档。" }),
-    },
-    step4_market_analysis: {
-      framework: "PEST 修正波特五力：现状威胁 + P/E/S/T = 未来威胁。",
-      requires_external_evidence: true,
-      ...(deepInputs ? { market_evidence: deepInputs.market_evidence ?? [] } : {}),
-    },
-    step5_vrin: {
-      framework: "V/R/I/N 判断个人胜算，结合 Step4 机会分收敛 Top3。",
-      talent_reuse: profile.talent_profile.high_traits,
-      ...(deepInputs
-        ? {
-            scores: deepInputs.vrin_scores ?? [],
-            top3: vrinTop3(deepInputs.vrin_scores),
-          }
-        : {}),
-    },
-    step6_premortem: {
-      framework: "先写 12 个月后怎么输，再设早期信号和止损线。",
-      must_not_conflict_with_lite_risks: true,
-      ...(deepInputs ? { scenarios: deepInputs.premortem ?? [] } : {}),
-    },
-    final_recommendations: {
-      rule: "若推荐与小报告初步方向不同，必须解释新增证据和收敛逻辑。",
-    },
-    ninety_day_plan: {
-      rule: "Day 0-30 / Day 30-60 / Day 60-90，写继续条件和止损线。",
-    },
-    final_judgement: {
-      rule: "最后判断必须回扣价值观、天赋、市场和执行约束。",
-    },
+    step2_direction_expansion: g
+      ? { 规则: "只能在喜欢区内发散，不违反排除带。", 候选方向: g.directions }
+      : DEEP_PENDING,
+    step3_sensory_validation: g
+      ? {
+          数据来源: g.sensory_from_input ? "客户本人真实感性验证（方向滑卡点亮）" : "AI 预判（待客户完成方向滑卡测评）",
+          方向处理表: g.sensory_table,
+          ...g.sensory,
+        }
+      : DEEP_PENDING,
+    step4_market_analysis: g
+      ? { 免责声明: g.market_disclaimer, 市场总览: g.market_overview ?? [], 各方向市场判断: g.market }
+      : DEEP_PENDING,
+    step5_vrin: g
+      ? { 说明: "V/R/I/N 判断个人胜算，收敛 Top3。", 可复用天赋: highTraitNames, 各方向胜算: g.vrin }
+      : DEEP_PENDING,
+    step6_premortem: g
+      ? { 说明: "先写清楚会怎么输，再设早期信号和止损线。", 各方向验尸: g.premortem }
+      : DEEP_PENDING,
+    final_recommendations: g ? g.final_recommendations : DEEP_PENDING,
+    ninety_day_plan: g ? g.ninety_day_plan : DEEP_PENDING,
+    final_judgement: g ? g.final_judgement : DEEP_PENDING,
   };
 
   return { kind: "deep", sections, profile_reference: buildReportProfileReference(profile) };

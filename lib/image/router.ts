@@ -63,7 +63,11 @@ export async function generateImageAsset(req: ImageGenerationRequest): Promise<I
   }
 
   const model = process.env.IMAGE_MODEL || "gpt-image-1";
-  const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  // 支持第三方 OpenAI 中转：设置 OPENAI_BASE_URL 即走中转，不设则走官方
+  const client = new OpenAI({
+    apiKey: process.env.OPENAI_API_KEY,
+    baseURL: process.env.OPENAI_BASE_URL || undefined,
+  });
   const prompt = req.negativePrompt ? `${req.prompt}\n\n避免出现：${req.negativePrompt}` : req.prompt;
   const response = await client.images.generate({ model, prompt, size: req.size || "1024x1536" });
   const image = response.data?.[0];

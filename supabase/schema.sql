@@ -1,3 +1,147 @@
+-- 面霸君系统 Supabase schema
+-- 用法：在 Supabase SQL Editor 执行本文件，然后配置：
+-- NEXT_PUBLIC_SUPABASE_URL=...
+-- SUPABASE_SERVICE_ROLE_KEY=...
+
+create extension if not exists pgcrypto;
+
+-- ===== 报告交付模块 =====
+
+create table if not exists assessment_profiles (
+  id uuid primary key,
+  tenant_id text not null,
+  customer_name text not null,
+  customer_contact text,
+  value_profile jsonb not null default '{}'::jsonb,
+  talent_mode text,
+  talent_answers jsonb not null default '{}'::jsonb,
+  talent_profile jsonb not null default '{}'::jsonb,
+  survey_answers jsonb not null default '{}'::jsonb,
+  payload jsonb not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists assessment_profiles_tenant_created_idx
+  on assessment_profiles (tenant_id, created_at desc);
+
+create index if not exists assessment_profiles_contact_idx
+  on assessment_profiles (tenant_id, customer_contact, created_at desc);
+
+create table if not exists report_orders (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id text not null,
+  assessment_profile_id uuid references assessment_profiles(id) on delete set null,
+  report_type text not null check (report_type in ('lite', 'deep')),
+  price_cents integer,
+  customer_name text,
+  customer_contact text,
+  status text not null default 'unpaid' check (status in ('unpaid', 'paid', 'delivering', 'delivered', 'refunded')),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists report_orders_tenant_created_idx
+  on report_orders (tenant_id, created_at desc);
+
+-- ===== 增长模块 =====
+
+create table if not exists growth_accounts (
+  id uuid primary key,
+  tenant_id text not null,
+  name text not null,
+  target_user text,
+  core_problem text,
+  payload jsonb not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists growth_accounts_tenant_created_idx
+  on growth_accounts (tenant_id, created_at desc);
+
+create table if not exists growth_plans (
+  id uuid primary key,
+  tenant_id text not null,
+  account_id uuid not null references growth_accounts(id) on delete cascade,
+  title text,
+  payload jsonb not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists growth_plans_account_created_idx
+  on growth_plans (account_id, created_at desc);
+
+create table if not exists growth_runs (
+  id uuid primary key,
+  tenant_id text not null,
+  account_id uuid not null references growth_accounts(id) on delete cascade,
+  plan_id uuid references growth_plans(id) on delete set null,
+  status text,
+  week integer,
+  objective text,
+  payload jsonb not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists growth_runs_account_created_idx
+  on growth_runs (account_id, created_at desc);
+
+create table if not exists content_drafts (
+  id uuid primary key,
+  tenant_id text not null,
+  account_id uuid not null references growth_accounts(id) on delete cascade,
+  run_id uuid not null references growth_runs(id) on delete cascade,
+  status text,
+  title text,
+  direction text,
+  content_type text,
+  payload jsonb not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists content_drafts_account_created_idx
+  on content_drafts (account_id, created_at desc);
+
+create table if not exists growth_reviews (
+  id uuid primary key,
+  tenant_id text not null,
+  draft_id uuid not null references content_drafts(id) on delete cascade,
+  classification text,
+  payload jsonb not null,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists growth_reviews_draft_created_idx
+  on growth_reviews (draft_id, created_at desc);
+
+create table if not exists growth_business_settings (
+  tenant_id text primary key,
+  payload jsonb not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists usage_events (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id text not null,
+  feature text not null,
+  provider text,
+  model text,
+  input_tokens integer,
+  output_tokens integer,
+  units integer,
+  cost_cents integer,
+  metadata jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists usage_events_tenant_created_idx
+  on usage_events (tenant_id, created_at desc);
+
 -- ============================================================
 -- 科学算命 · 数据库 schema
 -- 使用方式：在 Supabase Dashboard SQL Editor 一次性执行即可

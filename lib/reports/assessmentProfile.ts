@@ -1,3 +1,7 @@
+import type { DeepReportGenerated } from "./deepReport";
+import type { DirectionSession } from "./directionSession";
+import type { InitialDiagnosisGenerated } from "./initialDiagnosis";
+
 export type TalentReportMode = "original-sync" | "local";
 
 export function talentModeLabel(mode: TalentReportMode | string): string {
@@ -55,6 +59,12 @@ export interface AssessmentProfile {
   value_profile: ValueProfile;
   talent_answers: Record<number, number>;
   talent_profile: TalentProfile;
+  // 大报告生成内容（可选；由 /api/reports/deep 生成后回填）
+  deep_report?: DeepReportGenerated;
+  // 初步诊断报告 LLM 判断层（可选；测评提交后自动生成并缓存）
+  initial_diagnosis?: InitialDiagnosisGenerated;
+  // 方向感性验证滑卡会话（可选；操作员发起完整咨询报告测评后创建）
+  direction_session?: DirectionSession;
   created_at: string;
   updated_at: string;
 }

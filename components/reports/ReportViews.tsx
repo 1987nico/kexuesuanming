@@ -1,3 +1,4 @@
+import type { DeepDiagramKey } from "@/lib/reports/deepReport";
 import type { DeepReportShape, LiteReportShape } from "@/lib/reports/reportShapes";
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -281,20 +282,181 @@ export function LiteReportView({ report }: { report: LiteReportShape }) {
   );
 }
 
-export function DeepReportView({ report }: { report: DeepReportShape }) {
-  const entries = Object.entries(report.sections) as Array<[keyof DeepReportShape["sections"], unknown]>;
+function DeepPage({ no, title, children }: { no: string; title: string; children: React.ReactNode }) {
   return (
-    <article className="report-document report-document-deep">
-      {entries.map(([key, value], index) => (
-        <section key={key} className="report-page report-page-deep">
-          <div className="report-header">职业 / 事业方向科学算命咨询报告 {String(index + 1).padStart(2, "0")}</div>
-          <h1 className="report-title">{deepTitles[key]}</h1>
-          <div className="report-section-body">
+    <section className="report-page report-page-deep">
+      <div className="report-header">职业 / 事业方向科学算命咨询报告 · {no}</div>
+      <h1 className="report-title">{title}</h1>
+      <div className="report-section-body">{children}</div>
+      <div className="report-footer">科学算命咨询报告 | 保密交付</div>
+    </section>
+  );
+}
+
+function DeepKV({ data, skip = [] }: { data: Record<string, unknown>; skip?: string[] }) {
+  const entries = Object.entries(data).filter(([key]) => !skip.includes(key));
+  return (
+    <div className="deep-kv">
+      {entries.map(([key, value]) => (
+        <div key={key} className="deep-kv-row">
+          <div className="deep-kv-key">{key}</div>
+          <div className="deep-kv-value">
             <TextBlock value={value} />
           </div>
-          <div className="report-footer">科学算命咨询报告 | 保密交付</div>
-        </section>
+        </div>
       ))}
+    </div>
+  );
+}
+
+function DeepCards({ items }: { items: unknown }) {
+  const arr = Array.isArray(items) ? items : [];
+  return (
+    <div className="deep-cards">
+      {arr.map((item, index) => {
+        const record = asRecord(item);
+        const titleKey = ["方向", "name", "标题"].find((k) => record[k] !== undefined);
+        const title = titleKey ? String(record[titleKey]) : `${index + 1}`;
+        const rows = Object.entries(record).filter(([key]) => key !== titleKey);
+        return (
+          <div key={index} className="deep-card">
+            <div className="deep-card-title">{title}</div>
+            {rows.map(([key, value]) => (
+              <div key={key} className="deep-card-row">
+                <span className="deep-card-key">{key}</span>
+                <span className="deep-card-value">
+                  <TextBlock value={value} />
+                </span>
+              </div>
+            ))}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function DeepFigure({ src, alt }: { src?: string; alt: string }) {
+  if (!src) return null;
+  // eslint-disable-next-line @next/next/no-img-element
+  return <img className="deep-figure deep-figure-wide" src={src} alt={alt} />;
+}
+
+export function DeepReportView({
+  report,
+  customerName,
+  deliveryDate,
+  images,
+}: {
+  report: DeepReportShape;
+  customerName?: string;
+  deliveryDate?: string;
+  images?: Partial<Record<DeepDiagramKey, string>>;
+}) {
+  const s = report.sections as Record<string, unknown>;
+  const img = images ?? {};
+  const conclusion = asRecord(s.conclusion_first);
+  const step2 = asRecord(s.step2_direction_expansion);
+  const step4 = asRecord(s.step4_market_analysis);
+  const step5 = asRecord(s.step5_vrin);
+  const step6 = asRecord(s.step6_premortem);
+
+  return (
+    <article className="report-document report-document-deep">
+      {/* 封面 */}
+      <section className="report-page report-page-deep deep-cover">
+        <div>
+          <div className="deep-cover-kicker">职业 / 事业方向 · 科学算命咨询报告</div>
+          <h1 className="deep-cover-title">科学算命咨询报告</h1>
+          <p className="deep-cover-sub">价值观双三圈 · PrinciplesYou 天赋测评 · 六步决策漏斗</p>
+        </div>
+        <div className="deep-cover-conclusion">
+          <div className="lite-label">一句话结论</div>
+          <p className="deep-cover-lead">{String(conclusion["一句话结论"] ?? "报告结论待生成。")}</p>
+          {conclusion["最终建议"] ? (
+            <>
+              <div className="lite-label deep-cover-sublabel">最终建议</div>
+              <p>{String(conclusion["最终建议"])}</p>
+            </>
+          ) : null}
+        </div>
+        <div className="deep-cover-meta">
+          <div>客户：{customerName || "—"}</div>
+          <div>交付日期：{deliveryDate || ""}</div>
+          <div>复用底稿编号：{String(conclusion["复用底稿编号"] ?? "")}</div>
+        </div>
+      </section>
+
+      {/* 1 方法论 + 决策漏斗图 */}
+      <DeepPage no="01" title={deepTitles.methodology}>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img className="deep-figure" src="/report-assets/decision-funnel.png" alt="科学算命 · 职业/事业决策漏斗" />
+        <DeepKV data={asRecord(s.methodology)} />
+      </DeepPage>
+
+      {/* 2 Step1 价值观 */}
+      <DeepPage no="02" title={deepTitles.step1_value_profile}>
+        <DeepKV data={asRecord(s.step1_value_profile)} />
+      </DeepPage>
+
+      {/* 3 Step2 方向发散 */}
+      <DeepPage no="03" title={deepTitles.step2_direction_expansion}>
+        {step2["规则"] ? <p className="deep-note">{String(step2["规则"])}</p> : null}
+        {step2["候选方向"] ? <DeepCards items={step2["候选方向"]} /> : <TextBlock value={s.step2_direction_expansion} />}
+      </DeepPage>
+
+      {/* 4 Step3 感性验证 */}
+      <DeepPage no="04" title={deepTitles.step3_sensory_validation}>
+        <DeepFigure src={img.bright_zone} alt="感性验证亮区聚类图" />
+        <DeepKV data={asRecord(s.step3_sensory_validation)} />
+      </DeepPage>
+
+      {/* 5 Step4 市场分析 */}
+      <DeepPage no="05" title={deepTitles.step4_market_analysis}>
+        <DeepFigure src={img.market} alt="市场验证矩阵" />
+        {step4["免责声明"] ? <p className="deep-note">{String(step4["免责声明"])}</p> : null}
+        {step4["各方向市场判断"] ? (
+          <DeepCards items={step4["各方向市场判断"]} />
+        ) : (
+          <TextBlock value={s.step4_market_analysis} />
+        )}
+      </DeepPage>
+
+      {/* 6 Step5 VRIN */}
+      <DeepPage no="06" title={deepTitles.step5_vrin}>
+        <DeepFigure src={img.matrix} alt="机会大小 × 个人胜算矩阵" />
+        {step5["说明"] ? <p className="deep-note">{String(step5["说明"])}</p> : null}
+        {step5["可复用天赋"] ? (
+          <div className="deep-inline-tags">
+            <span className="deep-card-key">可复用天赋</span>
+            <SimpleList items={step5["可复用天赋"]} />
+          </div>
+        ) : null}
+        {step5["各方向胜算"] ? <DeepCards items={step5["各方向胜算"]} /> : <TextBlock value={s.step5_vrin} />}
+      </DeepPage>
+
+      {/* 7 Step6 失败验尸 */}
+      <DeepPage no="07" title={deepTitles.step6_premortem}>
+        <DeepFigure src={img.fishbone} alt="失败验尸鱼骨图" />
+        {step6["说明"] ? <p className="deep-note">{String(step6["说明"])}</p> : null}
+        {step6["各方向验尸"] ? <DeepCards items={step6["各方向验尸"]} /> : <TextBlock value={s.step6_premortem} />}
+      </DeepPage>
+
+      {/* 8 最终推荐 */}
+      <DeepPage no="08" title={deepTitles.final_recommendations}>
+        <DeepKV data={asRecord(s.final_recommendations)} />
+      </DeepPage>
+
+      {/* 9 90天计划 */}
+      <DeepPage no="09" title={deepTitles.ninety_day_plan}>
+        <DeepFigure src={img.roadmap} alt="90 天验证路线图" />
+        <DeepKV data={asRecord(s.ninety_day_plan)} />
+      </DeepPage>
+
+      {/* 10 最后判断 */}
+      <DeepPage no="10" title={deepTitles.final_judgement}>
+        <DeepKV data={asRecord(s.final_judgement)} />
+      </DeepPage>
     </article>
   );
 }

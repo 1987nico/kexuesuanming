@@ -1,271 +1,435 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { talentModeLabel, type AssessmentProfile } from "@/lib/reports/assessmentProfile";
-import type { ReportOrder, ReportType } from "@/lib/reports/store";
+import { useCallback, useEffect, useState } from "react";
 
-const defaultValueProfile = {
-  liked_values: ["学习/进化", "了解世界", "被爱"],
-  excluded_values: ["安稳度日", "优哉游哉", "创新"],
-  like_summary: "持续学习升级，看见更大的世界，并获得真实认可。",
-  exclude_summary: "只求安稳舒适，停在小圈安全感，或为新奇而创新。",
-  filter_sentence: "能持续学习、连接更大的世界、让个人判断被看见。",
-};
+type ReportOrderStatus = "unpaid" | "paid" | "delivering" | "delivered" | "refunded";
+type StatusTone = "neutral" | "active" | "success" | "warning";
+type DeliveryActionKey = "smallReportSent" | "deepSurveyLinkSent" | "deepReportSent";
 
-function formatPriceLabel(value: string) {
-  const trimmed = value.trim();
-  if (!trimmed) return "未设置价格";
-  if (/^\d+(\.\d+)?$/.test(trimmed)) return `¥${trimmed}`;
-  return trimmed;
+interface SubmissionSummary {
+  id: string;
+  customer_name: string;
+  customer_contact: string | null;
+  created_at: string;
+  updated_at: string;
+  talent_mode: string;
+  talent_answer_count: number;
+  report_status: "ready" | "generating";
+  report_copy_source: "llm" | "fallback" | null;
+  direction_status: "none" | "active" | "completed";
+  direction_likes: number;
+  direction_rounds_generated: number;
+  lite_order_status: ReportOrderStatus | null;
+  deep_order_status: ReportOrderStatus | null;
+  deep_report_status: "none" | "generating" | "ready";
 }
 
-function priceTextToCents(value: string) {
-  const match = value.replace(/,/g, "").match(/\d+(\.\d+)?/);
-  if (!match) return null;
-  return Math.round(Number(match[0]) * 100);
+type DeliveryActions = Record<string, Partial<Record<DeliveryActionKey, boolean>>>;
+
+interface UserStatusTag {
+  label: string;
+  tone: StatusTone;
+}
+
+const DELIVERY_ACTIONS_STORAGE_KEY = "mianba.report-delivery-actions.v1";
+
+const STATUS_TONE_CLASSES: Record<StatusTone, string> = {
+  neutral: "bg-white text-ink-600 shadow-sm",
+  active: "bg-gold-50 text-ink-800 ring-1 ring-gold-100",
+  success: "bg-emerald-50 text-emerald-800 ring-1 ring-emerald-100",
+  warning: "bg-amber-50 text-amber-800 ring-1 ring-amber-100",
+};
+
+const dateTimeFormat = new Intl.DateTimeFormat("zh-CN", {
+  month: "2-digit",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+});
+
+function formatDate(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return dateTimeFormat.format(date);
+}
+
+function readDeliveryActions(): DeliveryActions {
+  try {
+    const raw = window.localStorage.getItem(DELIVERY_ACTIONS_STORAGE_KEY);
+    return raw ? (JSON.parse(raw) as DeliveryActions) : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveDeliveryActions(actions: DeliveryActions) {
+  try {
+    window.localStorage.setItem(DELIVERY_ACTIONS_STORAGE_KEY, JSON.stringify(actions));
+  } catch {}
 }
 
 export default function ReportsHubPage() {
-  const [customerName, setCustomerName] = useState("测试用户");
-  const [customerContact, setCustomerContact] = useState("");
-  const [surveyAnswers, setSurveyAnswers] = useState("{}");
-  const [valueProfile, setValueProfile] = useState(JSON.stringify(defaultValueProfile, null, 2));
-  const [talentAnswers, setTalentAnswers] = useState("{}");
-  const [settingsForm, setSettingsForm] = useState({ report_lite_price: "199", report_deep_price: "6999" });
-  const [profile, setProfile] = useState<AssessmentProfile | null>(null);
-  const [latestOrder, setLatestOrder] = useState<ReportOrder | null>(null);
-  const [message, setMessage] = useState("");
-  const [settingsMessage, setSettingsMessage] = useState("");
-  const [orderMessage, setOrderMessage] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [settingsLoading, setSettingsLoading] = useState(false);
-  const [orderLoading, setOrderLoading] = useState<ReportType | null>(null);
+  const testEntryPath = "/mianba/reports/new";
+  const [origin, setOrigin] = useState("");
+  const [testEntryUrl, setTestEntryUrl] = useState("");
+  const [submissions, setSubmissions] = useState<SubmissionSummary[]>([]);
+  const [submissionsMessage, setSubmissionsMessage] = useState("");
+  const [submissionsLoading, setSubmissionsLoading] = useState(false);
+  const [copyMessage, setCopyMessage] = useState("");
+  const [directionSurveyLinks, setDirectionSurveyLinks] = useState<Record<string, string>>({});
+  const [deliveryActions, setDeliveryActions] = useState<DeliveryActions>({});
+  const [directionLoadingId, setDirectionLoadingId] = useState<string | null>(null);
+  const [deepReportLoadingId, setDeepReportLoadingId] = useState<string | null>(null);
 
-  useEffect(() => {
-    fetch("/api/reports/talent-template")
-      .then((res) => res.json())
-      .then((data) => setTalentAnswers(JSON.stringify(data.neutral_answers || {}, null, 2)))
-      .catch(() => setMessage("未能加载 252 题模板，请手动粘贴答案 JSON。"));
+  const loadSubmissions = useCallback(async () => {
+    setSubmissionsLoading(true);
+    try {
+      const res = await fetch("/api/reports/assessment-profiles?view=list", { cache: "no-store" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || data.error || "加载提交列表失败");
+      setSubmissions(data.submissions || []);
+      setSubmissionsMessage("");
+    } catch (error) {
+      setSubmissionsMessage((error as Error).message);
+    } finally {
+      setSubmissionsLoading(false);
+    }
   }, []);
 
   useEffect(() => {
-    fetch("/api/growth/settings", { cache: "no-store" })
-      .then((res) => res.json())
-      .then((data) => {
-        if (data.settings) {
-          setSettingsForm({
-            report_lite_price: data.settings.report_lite_price ?? "199",
-            report_deep_price: data.settings.report_deep_price ?? "6999",
-          });
+    setOrigin(window.location.origin);
+    setTestEntryUrl(new URL(testEntryPath, window.location.origin).toString());
+    setDeliveryActions(readDeliveryActions());
+  }, []);
+
+  useEffect(() => {
+    loadSubmissions();
+  }, [loadSubmissions]);
+
+  useEffect(() => {
+    if (!origin) return;
+    setDirectionSurveyLinks((current) => {
+      let changed = false;
+      const next = { ...current };
+      for (const item of submissions) {
+        if (item.direction_status !== "none" && item.direction_rounds_generated > 0 && !next[item.id]) {
+          next[item.id] = new URL(`/survey/directions/${item.id}`, origin).toString();
+          changed = true;
         }
-      })
-      .catch(() => setSettingsMessage("价格设置加载失败，请刷新重试。"));
-  }, []);
+      }
+      return changed ? next : current;
+    });
+  }, [origin, submissions]);
 
-  async function saveSettings() {
-    setSettingsLoading(true);
-    setSettingsMessage("保存价格中...");
+  // 有报告在生成中时，每 10 秒自动刷新一次状态
+  useEffect(() => {
+    const needsPoll = submissions.some(
+      (item) => item.report_status === "generating" || item.deep_report_status === "generating"
+    );
+    if (!needsPoll) return;
+    const timer = setInterval(loadSubmissions, 10000);
+    return () => clearInterval(timer);
+  }, [submissions, loadSubmissions]);
+
+  function markDeliveryAction(profileId: string, key: DeliveryActionKey) {
+    setDeliveryActions((current) => {
+      const next = {
+        ...current,
+        [profileId]: {
+          ...(current[profileId] ?? {}),
+          [key]: true,
+        },
+      };
+      saveDeliveryActions(next);
+      return next;
+    });
+  }
+
+  function userStatusTags(item: SubmissionSummary): UserStatusTag[] {
+    const actions = deliveryActions[item.id] ?? {};
+    const tags: UserStatusTag[] = [];
+
+    tags.push({ label: "已发送小报告测评链接", tone: "success" });
+
+    if (item.report_status === "generating") {
+      tags.push({ label: "小报告生成中", tone: "active" });
+    } else if (actions.smallReportSent || item.lite_order_status === "delivered") {
+      tags.push({ label: "已发送小报告", tone: "success" });
+    } else {
+      tags.push({ label: "已生成小报告", tone: "neutral" });
+    }
+
+    if (directionLoadingId === item.id) {
+      tags.push({ label: "大报告测评选项生成中", tone: "active" });
+    } else if (item.direction_status === "none") {
+      tags.push({ label: "待发送大报告测评链接", tone: "warning" });
+    } else if (item.direction_status === "active") {
+      if (item.direction_likes > 0) {
+        tags.push({ label: `大报告测评链接填写中 ${item.direction_likes}/10`, tone: "active" });
+      } else if (actions.deepSurveyLinkSent) {
+        tags.push({ label: "已发送大报告测评链接", tone: "success" });
+      } else if (item.direction_rounds_generated > 0) {
+        tags.push({ label: "已生成大报告测评链接", tone: "neutral" });
+      } else {
+        tags.push({ label: "大报告测评选项生成中", tone: "active" });
+      }
+    } else {
+      tags.push({ label: "大报告测评已完成", tone: "success" });
+    }
+
+    if (deepReportLoadingId === item.id) {
+      tags.push({ label: "大报告生成中", tone: "active" });
+    } else if (item.deep_report_status === "ready") {
+      tags.push({
+        label: actions.deepReportSent || item.deep_order_status === "delivered" ? "大报告已发送" : "已生成大报告",
+        tone: actions.deepReportSent || item.deep_order_status === "delivered" ? "success" : "neutral",
+      });
+    } else if (item.direction_status === "completed") {
+      tags.push({ label: "待生成大报告", tone: "warning" });
+    }
+
+    return tags;
+  }
+
+  async function copyText(text: string, label: string, onCopied?: () => void) {
     try {
-      const res = await fetch("/api/growth/settings", {
-        method: "PUT",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(settingsForm),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.message || data.error || "保存价格失败");
-      setSettingsForm({
-        report_lite_price: data.settings.report_lite_price ?? settingsForm.report_lite_price,
-        report_deep_price: data.settings.report_deep_price ?? settingsForm.report_deep_price,
-      });
-      setSettingsMessage("价格已保存。");
-    } catch (error) {
-      setSettingsMessage((error as Error).message);
-    } finally {
-      setSettingsLoading(false);
+      await navigator.clipboard.writeText(text);
+      onCopied?.();
+      setCopyMessage(`${label}已复制：${text}`);
+    } catch {
+      setCopyMessage(`复制失败，请手动复制：${text}`);
     }
   }
 
-  async function createProfile() {
-    setLoading(true);
-    setMessage("生成测评底稿中...");
-    setProfile(null);
-    setLatestOrder(null);
-    setOrderMessage("");
+  function buildDirectionSurveyUrl(item: SubmissionSummary) {
+    if (directionSurveyLinks[item.id]) return directionSurveyLinks[item.id];
+    if (!origin || item.direction_status === "none" || item.direction_rounds_generated === 0) return "";
+    return new URL(`/survey/directions/${item.id}`, origin).toString();
+  }
+
+  async function startDirectionSurvey(item: SubmissionSummary) {
+    const existingUrl = buildDirectionSurveyUrl(item);
+    if (existingUrl) {
+      setCopyMessage(`${item.customer_name} 的大报告测评链接已生成，请使用链接旁边的一键复制链接。`);
+      return;
+    }
+
+    setDirectionLoadingId(item.id);
+    setCopyMessage(`${item.customer_name} 的首批大报告测评选项正在生成...`);
     try {
-      const res = await fetch("/api/reports/assessment-profiles", {
+      const res = await fetch("/api/reports/direction-sessions", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          customer_name: customerName,
-          customer_contact: customerContact || undefined,
-          survey_answers: JSON.parse(surveyAnswers),
-          value_profile: JSON.parse(valueProfile),
-          talent_answers: JSON.parse(talentAnswers),
-        }),
+        body: JSON.stringify({ assessment_profile_id: item.id }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.message || data.error || "创建底稿失败");
-      setProfile(data.profile);
-      setMessage(`底稿已生成，天赋数据来源：${talentModeLabel(data.profile.talent_profile.mode)}`);
+      if (!res.ok) throw new Error(data.message || data.error || "创建测评失败");
+      const url = new URL(data.survey_url, window.location.origin).toString();
+      setDirectionSurveyLinks((current) => ({ ...current, [item.id]: url }));
+      setCopyMessage(`${item.customer_name} 的专属大报告测评链接已生成。`);
+      await loadSubmissions();
     } catch (error) {
-      setMessage((error as Error).message);
+      setCopyMessage((error as Error).message);
     } finally {
-      setLoading(false);
+      setDirectionLoadingId(null);
     }
   }
 
-  async function createReportOrder(reportType: ReportType) {
-    if (!profile) return;
-    setOrderLoading(reportType);
-    setOrderMessage(`创建${reportType === "lite" ? "小" : "大"}报告订单中...`);
+  async function generateDeepReport(item: SubmissionSummary) {
+    if (item.direction_status !== "completed") return;
+    setDeepReportLoadingId(item.id);
+    setCopyMessage("");
     try {
-      const priceText = reportType === "lite" ? settingsForm.report_lite_price : settingsForm.report_deep_price;
-      const res = await fetch("/api/reports/orders", {
+      const res = await fetch("/api/reports/deep", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          assessment_profile_id: profile.id,
-          report_type: reportType,
-          price_cents: priceTextToCents(priceText),
-          customer_name: profile.customer_name,
-          customer_contact: profile.customer_contact,
+          assessment_profile_id: item.id,
+          regenerate: item.deep_report_status === "ready",
         }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.message || data.error || "创建订单失败");
-      setLatestOrder(data.order);
-      setOrderMessage(`已创建${reportType === "lite" ? "小" : "大"}报告订单：${data.order.id}`);
+      if (!res.ok) throw new Error(data.message || data.error || "生成大报告失败");
+      setCopyMessage(`${item.customer_name} 的完整报告已提交生成，约需 1–2 分钟，请稍后刷新查看。`);
+      await loadSubmissions();
     } catch (error) {
-      setOrderMessage((error as Error).message);
+      setCopyMessage((error as Error).message);
     } finally {
-      setOrderLoading(null);
+      setDeepReportLoadingId(null);
     }
+  }
+
+  function canGenerateDeepReport(item: SubmissionSummary) {
+    return item.direction_status === "completed";
   }
 
   return (
     <main className="mianba-workspace min-h-screen px-5 py-8 text-ink-900 md:px-8">
       <header className="mb-8 flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
         <div>
-          <div className="mb-3 text-xs tracking-[0.35em] text-gold-700">报告交付</div>
-          <h1 className="serif text-4xl leading-tight md:text-5xl">报告</h1>
-          <p className="mt-3 max-w-2xl text-sm leading-6 text-ink-600">
-            测试链接 → 客户答题 → 生成统一底稿 → 交付小报告 / 大报告。大小报告共用同一底稿，价值观与天赋一致。
-          </p>
+          <h1 className="serif text-4xl leading-tight md:text-5xl">报告交付系统</h1>
         </div>
         <div className="flex flex-wrap gap-2">
           <a className="rounded-full bg-white px-4 py-2 text-sm text-ink-600 shadow-sm" href="/mianba">返回首页</a>
           <a className="rounded-full bg-white px-4 py-2 text-sm text-ink-600 shadow-sm" href="/mianba/orders">订单后台</a>
+          <a className="rounded-full bg-white px-4 py-2 text-sm text-ink-600 shadow-sm" href="/mianba/admin">管理员后台</a>
         </div>
       </header>
 
-      {/* 业务设置 */}
+      {/* 测评入口 */}
       <section className="mb-4 rounded-3xl bg-white p-5 shadow-sm">
-        <div className="mb-4 text-xs tracking-[0.25em] text-gold-700">00 · 业务设置</div>
-        <h2 className="mb-2 font-semibold">报告价格</h2>
-        <p className="mb-4 text-sm leading-6 text-ink-600">
-          这里设置小报告和大报告价格，会影响报告订单金额，也会同步给增长系统生成内容时引用。
-        </p>
-        <div className="grid gap-3 md:grid-cols-2">
-          <div>
-            <label className="mb-1 block text-xs text-ink-500">小报告价格</label>
+        <div className="rounded-2xl border border-ink-100 bg-ink-50 p-4">
+          <label className="mb-2 block text-xs font-medium text-ink-500">01 · 初步诊断报告测评入口</label>
+          <div className="flex flex-col gap-3 md:flex-row md:items-center">
             <input
-              value={settingsForm.report_lite_price}
-              onChange={(e) => setSettingsForm({ ...settingsForm, report_lite_price: e.target.value })}
-              className="w-full rounded-xl border border-ink-100 bg-white px-3 py-2 text-sm"
-              placeholder="例如：199、199 元、免费体验"
+              readOnly
+              value={testEntryUrl || "正在生成完整测评入口..."}
+              className="min-w-0 flex-1 rounded-xl border border-ink-100 bg-white px-3 py-3 font-mono text-xs text-ink-700"
             />
+            <button
+              type="button"
+              disabled={!testEntryUrl}
+              onClick={() => copyText(testEntryUrl, "测评入口")}
+              className="rounded-full bg-ink-900 px-4 py-3 text-sm font-semibold text-white transition hover:bg-ink-800 disabled:opacity-40"
+            >
+              复制测评入口
+            </button>
           </div>
+        </div>
+      </section>
+
+      {/* 客户提交与报告交付 */}
+      <section className="rounded-3xl bg-white p-5 shadow-sm">
+        <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div>
-            <label className="mb-1 block text-xs text-ink-500">大报告价格</label>
-            <input
-              value={settingsForm.report_deep_price}
-              onChange={(e) => setSettingsForm({ ...settingsForm, report_deep_price: e.target.value })}
-              className="w-full rounded-xl border border-ink-100 bg-white px-3 py-2 text-sm"
-              placeholder="例如：6999、6999 元"
-            />
-          </div>
-        </div>
-        <button className="btn-primary mt-4" disabled={settingsLoading} onClick={saveSettings}>
-          {settingsLoading ? "保存中..." : "保存价格"}
-        </button>
-        {settingsMessage && <p className="mt-3 text-sm text-ink-600">{settingsMessage}</p>}
-      </section>
-
-      {/* 测试链接 */}
-      <section className="mb-4 rounded-3xl bg-white p-5 shadow-sm">
-        <div className="mb-4 text-xs tracking-[0.25em] text-gold-700">01 · 测试链接</div>
-        <h2 className="mb-2 font-semibold">发给客户的测评入口</h2>
-        <p className="mb-4 text-sm leading-6 text-ink-600">
-          把客户引导到 252 题站内测评页，完成后自动生成统一测评底稿；大小报告都从这份底稿派生。
-        </p>
-        <a className="btn-primary" href="/mianba/reports/new" target="_blank">打开客户测评页（测试链接）</a>
-
-        <div className="mt-6 rounded-2xl bg-ink-50 p-4">
-          <div className="mb-3 text-xs font-medium text-ink-500">开发快捷：直接粘贴 JSON 生成底稿</div>
-          <div className="grid gap-3 md:grid-cols-2">
-            <div>
-              <label className="mb-1 block text-xs text-ink-500">客户姓名</label>
-              <input value={customerName} onChange={(e) => setCustomerName(e.target.value)} className="mb-3 w-full rounded-xl border border-ink-100 bg-white px-3 py-2 text-sm" />
-              <label className="mb-1 block text-xs text-ink-500">联系方式（可选）</label>
-              <input value={customerContact} onChange={(e) => setCustomerContact(e.target.value)} className="w-full rounded-xl border border-ink-100 bg-white px-3 py-2 text-sm" />
-            </div>
-            <div>
-              <label className="mb-1 block text-xs text-ink-500">价值观双三圈 JSON</label>
-              <textarea value={valueProfile} onChange={(e) => setValueProfile(e.target.value)} rows={5} className="w-full rounded-xl border border-ink-100 bg-white px-3 py-2 font-mono text-xs" />
-            </div>
-          </div>
-          <button className="btn-primary mt-4" disabled={loading} onClick={createProfile}>{loading ? "生成中..." : "快速生成底稿"}</button>
-          {message && <p className="mt-3 text-sm text-ink-600">{message}</p>}
-        </div>
-      </section>
-
-      {/* 小报告 / 大报告 */}
-      <section className="grid gap-4 md:grid-cols-2">
-        <div className="rounded-3xl bg-white p-5 shadow-sm">
-          <div className="mb-4 text-xs tracking-[0.25em] text-gold-700">02 · 小报告</div>
-          <h2 className="mb-2 font-semibold">初步诊断报告（{formatPriceLabel(settingsForm.report_lite_price)}）</h2>
-          <p className="mb-4 text-sm leading-6 text-ink-600">方向初筛 + 价值观 + 天赋信号 + 90 天验证框架，12 版块。</p>
-          {profile ? (
-            <div className="flex flex-wrap gap-3">
-              <a className="btn-primary" href={`/reports/lite/${profile.id}`} target="_blank">打开小报告</a>
-              <button className="btn-primary" disabled={!!orderLoading} onClick={() => createReportOrder("lite")}>
-                {orderLoading === "lite" ? "创建中..." : "创建小报告订单"}
-              </button>
-            </div>
-          ) : (
-            <p className="text-sm text-ink-400">先在上方生成底稿。</p>
-          )}
-        </div>
-
-        <div className="rounded-3xl bg-white p-5 shadow-sm">
-          <div className="mb-4 text-xs tracking-[0.25em] text-gold-700">03 · 大报告</div>
-          <h2 className="mb-2 font-semibold">完整咨询报告（{formatPriceLabel(settingsForm.report_deep_price)}）</h2>
-          <p className="mb-4 text-sm leading-6 text-ink-600">六步漏斗：喜欢区 → 发散 → 感性 → 市场 → VRIN → 失败验尸 + 90 天计划。</p>
-          {profile ? (
-            <div className="flex flex-wrap gap-3">
-              <a className="btn-primary" href={`/reports/deep/${profile.id}`} target="_blank">打开大报告</a>
-              <button className="btn-primary" disabled={!!orderLoading} onClick={() => createReportOrder("deep")}>
-                {orderLoading === "deep" ? "创建中..." : "创建大报告订单"}
-              </button>
-            </div>
-          ) : (
-            <p className="text-sm text-ink-400">先在上方生成底稿。</p>
-          )}
-        </div>
-      </section>
-
-      {profile && (
-        <section className="mt-4 rounded-3xl bg-white p-5 shadow-sm">
-          <p className="text-sm leading-6 text-ink-600">当前底稿编号：{profile.id}；天赋数据来源：{talentModeLabel(profile.talent_profile.mode)}</p>
-          {orderMessage && <p className="mt-2 text-sm text-ink-600">{orderMessage}</p>}
-          {latestOrder && (
-            <p className="mt-2 text-xs leading-5 text-ink-500">
-              最近订单：{latestOrder.report_type} / {latestOrder.status} /
-              {typeof latestOrder.price_cents === "number" ? ` ¥${(latestOrder.price_cents / 100).toFixed(2)}` : " 未填"}
+            <div className="mb-4 text-xs tracking-[0.25em] text-gold-700">02 · 客户提交与报告交付</div>
+            <h2 className="font-semibold">提交列表</h2>
+            <p className="mt-1 text-xs leading-5 text-ink-500">
+              客户提交测评后会出现在这里。报告约 1 分钟生成完毕，「生成中」状态会自动刷新。
             </p>
-          )}
-        </section>
-      )}
+          </div>
+          <button
+            className="rounded-full bg-ink-50 px-4 py-2 text-sm text-ink-700 transition hover:bg-gold-50 disabled:opacity-40"
+            disabled={submissionsLoading}
+            onClick={loadSubmissions}
+          >
+            {submissionsLoading ? "刷新中..." : "手动刷新"}
+          </button>
+        </div>
+
+        {copyMessage && <p className="mb-3 rounded-2xl bg-gold-50 px-4 py-3 text-sm text-ink-700">{copyMessage}</p>}
+        {submissionsMessage && <p className="mb-3 rounded-2xl bg-gold-50 px-4 py-3 text-sm text-ink-700">{submissionsMessage}</p>}
+
+        {submissions.length === 0 ? (
+          <div className="rounded-2xl bg-ink-50 p-6 text-sm text-ink-500">
+            还没有客户提交。把上方测评入口发给客户，提交后这里会自动出现记录。
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[820px] border-separate border-spacing-y-2 text-left text-sm">
+              <thead className="text-xs text-ink-400">
+                <tr>
+                  <th className="px-3 py-2 font-medium">客户</th>
+                  <th className="px-3 py-2 font-medium">提交时间</th>
+                  <th className="px-3 py-2 font-medium">用户状态</th>
+                  <th className="px-3 py-2 font-medium">报告交付</th>
+                </tr>
+              </thead>
+              <tbody>
+                {submissions.map((item) => {
+                  const directionSurveyUrl = buildDirectionSurveyUrl(item);
+                  const statusTags = userStatusTags(item);
+
+                  return (
+                    <tr key={item.id} className="bg-ink-50/70">
+                      <td className="rounded-l-2xl px-3 py-3">
+                        <div className="font-medium text-ink-800">{item.customer_name || "未填姓名"}</div>
+                        <div className="mt-1 text-xs text-ink-400">{item.customer_contact || "未填联系方式"}</div>
+                      </td>
+                      <td className="px-3 py-3 text-xs text-ink-500">{formatDate(item.created_at)}</td>
+                      <td className="px-3 py-3">
+                        <div className="flex max-w-[22rem] flex-wrap gap-1.5">
+                          {statusTags.map((tag) => (
+                            <span
+                              key={tag.label}
+                              className={`rounded-full px-2.5 py-1 text-[11px] leading-4 ${STATUS_TONE_CLASSES[tag.tone]}`}
+                            >
+                              {tag.label}
+                            </span>
+                          ))}
+                        </div>
+                      </td>
+                      <td className="rounded-r-2xl px-3 py-3">
+                        <div className="flex min-w-[24rem] flex-col gap-2">
+                          <div className="flex flex-wrap gap-2">
+                            <a
+                              className="rounded-full bg-white px-3 py-1.5 text-xs text-ink-600 shadow-sm transition hover:text-ink-900"
+                              href={`/reports/initial/${item.id}`}
+                              target="_blank"
+                              onClick={() => markDeliveryAction(item.id, "smallReportSent")}
+                            >
+                              小报告
+                            </a>
+                            <button
+                              className={
+                                directionSurveyUrl
+                                  ? "cursor-not-allowed rounded-full bg-ink-100 px-3 py-1.5 text-xs text-ink-400"
+                                  : "rounded-full bg-white px-3 py-1.5 text-xs text-ink-600 shadow-sm transition hover:text-ink-900 disabled:opacity-40"
+                              }
+                              disabled={directionLoadingId === item.id || !!directionSurveyUrl}
+                              onClick={() => startDirectionSurvey(item)}
+                              title={directionSurveyUrl ? "链接已生成，请使用下方一键复制链接" : "生成大报告测评链接"}
+                            >
+                              {directionLoadingId === item.id ? "生成链接中..." : "生成大报告测评链接"}
+                            </button>
+                            <button
+                              type="button"
+                              className={
+                                canGenerateDeepReport(item)
+                                  ? "rounded-full bg-ink-900 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-ink-800 disabled:opacity-60"
+                                  : "cursor-not-allowed rounded-full bg-ink-100 px-3 py-1.5 text-xs text-ink-400"
+                              }
+                              disabled={!canGenerateDeepReport(item) || deepReportLoadingId === item.id}
+                              title={
+                                canGenerateDeepReport(item)
+                                  ? "方向测评已完成，可生成完整咨询报告"
+                                  : item.direction_status === "active"
+                                    ? `方向测评进行中（${item.direction_likes}/10），完成全部点亮后可生成`
+                                    : "请先发送专属大报告测评入口，待客户点亮 10 个方向"
+                              }
+                              onClick={() => generateDeepReport(item)}
+                            >
+                              {deepReportLoadingId === item.id ? "生成中..." : "生成大报告"}
+                            </button>
+                          </div>
+                          {directionSurveyUrl && (
+                            <div className="flex max-w-[34rem] flex-col gap-2 rounded-2xl border border-ink-100 bg-white/70 p-2 md:flex-row md:items-center">
+                              <div className="min-w-0 flex-1 break-all px-1 font-mono text-[11px] leading-5 text-ink-500">
+                                {directionSurveyUrl}
+                              </div>
+                              <button
+                                type="button"
+                                className="shrink-0 rounded-full bg-white px-3 py-1.5 text-xs text-ink-600 shadow-sm transition hover:text-ink-900"
+                                onClick={() =>
+                                  copyText(directionSurveyUrl, `${item.customer_name} 的大报告测评链接`, () =>
+                                    markDeliveryAction(item.id, "deepSurveyLinkSent")
+                                  )
+                                }
+                              >
+                                一键复制链接
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
     </main>
   );
 }

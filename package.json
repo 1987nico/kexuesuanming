@@ -9,17 +9,21 @@
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "verify": "npm run typecheck && npm run lint && npm run test && npm run build"
+    "verify": "npm run typecheck && npm run lint && npm run test && npm run build",
+    "golden:initial": "node scripts/golden-initial-report.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.30.0",
+    "@sparticuz/chromium": "^149.0.0",
     "@supabase/ssr": "^0.5.2",
     "@supabase/supabase-js": "^2.45.0",
+    "@vercel/functions": "^3.7.5",
     "clsx": "^2.1.1",
     "framer-motion": "^11.11.0",
     "lucide-react": "^0.460.0",
     "next": "^14.2.35",
     "openai": "^4.73.0",
+    "puppeteer-core": "^25.3.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "tailwind-merge": "^2.5.4",

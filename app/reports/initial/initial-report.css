@@ -1,0 +1,550 @@
+/* 初步诊断报告（放放模板复刻）—— 专用样式，前缀 ir- */
+
+.ir-root {
+  --ir-navy: #111826;
+  --ir-slate: #364150;
+  --ir-gold: #b88516;
+  --ir-gold-soft: #caa553;
+  --ir-gold-pale: #e2cea2;
+  --ir-cream: #fff6e4;
+  --ir-teal: #2a6e72;
+  --ir-teal-pale: #edf6f6;
+  --ir-rust: #a85e3d;
+  --ir-track: #f2f4f6;
+  --ir-border: #e7e3dc;
+
+  background: #f0ede8;
+  min-height: 100vh;
+  padding: 24px 0 48px;
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  color: var(--ir-slate);
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+
+.ir-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 0 auto 24px;
+  width: 210mm;
+  max-width: calc(100vw - 32px);
+  border-radius: 16px;
+  background: white;
+  padding: 16px 20px;
+  box-shadow: 0 10px 30px rgba(17, 24, 38, 0.08);
+}
+
+.ir-toolbar h1 {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--ir-navy);
+}
+
+.ir-toolbar p {
+  margin-top: 2px;
+  font-size: 12px;
+  color: #8a8378;
+}
+
+.ir-toolbar-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.ir-btn {
+  display: inline-block;
+  border-radius: 999px;
+  padding: 10px 18px;
+  font-size: 14px;
+  font-weight: 600;
+  background: var(--ir-navy);
+  color: white;
+  cursor: pointer;
+}
+
+.ir-btn-secondary {
+  background: white;
+  color: var(--ir-navy);
+  border: 1px solid #d8d1c6;
+}
+
+.ir-editable-report {
+  outline: none;
+}
+
+.ir-editable-report:focus .ir-page {
+  box-shadow:
+    0 0 0 2px rgba(184, 133, 22, 0.28),
+    0 20px 60px rgba(17, 24, 38, 0.12);
+}
+
+.ir-doc {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  align-items: center;
+}
+
+.ir-page {
+  position: relative;
+  width: 210mm;
+  height: 296.5mm;
+  background: white;
+  padding: 14mm 15mm 12mm;
+  box-shadow: 0 20px 60px rgba(17, 24, 38, 0.12);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+/* 页首金色细线 */
+.ir-toprule {
+  height: 2px;
+  background: linear-gradient(90deg, var(--ir-gold), var(--ir-gold-pale));
+  margin-bottom: 22px;
+  flex: none;
+}
+
+/* 章节标题 */
+.ir-section-title {
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--ir-navy);
+  letter-spacing: 0.02em;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--ir-border);
+  margin-bottom: 22px;
+  flex: none;
+}
+
+.ir-intro {
+  font-size: 12.5px;
+  color: #6f7886;
+  margin-bottom: 20px;
+}
+
+/* 页脚 */
+.ir-footer {
+  margin-top: auto;
+  padding-top: 16px;
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 10.5px;
+  letter-spacing: 0.12em;
+  color: var(--ir-gold-soft);
+  flex: none;
+}
+
+/* 卡片体系 */
+.ir-card {
+  border: 1px solid var(--ir-border);
+  border-radius: 6px;
+  background: white;
+  padding: 16px 18px;
+  position: relative;
+}
+
+.ir-card::before {
+  content: "";
+  position: absolute;
+  left: -1px;
+  top: -1px;
+  bottom: -1px;
+  width: 4px;
+  border-radius: 6px 0 0 6px;
+  background: var(--ir-gold);
+}
+
+.ir-card-cream {
+  background: var(--ir-cream);
+  border-color: #f0e4c8;
+}
+
+.ir-card-teal {
+  background: var(--ir-teal-pale);
+  border-color: #d9e9e9;
+}
+
+.ir-card-teal::before {
+  background: var(--ir-teal);
+}
+
+.ir-card-rust::before {
+  background: var(--ir-rust);
+}
+
+.ir-card h3 {
+  font-size: 14.5px;
+  font-weight: 700;
+  color: var(--ir-navy);
+  margin-bottom: 8px;
+}
+
+.ir-card p {
+  font-size: 12.5px;
+  line-height: 1.9;
+  color: var(--ir-slate);
+}
+
+.ir-grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.ir-grid-3 {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 14px;
+}
+
+/* 金色小节 kicker */
+.ir-kicker {
+  display: inline-block;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--ir-gold);
+  border-bottom: 2px solid var(--ir-gold);
+  padding-bottom: 5px;
+  margin-bottom: 14px;
+}
+
+/* 列表 */
+.ir-bullets {
+  list-style: none;
+  display: grid;
+  gap: 9px;
+}
+
+.ir-bullets li {
+  position: relative;
+  padding-left: 16px;
+  font-size: 12.5px;
+  line-height: 1.85;
+  color: var(--ir-slate);
+}
+
+.ir-bullets li::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 9px;
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--ir-gold);
+}
+
+.ir-card-teal .ir-bullets li::before {
+  background: var(--ir-teal);
+}
+
+.ir-card-rust .ir-bullets li::before,
+.ir-bullets-rust li::before {
+  background: var(--ir-rust) !important;
+}
+
+/* 封面 */
+.ir-cover-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.ir-cover-head {
+  text-align: center;
+  margin-top: 26mm;
+}
+
+.ir-cover-head h1 {
+  font-size: 30px;
+  font-weight: 800;
+  color: var(--ir-navy);
+  letter-spacing: 0.04em;
+}
+
+.ir-cover-head .ir-cover-sub {
+  margin-top: 16px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ir-gold);
+  letter-spacing: 0.06em;
+}
+
+.ir-cover-client {
+  margin-top: 22mm;
+  text-align: center;
+}
+
+.ir-cover-client .ir-cover-name {
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--ir-navy);
+}
+
+.ir-cover-client .ir-cover-date {
+  display: inline-block;
+  margin-top: 14px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ir-gold);
+  background: var(--ir-cream);
+  border-radius: 4px;
+  padding: 7px 16px;
+}
+
+.ir-cover-badges {
+  margin-top: 12mm;
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+}
+
+.ir-badge {
+  border: 1px solid var(--ir-gold-soft);
+  color: var(--ir-gold);
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 6px 16px;
+  letter-spacing: 0.04em;
+}
+
+.ir-badge-teal {
+  border-color: #9cc3c5;
+  color: var(--ir-teal);
+}
+
+.ir-cover-cards {
+  margin-top: auto;
+  display: grid;
+  gap: 14px;
+  margin-bottom: 6mm;
+}
+
+/* 客户输入小卡 */
+.ir-input-card {
+  border: 1px solid var(--ir-border);
+  border-radius: 6px;
+  padding: 12px 16px;
+  position: relative;
+}
+
+.ir-input-card::before {
+  content: "";
+  position: absolute;
+  left: -1px;
+  top: -1px;
+  bottom: -1px;
+  width: 3px;
+  border-radius: 6px 0 0 6px;
+}
+
+.ir-input-card:nth-child(odd)::before {
+  background: var(--ir-gold);
+}
+
+.ir-input-card:nth-child(even)::before {
+  background: var(--ir-teal);
+}
+
+.ir-input-card .ir-input-label {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--ir-navy);
+  margin-bottom: 5px;
+}
+
+.ir-input-card .ir-input-value {
+  font-size: 12px;
+  color: var(--ir-slate);
+  line-height: 1.6;
+}
+
+/* 条形图（原型相似度 / 优势 / 答案分布） */
+.ir-bar-row {
+  display: grid;
+  grid-template-columns: 1fr 44px;
+  align-items: center;
+  column-gap: 10px;
+  margin-bottom: 14px;
+}
+
+.ir-bar-label {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--ir-navy);
+  margin-bottom: 5px;
+}
+
+.ir-bar-score {
+  font-size: 12.5px;
+  font-weight: 600;
+  text-align: right;
+  color: #6f7886;
+}
+
+.ir-bar-track {
+  grid-column: 1 / -1;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--ir-track);
+  overflow: hidden;
+}
+
+.ir-bar-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--ir-teal);
+}
+
+.ir-bar-fill-gold {
+  background: var(--ir-gold);
+}
+
+.ir-bar-fill-rust {
+  background: var(--ir-rust);
+}
+
+/* 特质表格 */
+.ir-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11.5px;
+}
+
+.ir-table th {
+  text-align: left;
+  font-weight: 700;
+  color: var(--ir-navy);
+  border-top: 1px solid var(--ir-border);
+  border-bottom: 1px solid var(--ir-border);
+  background: #faf8f5;
+  padding: 8px 10px;
+}
+
+.ir-table td {
+  border-bottom: 1px solid #efece8;
+  padding: 7px 10px;
+  vertical-align: top;
+  color: var(--ir-slate);
+  line-height: 1.55;
+}
+
+.ir-table .ir-trait-name {
+  font-weight: 600;
+  color: var(--ir-navy);
+}
+
+.ir-table .ir-trait-en {
+  display: block;
+  font-size: 10px;
+  color: #9aa2ad;
+  margin-top: 2px;
+}
+
+.ir-score-high {
+  color: var(--ir-teal);
+  font-weight: 700;
+}
+
+.ir-score-low {
+  color: var(--ir-rust);
+  font-weight: 700;
+}
+
+/* 90 天时间线 */
+.ir-timeline {
+  display: grid;
+  gap: 0;
+}
+
+.ir-timeline-item {
+  display: grid;
+  grid-template-columns: 40px 1fr;
+  column-gap: 16px;
+  position: relative;
+  padding-bottom: 34px;
+}
+
+.ir-timeline-item:last-child {
+  padding-bottom: 0;
+}
+
+.ir-timeline-item::before {
+  content: "";
+  position: absolute;
+  left: 19.5px;
+  top: 40px;
+  bottom: 6px;
+  width: 1px;
+  background: var(--ir-gold-pale);
+}
+
+.ir-timeline-item:last-child::before {
+  display: none;
+}
+
+.ir-timeline-no {
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  background: var(--ir-teal);
+  color: white;
+  font-size: 14px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ir-timeline-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--ir-navy);
+  padding-top: 6px;
+  margin-bottom: 6px;
+}
+
+.ir-timeline-body {
+  font-size: 12.5px;
+  line-height: 1.85;
+  color: var(--ir-slate);
+}
+
+/* 打印 */
+@media print {
+  .ir-root {
+    background: white;
+    padding: 0;
+  }
+
+  .ir-toolbar {
+    display: none;
+  }
+
+  .ir-doc {
+    display: block;
+  }
+
+  .ir-editable-report:focus .ir-page {
+    box-shadow: none;
+  }
+
+  .ir-page {
+    box-shadow: none;
+    page-break-after: always;
+    break-after: page;
+  }
+
+  .ir-page:last-child {
+    page-break-after: auto;
+    break-after: auto;
+  }
+}

@@ -1,8 +1,11 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { growthStore } from "@/lib/growth/store";
+import { ensureInitialDiagnosis } from "@/lib/reports/initialDiagnosis";
 import { generateTalentProfileWithFallback } from "@/lib/reports/principlesyouSync";
 import { reportStore } from "@/lib/reports/store";
 import type { AssessmentProfile } from "@/lib/reports/assessmentProfile";
+import type { ReportOrder } from "@/lib/reports/store";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -33,8 +36,88 @@ function numericAnswers(answers: Record<string, number>) {
   return out;
 }
 
+function priceTextToCents(value: string | undefined) {
+  const match = (value ?? "").replace(/,/g, "").match(/\d+(\.\d+)?/);
+  if (!match) return null;
+  return Math.round(Number(match[0]) * 100);
+}
+
+/** 每份底稿自动登记一条初步诊断报告订单，让交付后台看到所有进来的测评 */
+async function createDeliveryOrder(profile: AssessmentProfile): Promise<ReportOrder | null> {
+  try {
+    const settings = await growthStore().getBusinessSettings(profile.tenant_id);
+    return await reportStore().createReportOrder({
+      tenant_id: profile.tenant_id,
+      assessment_profile_id: profile.id,
+      report_type: "lite",
+      price_cents: priceTextToCents(settings?.report_lite_price),
+      customer_name: profile.customer_name,
+      customer_contact: profile.customer_contact,
+      status: "delivering",
+    });
+  } catch (error) {
+    console.warn("[assessment-profiles] 自动创建交付订单失败：", (error as Error)?.message);
+    return null;
+  }
+}
+
 export async function GET(req: Request) {
   const url = new URL(req.url);
+
+  // 提交列表视图：给交付后台用，只返回摘要字段
+  if (url.searchParams.get("view") === "list") {
+    const store = reportStore();
+    const [profiles, orders] = await Promise.all([
+      store.listAssessmentProfiles(DEFAULT_TENANT_ID),
+      store.listReportOrders(DEFAULT_TENANT_ID),
+    ]);
+    const latestOrders = new Map<string, { lite?: ReportOrder; deep?: ReportOrder }>();
+    for (const order of orders) {
+      if (!order.assessment_profile_id) continue;
+      const group = latestOrders.get(order.assessment_profile_id) ?? {};
+      if (!group[order.report_type]) {
+        group[order.report_type] = order;
+      }
+      latestOrders.set(order.assessment_profile_id, group);
+    }
+
+    return NextResponse.json({
+      submissions: profiles.map((profile) => {
+        const session = profile.direction_session;
+        const orderGroup = latestOrders.get(profile.id);
+        const directionStatus = !session ? "none" : session.status === "completed" ? "completed" : "active";
+        const directionLikes = session?.swipes.filter((s) => s.liked).length ?? 0;
+        let deepReportStatus: "none" | "generating" | "ready" = "none";
+        if (profile.deep_report) {
+          deepReportStatus = "ready";
+        } else if (directionStatus === "completed") {
+          deepReportStatus = "generating";
+        }
+        return {
+          id: profile.id,
+          customer_name: profile.customer_name,
+          customer_contact: profile.customer_contact ?? null,
+          created_at: profile.created_at,
+          updated_at: profile.updated_at,
+          talent_mode: profile.talent_profile.mode,
+          talent_answer_count: Object.keys(profile.talent_answers ?? {}).length,
+          report_status: profile.initial_diagnosis ? "ready" : "generating",
+          report_copy_source: profile.initial_diagnosis
+            ? profile.initial_diagnosis.llm_generated
+              ? "llm"
+              : "fallback"
+            : null,
+          direction_status: directionStatus,
+          direction_likes: directionLikes,
+          direction_rounds_generated: session?.rounds_generated ?? 0,
+          lite_order_status: orderGroup?.lite?.status ?? null,
+          deep_order_status: orderGroup?.deep?.status ?? null,
+          deep_report_status: deepReportStatus,
+        };
+      }),
+    });
+  }
+
   const contact = url.searchParams.get("customer_contact") || undefined;
   const profile = await reportStore().getLatestAssessmentProfile(DEFAULT_TENANT_ID, contact);
   return NextResponse.json({ profile });
@@ -69,9 +152,27 @@ export async function POST(req: Request) {
   };
 
   await reportStore().saveAssessmentProfile(profile);
+
+  // 交付模块登记：每份底稿自动生成一条初步诊断订单（状态：交付中）
+  const order = await createDeliveryOrder(profile);
+
+  // 异步预生成初步诊断文案（不阻塞提交响应）。
+  // Serverless 环境下若被提前回收，报告页首次访问时会兜底生成。
+  const warmup = ensureInitialDiagnosis(profile, (p) => reportStore().saveAssessmentProfile(p)).catch((error) =>
+    console.warn("[assessment-profiles] 初步诊断预生成失败：", (error as Error)?.message)
+  );
+  try {
+    const { waitUntil } = await import("@vercel/functions");
+    waitUntil(warmup);
+  } catch {
+    void warmup;
+  }
+
   return NextResponse.json({
     profile,
+    order,
     talent_source: talentResult.source,
     attempts: talentResult.attempts,
+    initial_report_url: `/reports/initial/${profile.id}`,
   });
 }

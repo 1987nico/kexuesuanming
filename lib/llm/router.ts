@@ -65,7 +65,8 @@ function openAICompatConfig(provider: Provider): { apiKey?: string; baseURL?: st
   if (provider === "doubao") {
     return { apiKey: process.env.ARK_API_KEY, baseURL: ARK_BASE_URL };
   }
-  return { apiKey: process.env.OPENAI_API_KEY, baseURL: undefined };
+  // OpenAI：支持第三方中转（OPENAI_BASE_URL），不设则走官方
+  return { apiKey: process.env.OPENAI_API_KEY, baseURL: process.env.OPENAI_BASE_URL || undefined };
 }
 
 async function callOpenAICompat(req: LLMRequest, provider: Provider, model: string): Promise<LLMResponse> {
