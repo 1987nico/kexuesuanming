@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { requireMianbaApiAuth } from "@/lib/auth/mianba";
 import { generateImageAsset } from "@/lib/image/router";
 
 export const runtime = "nodejs";
@@ -12,6 +13,9 @@ const bodySchema = z.object({
 });
 
 export async function POST(req: Request) {
+  const guard = await requireMianbaApiAuth();
+  if ("response" in guard) return guard.response;
+
   const body = await req.json().catch(() => ({}));
   const parsed = bodySchema.safeParse(body);
   if (!parsed.success) {

@@ -8,6 +8,7 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import type { Page } from "puppeteer-core";
 import { isDBConfigured, supabaseServer } from "@/lib/db/supabase";
 
 const PDF_BUCKET = "report-pdfs";
@@ -40,10 +41,15 @@ async function resolveExecutablePath(): Promise<{ executablePath: string; args: 
   throw new Error("未找到本机 Chrome，可通过环境变量 CHROME_PATH 指定浏览器路径。");
 }
 
-export async function renderPagePDF(url: string, opts?: { pageSelector?: string }): Promise<Buffer> {
+type PDFRenderOptions = { pageSelector?: string };
+
+async function renderPDFWithPage(
+  render: (page: Page) => Promise<void>,
+  opts?: PDFRenderOptions
+): Promise<Buffer> {
   const pageSelector = opts?.pageSelector ?? ".ir-page";
   const puppeteer = (await import("puppeteer-core")).default;
-  const { executablePath, args, serverless } = await resolveExecutablePath();
+  const { executablePath, args } = await resolveExecutablePath();
   const browser = await puppeteer.launch({
     executablePath,
     args: [...args, "--no-sandbox", "--disable-dev-shm-usage", "--font-render-hinting=none"],
@@ -52,13 +58,14 @@ export async function renderPagePDF(url: string, opts?: { pageSelector?: string 
   });
   try {
     const page = await browser.newPage();
-    await page.goto(url, { waitUntil: "networkidle0", timeout: serverless ? 45000 : 90000 });
+    await render(page);
     // 等报告样式真正生效再打印：A4 页宽约 794px（210mm @ 96dpi）
     await page.waitForFunction(
       (selector) => {
         const el = document.querySelector(selector);
         if (!el) return false;
         const width = el.getBoundingClientRect().width;
+        if (selector === ".golden-doc") return width > 1000;
         return Math.abs(width - 794) < 24;
       },
       { timeout: 30000 },
@@ -74,6 +81,18 @@ export async function renderPagePDF(url: string, opts?: { pageSelector?: string 
   } finally {
     await browser.close();
   }
+}
+
+export async function renderPagePDF(url: string, opts?: PDFRenderOptions): Promise<Buffer> {
+  return renderPDFWithPage(async (page) => {
+    await page.goto(url, { waitUntil: "networkidle0", timeout: 90000 });
+  }, opts);
+}
+
+export async function renderHtmlPDF(html: string, opts?: PDFRenderOptions): Promise<Buffer> {
+  return renderPDFWithPage(async (page) => {
+    await page.setContent(html, { waitUntil: "load", timeout: 90000 });
+  }, opts);
 }
 
 // ---------- 缓存 ----------

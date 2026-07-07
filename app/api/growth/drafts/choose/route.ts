@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { requireMianbaApiAuth } from "@/lib/auth/mianba";
 import { growthStore } from "@/lib/growth/store";
 import type { ContentDraft } from "@/lib/growth/types";
 
@@ -40,6 +41,9 @@ const draftSchema = z.object({
 const bodySchema = z.object({ draft: draftSchema });
 
 export async function POST(req: Request) {
+  const guard = await requireMianbaApiAuth();
+  if ("response" in guard) return guard.response;
+
   const body = await req.json().catch(() => null);
   const parsed = bodySchema.safeParse(body);
   if (!parsed.success) {
@@ -51,8 +55,10 @@ export async function POST(req: Request) {
   if (!run) return NextResponse.json({ error: "run_not_found" }, { status: 404 });
 
   const timestamp = new Date().toISOString();
+  const existingDraft = await store.getDraft(parsed.data.draft.id);
   const draft: ContentDraft = {
     ...parsed.data.draft,
+    owner_user_id: existingDraft?.owner_user_id ?? guard.auth.user.id,
     status: "ready",
     updated_at: timestamp,
   };

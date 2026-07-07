@@ -5,143 +5,6 @@
 
 create extension if not exists pgcrypto;
 
--- ===== 报告交付模块 =====
-
-create table if not exists assessment_profiles (
-  id uuid primary key,
-  tenant_id text not null,
-  customer_name text not null,
-  customer_contact text,
-  value_profile jsonb not null default '{}'::jsonb,
-  talent_mode text,
-  talent_answers jsonb not null default '{}'::jsonb,
-  talent_profile jsonb not null default '{}'::jsonb,
-  survey_answers jsonb not null default '{}'::jsonb,
-  payload jsonb not null,
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
-);
-
-create index if not exists assessment_profiles_tenant_created_idx
-  on assessment_profiles (tenant_id, created_at desc);
-
-create index if not exists assessment_profiles_contact_idx
-  on assessment_profiles (tenant_id, customer_contact, created_at desc);
-
-create table if not exists report_orders (
-  id uuid primary key default gen_random_uuid(),
-  tenant_id text not null,
-  assessment_profile_id uuid references assessment_profiles(id) on delete set null,
-  report_type text not null check (report_type in ('lite', 'deep')),
-  price_cents integer,
-  customer_name text,
-  customer_contact text,
-  status text not null default 'unpaid' check (status in ('unpaid', 'paid', 'delivering', 'delivered', 'refunded')),
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
-);
-
-create index if not exists report_orders_tenant_created_idx
-  on report_orders (tenant_id, created_at desc);
-
--- ===== 增长模块 =====
-
-create table if not exists growth_accounts (
-  id uuid primary key,
-  tenant_id text not null,
-  name text not null,
-  target_user text,
-  core_problem text,
-  payload jsonb not null,
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
-);
-
-create index if not exists growth_accounts_tenant_created_idx
-  on growth_accounts (tenant_id, created_at desc);
-
-create table if not exists growth_plans (
-  id uuid primary key,
-  tenant_id text not null,
-  account_id uuid not null references growth_accounts(id) on delete cascade,
-  title text,
-  payload jsonb not null,
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
-);
-
-create index if not exists growth_plans_account_created_idx
-  on growth_plans (account_id, created_at desc);
-
-create table if not exists growth_runs (
-  id uuid primary key,
-  tenant_id text not null,
-  account_id uuid not null references growth_accounts(id) on delete cascade,
-  plan_id uuid references growth_plans(id) on delete set null,
-  status text,
-  week integer,
-  objective text,
-  payload jsonb not null,
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
-);
-
-create index if not exists growth_runs_account_created_idx
-  on growth_runs (account_id, created_at desc);
-
-create table if not exists content_drafts (
-  id uuid primary key,
-  tenant_id text not null,
-  account_id uuid not null references growth_accounts(id) on delete cascade,
-  run_id uuid not null references growth_runs(id) on delete cascade,
-  status text,
-  title text,
-  direction text,
-  content_type text,
-  payload jsonb not null,
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
-);
-
-create index if not exists content_drafts_account_created_idx
-  on content_drafts (account_id, created_at desc);
-
-create table if not exists growth_reviews (
-  id uuid primary key,
-  tenant_id text not null,
-  draft_id uuid not null references content_drafts(id) on delete cascade,
-  classification text,
-  payload jsonb not null,
-  created_at timestamptz not null default now()
-);
-
-create index if not exists growth_reviews_draft_created_idx
-  on growth_reviews (draft_id, created_at desc);
-
-create table if not exists growth_business_settings (
-  tenant_id text primary key,
-  payload jsonb not null,
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
-);
-
-create table if not exists usage_events (
-  id uuid primary key default gen_random_uuid(),
-  tenant_id text not null,
-  feature text not null,
-  provider text,
-  model text,
-  input_tokens integer,
-  output_tokens integer,
-  units integer,
-  cost_cents integer,
-  metadata jsonb not null default '{}'::jsonb,
-  created_at timestamptz not null default now()
-);
-
-create index if not exists usage_events_tenant_created_idx
-  on usage_events (tenant_id, created_at desc);
-
 -- ============================================================
 -- 科学算命 · 数据库 schema
 -- 使用方式：在 Supabase Dashboard SQL Editor 一次性执行即可
@@ -360,16 +223,60 @@ create table if not exists tenants (
 create table if not exists tenant_users (
   id uuid primary key default gen_random_uuid(),
   tenant_id text not null references tenants(id) on delete cascade,
+  account text,
+  display_name text,
   email text,
   phone text,
   password_hash text,
-  role text not null default 'tenant_admin'
-    check (role in ('owner', 'tenant_admin', 'member')),
+  role text not null default 'operator'
+    check (role in ('admin', 'operator')),
+  disabled boolean not null default false,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   unique (tenant_id, email),
   unique (tenant_id, phone)
 );
+
+alter table tenant_users add column if not exists account text;
+alter table tenant_users add column if not exists display_name text;
+alter table tenant_users add column if not exists disabled boolean not null default false;
+
+update tenant_users
+set
+  account = lower(coalesce(nullif(account, ''), nullif(email, ''), nullif(phone, ''), id::text)),
+  display_name = coalesce(nullif(display_name, ''), nullif(email, ''), nullif(phone, ''), '面霸君账号'),
+  role = case
+    when role in ('owner', 'tenant_admin', 'admin') then 'admin'
+    else 'operator'
+  end
+where account is null
+   or display_name is null
+   or role not in ('admin', 'operator');
+
+alter table tenant_users alter column account set not null;
+alter table tenant_users alter column display_name set not null;
+alter table tenant_users alter column role set default 'operator';
+alter table tenant_users drop constraint if exists tenant_users_role_check;
+alter table tenant_users add constraint tenant_users_role_check check (role in ('admin', 'operator'));
+
+create unique index if not exists tenant_users_tenant_account_idx
+  on tenant_users (tenant_id, lower(account));
+
+create table if not exists auth_sessions (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id text not null references tenants(id) on delete cascade,
+  user_id uuid not null references tenant_users(id) on delete cascade,
+  token_hash text not null unique,
+  expires_at timestamptz not null,
+  created_at timestamptz not null default now(),
+  last_seen_at timestamptz not null default now()
+);
+
+create index if not exists auth_sessions_user_idx
+  on auth_sessions (tenant_id, user_id, expires_at desc);
+
+create index if not exists auth_sessions_expires_idx
+  on auth_sessions (expires_at);
 
 create table if not exists growth_accounts (
   id uuid primary key,
@@ -547,3 +454,39 @@ create index if not exists idx_content_drafts_account on content_drafts(account_
 create index if not exists idx_growth_reviews_draft on growth_reviews(draft_id, created_at desc);
 create index if not exists idx_assessment_profiles_tenant on assessment_profiles(tenant_id, created_at desc);
 create index if not exists idx_usage_events_tenant on usage_events(tenant_id, created_at desc);
+
+-- ============================================================
+-- 阶段0 · 数据归属与操作审计（2026-07-05）
+-- 目的：为"操作者视图 / 管理者驾驶舱"打数据地基。
+-- owner_user_id = 记录归属人（tenant_users.id）；历史数据为 null。
+-- ============================================================
+
+alter table assessment_profiles add column if not exists owner_user_id uuid;
+alter table assessment_profiles add column if not exists tags text[] not null default '{}';
+alter table report_orders add column if not exists owner_user_id uuid;
+alter table growth_accounts add column if not exists owner_user_id uuid;
+alter table growth_plans add column if not exists owner_user_id uuid;
+alter table growth_runs add column if not exists owner_user_id uuid;
+alter table content_drafts add column if not exists owner_user_id uuid;
+alter table growth_reviews add column if not exists owner_user_id uuid;
+alter table usage_events add column if not exists user_id uuid;
+
+create index if not exists idx_report_orders_owner on report_orders(tenant_id, owner_user_id, created_at desc);
+create index if not exists idx_assessment_profiles_owner on assessment_profiles(tenant_id, owner_user_id, created_at desc);
+create index if not exists idx_content_drafts_owner on content_drafts(tenant_id, owner_user_id, created_at desc);
+create index if not exists idx_usage_events_user on usage_events(tenant_id, user_id, created_at desc);
+
+-- 操作流水：管理者视图的"谁在什么时候干了什么"直接读这张表
+create table if not exists activity_log (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id text not null,
+  user_id uuid,
+  action text not null,
+  entity_type text not null,
+  entity_id text,
+  metadata jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists idx_activity_log_tenant on activity_log(tenant_id, created_at desc);
+create index if not exists idx_activity_log_user on activity_log(tenant_id, user_id, created_at desc);

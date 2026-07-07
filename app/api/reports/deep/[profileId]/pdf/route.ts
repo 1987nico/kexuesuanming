@@ -1,19 +1,19 @@
 import { NextResponse } from "next/server";
+import { requireSignedOrMianbaAccess } from "@/lib/auth/publicAccess";
 import { ensureDeepReport } from "@/lib/reports/ensureDeepReport";
-import { getCachedPDF, putCachedPDF, renderPagePDF } from "@/lib/reports/pdf";
+import { GOLDEN_REPORT_RENDER_VERSION, renderGoldenReportHtml, type GoldenReportData } from "@/lib/reports/goldenReportHtml";
+import { toGoldenReportData } from "@/lib/reports/goldenAdapter";
+import { getCachedPDF, putCachedPDF, renderHtmlPDF } from "@/lib/reports/pdf";
 import { reportStore } from "@/lib/reports/store";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 180;
 
-function baseUrlFromRequest(req: Request) {
-  if (process.env.APP_BASE_URL) return process.env.APP_BASE_URL;
-  const url = new URL(req.url);
-  return `${url.protocol}//${url.host}`;
-}
-
 export async function GET(req: Request, { params }: { params: { profileId: string } }) {
+  const access = await requireSignedOrMianbaAccess(req, "deep-report", params.profileId);
+  if (access) return access;
+
   const store = reportStore();
   const profile = await store.getAssessmentProfile(params.profileId);
   if (!profile) {
@@ -27,8 +27,21 @@ export async function GET(req: Request, { params }: { params: { profileId: strin
     );
   }
 
-  const generated = await ensureDeepReport(profile, (p) => store.saveAssessmentProfile(p));
-  const version = Buffer.from(generated.generated_at).toString("hex").slice(0, 12);
+  const rawProfile = profile as unknown as Record<string, unknown>;
+  const goldenReport = rawProfile.golden_report as GoldenReportData | undefined;
+  const goldenGeneratedAt = rawProfile.golden_generated_at ? String(rawProfile.golden_generated_at) : undefined;
+
+  let data: GoldenReportData;
+  let versionSource = goldenGeneratedAt ?? profile.updated_at;
+  if (goldenReport) {
+    data = { ...goldenReport, generatedAt: goldenReport.generatedAt ?? goldenGeneratedAt };
+  } else {
+    const generated = await ensureDeepReport(profile, (p) => store.saveAssessmentProfile(p));
+    data = toGoldenReportData(profile, generated);
+    versionSource = generated.generated_at;
+  }
+
+  const version = Buffer.from(`${GOLDEN_REPORT_RENDER_VERSION}:${versionSource}`).toString("hex").slice(0, 20);
   const cacheKey = `deep-${profile.id}-${version}`;
 
   const refresh = new URL(req.url).searchParams.get("refresh") === "1";
@@ -37,9 +50,9 @@ export async function GET(req: Request, { params }: { params: { profileId: strin
     if (cached) return pdfResponse(cached, profile.customer_name);
   }
 
-  const pageUrl = `${baseUrlFromRequest(req)}/reports/deep/${profile.id}`;
   try {
-    const pdf = await renderPagePDF(pageUrl, { pageSelector: ".dr-page" });
+    const html = renderGoldenReportHtml(data);
+    const pdf = await renderHtmlPDF(html, { pageSelector: ".golden-doc" });
     await putCachedPDF(cacheKey, pdf);
     return pdfResponse(pdf, profile.customer_name);
   } catch (error) {
@@ -52,7 +65,7 @@ export async function GET(req: Request, { params }: { params: { profileId: strin
 }
 
 function pdfResponse(pdf: Buffer, customerName: string) {
-  const filename = encodeURIComponent(`${customerName}-职业事业方向科学算命咨询报告.pdf`);
+  const filename = encodeURIComponent(`${customerName}-职业事业方向深度诊断报告.pdf`);
   return new NextResponse(new Uint8Array(pdf), {
     headers: {
       "content-type": "application/pdf",

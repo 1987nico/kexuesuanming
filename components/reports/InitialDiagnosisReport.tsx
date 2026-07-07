@@ -47,7 +47,7 @@ function Page({ no, title, intro, children }: { no: string; title: string; intro
       {intro && <p className="ir-intro">{intro}</p>}
       {children}
       <div className="ir-footer">
-        <span>职场参谋 | 初步诊断报告 | 保密交付</span>
+        <span>初步诊断报告 | 保密交付</span>
         <span>{pageNo}</span>
       </div>
     </section>
@@ -203,7 +203,7 @@ export function InitialDiagnosisReport({
         <div className="ir-toprule" />
         <div className="ir-cover-body">
           <div className="ir-cover-head">
-            <h1>职场参谋｜初步诊断报告</h1>
+            <h1>初步诊断报告</h1>
             <div className="ir-cover-sub">基于方向输入、价值观双三圈与天赋测评的初步判断</div>
           </div>
           <div className="ir-cover-client">
@@ -224,7 +224,7 @@ export function InitialDiagnosisReport({
           </div>
         </div>
         <div className="ir-footer">
-          <span>职场参谋 | 初步诊断报告 | 保密交付</span>
+          <span>初步诊断报告 | 保密交付</span>
           <span>01</span>
         </div>
       </section>
@@ -256,7 +256,7 @@ export function InitialDiagnosisReport({
           ))}
         </div>
         <div style={{ marginTop: 26 }}>
-          <div className="ir-kicker">参谋判断</div>
+          <div className="ir-kicker">判断</div>
           <ul className="ir-bullets">
             {d.consultant_reading.map((line, i) => (
               <li key={i}>{line}</li>

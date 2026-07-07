@@ -53,6 +53,8 @@ export interface TalentProfile {
 export interface AssessmentProfile {
   id: string;
   tenant_id: string;
+  /** 负责该客户的操作者（tenant_users.id）；公开链接提交时为 null，后台可再指派 */
+  owner_user_id?: string | null;
   customer_name: string;
   customer_contact?: string;
   survey_answers: Record<string, unknown>;

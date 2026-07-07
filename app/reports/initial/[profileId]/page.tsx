@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import { InitialDiagnosisReport } from "@/components/reports/InitialDiagnosisReport";
 import { PrintButton } from "@/components/reports/PrintButton";
+import { hasSignedOrMianbaAccess } from "@/lib/auth/publicAccess";
 import { ensureInitialDiagnosis } from "@/lib/reports/initialDiagnosis";
 import { reportStore } from "@/lib/reports/store";
 import "../initial-report.css";
@@ -8,11 +9,26 @@ import "../initial-report.css";
 export const dynamic = "force-dynamic";
 
 export const metadata = {
-  title: "职场参谋｜初步诊断报告",
+  title: "初步诊断报告",
   description: "基于方向输入、价值观双三圈与天赋测评的初步判断。",
 };
 
-export default async function InitialDiagnosisReportPage({ params }: { params: { profileId: string } }) {
+function tokenFromSearchParams(searchParams?: Record<string, string | string[] | undefined>) {
+  const value = searchParams?.access_token ?? searchParams?.token;
+  return Array.isArray(value) ? value[0] : value;
+}
+
+export default async function InitialDiagnosisReportPage({
+  params,
+  searchParams,
+}: {
+  params: { profileId: string };
+  searchParams?: Record<string, string | string[] | undefined>;
+}) {
+  if (!(await hasSignedOrMianbaAccess("initial-report", params.profileId, tokenFromSearchParams(searchParams)))) {
+    notFound();
+  }
+
   const store = reportStore();
   const profile = await store.getAssessmentProfile(params.profileId);
   if (!profile) notFound();

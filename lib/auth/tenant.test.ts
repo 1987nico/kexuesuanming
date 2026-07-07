@@ -2,30 +2,33 @@ import { describe, expect, it } from "vitest";
 import {
   DEFAULT_REPORT_TENANT_ID,
   canManageReportOrders,
-  getDefaultReportAuthContext,
+  isTenantRole,
   resolveReportAuthContext,
 } from "./tenant";
 
 describe("report tenant auth helper", () => {
-  it("defaults to the mianbajun owner context", () => {
-    expect(getDefaultReportAuthContext({})).toMatchObject({
+  it("accepts only mianba admin and operator roles", () => {
+    expect(isTenantRole("admin")).toBe(true);
+    expect(isTenantRole("operator")).toBe(true);
+    expect(isTenantRole("owner")).toBe(false);
+    expect(isTenantRole("viewer")).toBe(false);
+  });
+
+  it("does not promote invalid roles to admin", () => {
+    expect(resolveReportAuthContext({ tenantId: " custom ", role: "guest" })).toBeNull();
+  });
+
+  it("builds an explicit report auth context", () => {
+    expect(resolveReportAuthContext({ role: "operator" })).toMatchObject({
       tenantId: DEFAULT_REPORT_TENANT_ID,
-      role: "owner",
+      role: "operator",
       canViewReportOrders: true,
       canManageReportOrders: true,
     });
   });
 
-  it("normalizes invalid roles to the default owner role", () => {
-    expect(resolveReportAuthContext({ tenantId: " custom ", role: "guest" })).toMatchObject({
-      tenantId: "custom",
-      role: "owner",
-      canManageReportOrders: true,
-    });
-  });
-
-  it("keeps viewers read-only for order management", () => {
-    expect(canManageReportOrders("viewer")).toBe(false);
-    expect(resolveReportAuthContext({ role: "viewer" }).canManageReportOrders).toBe(false);
+  it("allows both admin and operator to manage report orders", () => {
+    expect(canManageReportOrders("admin")).toBe(true);
+    expect(canManageReportOrders("operator")).toBe(true);
   });
 });

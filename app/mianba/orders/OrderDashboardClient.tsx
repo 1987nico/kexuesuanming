@@ -3,6 +3,13 @@
 import { useMemo, useState } from "react";
 import type { ReportOrder, ReportOrderStatus } from "@/lib/reports/store";
 
+type ReportOrderWithLinks = ReportOrder & {
+  links?: {
+    report_url: string;
+    pdf_url: string;
+  };
+};
+
 const STATUS_LABELS: Record<ReportOrderStatus, string> = {
   unpaid: "待付款",
   paid: "已付款",
@@ -21,16 +28,41 @@ const dateTimeFormat = new Intl.DateTimeFormat("zh-CN", {
   minute: "2-digit",
 });
 
-interface OrderDashboardClientProps {
-  initialOrders: ReportOrder[];
-  canManageOrders: boolean;
+interface OrderMember {
+  id: string;
+  display_name: string;
+  role: string;
+  disabled: boolean;
 }
 
-export default function OrderDashboardClient({ initialOrders, canManageOrders }: OrderDashboardClientProps) {
+interface OrderDashboardClientProps {
+  initialOrders: ReportOrderWithLinks[];
+  canManageOrders: boolean;
+  viewerRole: "admin" | "operator";
+  viewerUserId: string | null;
+  members: OrderMember[];
+}
+
+export default function OrderDashboardClient({
+  initialOrders,
+  canManageOrders,
+  viewerRole,
+  viewerUserId,
+  members,
+}: OrderDashboardClientProps) {
   const [orders, setOrders] = useState(initialOrders);
   const [activeStatus, setActiveStatus] = useState<ReportOrderStatus | "all">("all");
+  const [activeOwner, setActiveOwner] = useState<string | "all" | "unassigned">("all");
+  const memberNameById = useMemo(() => new Map(members.map((m) => [m.id, m.display_name])), [members]);
+
+  function ownerLabel(order: ReportOrder) {
+    if (order.owner_user_id == null) return "未归属";
+    if (order.owner_user_id === viewerUserId) return `${memberNameById.get(order.owner_user_id) ?? "我"}（我）`;
+    return memberNameById.get(order.owner_user_id) ?? "未知成员";
+  }
   const [updatingOrderId, setUpdatingOrderId] = useState<string | null>(null);
   const [message, setMessage] = useState("");
+  const [copiedOrderId, setCopiedOrderId] = useState<string | null>(null);
 
   const counts = useMemo(() => {
     return orders.reduce(
@@ -44,12 +76,16 @@ export default function OrderDashboardClient({ initialOrders, canManageOrders }:
   }, [orders]);
 
   const visibleOrders = useMemo(() => {
-    if (activeStatus === "all") return orders;
-    return orders.filter((order) => order.status === activeStatus);
-  }, [activeStatus, orders]);
+    let list = orders;
+    if (activeOwner === "unassigned") list = list.filter((order) => order.owner_user_id == null);
+    else if (activeOwner !== "all") list = list.filter((order) => order.owner_user_id === activeOwner);
+    if (activeStatus !== "all") list = list.filter((order) => order.status === activeStatus);
+    return list;
+  }, [activeOwner, activeStatus, orders]);
 
   function reportPathFor(order: ReportOrder) {
     if (!order.assessment_profile_id) return null;
+    if ((order as ReportOrderWithLinks).links?.report_url) return (order as ReportOrderWithLinks).links!.report_url;
     return order.report_type === "deep"
       ? `/reports/deep/${order.assessment_profile_id}`
       : `/reports/initial/${order.assessment_profile_id}`;
@@ -60,7 +96,11 @@ export default function OrderDashboardClient({ initialOrders, canManageOrders }:
     if (!path) return;
     const url = new URL(path, window.location.origin).toString();
     try {
-      await navigator.clipboard.writeText(url);
+      await writeClipboard(url);
+      setCopiedOrderId(order.id);
+      window.setTimeout(() => {
+        setCopiedOrderId((current) => (current === order.id ? null : current));
+      }, 1500);
       setMessage(`订单 ${shortId(order.id)} 的交付链接已复制：${url}`);
     } catch {
       setMessage(`复制失败，请手动复制：${url}`);
@@ -78,7 +118,9 @@ export default function OrderDashboardClient({ initialOrders, canManageOrders }:
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || data.error || "更新订单状态失败");
-      setOrders((current) => current.map((order) => (order.id === orderId ? data.order : order)));
+      setOrders((current) =>
+        current.map((order) => (order.id === orderId ? { ...data.order, links: order.links } : order)),
+      );
       setMessage(`订单 ${shortId(orderId)} 已更新为 ${STATUS_LABELS[status]}`);
     } catch (error) {
       setMessage((error as Error).message);
@@ -99,7 +141,7 @@ export default function OrderDashboardClient({ initialOrders, canManageOrders }:
         <div className="rounded-full bg-ink-50 px-3 py-1 text-xs text-ink-500">{canManageOrders ? "可管理订单" : "只读权限"}</div>
       </div>
 
-      <div className="mb-5 flex flex-wrap gap-2">
+      <div className="mb-3 flex flex-wrap gap-2">
         {STATUS_FILTERS.map((status) => (
           <button
             key={status}
@@ -113,19 +155,53 @@ export default function OrderDashboardClient({ initialOrders, canManageOrders }:
         ))}
       </div>
 
+      {viewerRole === "admin" && (
+        <div className="mb-5 flex flex-wrap items-center gap-2">
+          <span className="text-xs text-ink-400">按负责人：</span>
+          <button
+            onClick={() => setActiveOwner("all")}
+            className={`rounded-full px-3 py-1.5 text-xs transition ${
+              activeOwner === "all" ? "bg-gold-700 text-white" : "bg-ink-50 text-ink-600 hover:bg-gold-50"
+            }`}
+          >
+            全部成员
+          </button>
+          <button
+            onClick={() => setActiveOwner("unassigned")}
+            className={`rounded-full px-3 py-1.5 text-xs transition ${
+              activeOwner === "unassigned" ? "bg-gold-700 text-white" : "bg-ink-50 text-ink-600 hover:bg-gold-50"
+            }`}
+          >
+            未归属 · {orders.filter((order) => order.owner_user_id == null).length}
+          </button>
+          {members.map((member) => (
+            <button
+              key={member.id}
+              onClick={() => setActiveOwner(member.id)}
+              className={`rounded-full px-3 py-1.5 text-xs transition ${
+                activeOwner === member.id ? "bg-gold-700 text-white" : "bg-ink-50 text-ink-600 hover:bg-gold-50"
+              }`}
+            >
+              {member.display_name} · {orders.filter((order) => order.owner_user_id === member.id).length}
+            </button>
+          ))}
+        </div>
+      )}
+
       {message && <p className="mb-4 rounded-2xl bg-gold-50 px-4 py-3 text-sm text-ink-700">{message}</p>}
 
       {visibleOrders.length === 0 ? (
         <div className="rounded-2xl bg-ink-50 p-6 text-sm text-ink-500">当前状态下暂无订单。</div>
       ) : (
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[860px] border-separate border-spacing-y-2 text-left text-sm">
+          <table className="w-full min-w-[960px] border-separate border-spacing-y-2 text-left text-sm">
             <thead className="text-xs text-ink-400">
               <tr>
                 <th className="px-3 py-2 font-medium">订单</th>
                 <th className="px-3 py-2 font-medium">客户</th>
                 <th className="px-3 py-2 font-medium">类型 / 金额</th>
                 <th className="px-3 py-2 font-medium">状态</th>
+                <th className="px-3 py-2 font-medium">负责人</th>
                 <th className="px-3 py-2 font-medium">创建时间</th>
                 <th className="px-3 py-2 font-medium">报告交付</th>
                 <th className="px-3 py-2 font-medium">状态操作</th>
@@ -140,11 +216,24 @@ export default function OrderDashboardClient({ initialOrders, canManageOrders }:
                     <div className="mt-1 text-xs text-ink-400">{order.customer_contact || "未填联系方式"}</div>
                   </td>
                   <td className="px-3 py-3">
-                    <div>{order.report_type === "lite" ? "初步诊断报告" : "完整咨询报告"}</div>
+                    <div>{order.report_type === "lite" ? "初步诊断报告" : "深度诊断报告"}</div>
                     <div className="mt-1 text-xs text-ink-400">{formatPrice(order.price_cents)}</div>
                   </td>
                   <td className="px-3 py-3">
                     <span className="rounded-full bg-white px-3 py-1 text-xs text-ink-700 shadow-sm">{STATUS_LABELS[order.status]}</span>
+                  </td>
+                  <td className="px-3 py-3">
+                    <span
+                      className={`rounded-full px-2.5 py-1 text-[11px] ${
+                        order.owner_user_id == null
+                          ? "bg-amber-50 text-amber-800 ring-1 ring-amber-100"
+                          : order.owner_user_id === viewerUserId
+                            ? "bg-emerald-50 text-emerald-800 ring-1 ring-emerald-100"
+                            : "bg-white text-ink-600 shadow-sm"
+                      }`}
+                    >
+                      {ownerLabel(order)}
+                    </span>
                   </td>
                   <td className="px-3 py-3 text-xs text-ink-500">{formatDate(order.created_at)}</td>
                   <td className="px-3 py-3">
@@ -160,7 +249,7 @@ export default function OrderDashboardClient({ initialOrders, canManageOrders }:
                         {order.report_type === "lite" && (
                           <a
                             className="rounded-full bg-white px-3 py-1.5 text-xs text-ink-600 shadow-sm transition hover:text-ink-900"
-                            href={`/api/reports/initial/${order.assessment_profile_id}/pdf`}
+                            href={order.links?.pdf_url ?? `/api/reports/initial/${order.assessment_profile_id}/pdf`}
                             target="_blank"
                           >
                             下载 PDF
@@ -170,7 +259,7 @@ export default function OrderDashboardClient({ initialOrders, canManageOrders }:
                           onClick={() => copyDeliveryLink(order)}
                           className="rounded-full bg-white px-3 py-1.5 text-xs text-ink-600 shadow-sm transition hover:text-ink-900"
                         >
-                          复制交付链接
+                          {copiedOrderId === order.id ? "已复制" : "复制交付链接"}
                         </button>
                       </div>
                     ) : (
@@ -214,4 +303,19 @@ function formatDate(value: string) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   return dateTimeFormat.format(date);
+}
+
+async function writeClipboard(text: string) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.style.position = "fixed";
+  textarea.style.opacity = "0";
+  document.body.appendChild(textarea);
+  textarea.select();
+  document.execCommand("copy");
+  document.body.removeChild(textarea);
 }

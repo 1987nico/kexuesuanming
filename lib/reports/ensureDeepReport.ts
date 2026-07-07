@@ -10,10 +10,9 @@
 
 import type { AssessmentProfile } from "./assessmentProfile";
 import type { DeepReportGenerated, SensoryScoreInput } from "./deepReport";
-import { generateDeepReport } from "./deepReportAgent";
+import { generateGoldenDeepReport } from "./goldenDeepPipeline";
 import { sessionLikedCards } from "./directionSession";
 import { ensureInitialDiagnosis } from "./initialDiagnosis";
-import { generateReportDiagrams } from "./reportDiagrams";
 
 /** 方向滑卡「点亮」→ 感性打分（≥7 视为达标） */
 export function sensoryScoresFromSession(profile: AssessmentProfile): SensoryScoreInput[] {
@@ -55,22 +54,10 @@ export async function ensureDeepReport(
   // 小报告判断层必须先就绪，大报告与之逻辑一致
   await ensureInitialDiagnosis(profile, save);
 
-  const sensoryScores = sensoryScoresFromSession(profile);
-  const { generated } = await generateDeepReport({
-    profile,
-    liteMainCut: profile.initial_diagnosis?.recommended_cut,
+  const { generated } = await generateGoldenDeepReport(profile, {
     initialDiagnosis: profile.initial_diagnosis,
-    directionSession: profile.direction_session,
-    sensoryScores,
+    forceFixture: process.env.GOLDEN_DEEP_FORCE_FIXTURE === "1",
   });
-
-  if (opts?.withDiagrams !== false) {
-    try {
-      generated.images = await generateReportDiagrams(generated);
-    } catch (error) {
-      console.warn("[ensureDeepReport] 图表生成失败：", (error as Error)?.message);
-    }
-  }
 
   profile.deep_report = generated;
   profile.updated_at = new Date().toISOString();
@@ -87,7 +74,7 @@ export function warmupDeepReportAfterDirectionComplete(
   const run = async () => {
     const profile = await get(profileId);
     if (!profile?.direction_session || profile.direction_session.status !== "completed") return;
-    await ensureDeepReport(profile, save, { withDiagrams: true });
+    await ensureDeepReport(profile, save);
   };
   run().catch((error) => console.warn("[ensureDeepReport] 异步预热失败：", (error as Error)?.message));
 }

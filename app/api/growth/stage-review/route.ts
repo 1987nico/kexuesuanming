@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { requireMianbaApiAuth } from "@/lib/auth/mianba";
 import { stageReview } from "@/lib/growth/runner";
 import { growthStore } from "@/lib/growth/store";
 
@@ -13,6 +14,9 @@ const bodySchema = z.object({
 });
 
 export async function POST(req: Request) {
+  const guard = await requireMianbaApiAuth();
+  if ("response" in guard) return guard.response;
+
   const body = await req.json().catch(() => ({}));
   const parsed = bodySchema.safeParse(body);
   if (!parsed.success) {
@@ -27,10 +31,17 @@ export async function POST(req: Request) {
   const reviews = await store.listReviewsByAccount(account.id);
 
   const { result, usage } = await stageReview({ account, notes, reviews });
+  const updatedAt = new Date().toISOString();
+  await store.saveAccount({
+    ...account,
+    stage_review: result,
+    updated_at: updatedAt,
+  });
 
   if (usage) {
     await store.saveUsage({
       tenant_id: DEFAULT_TENANT_ID,
+      user_id: guard.auth.user.id,
       feature: "growth_text",
       ...usage,
       metadata: { action: "stage_review", accountId: account.id },

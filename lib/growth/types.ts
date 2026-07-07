@@ -25,6 +25,7 @@ export type ReviewClassification =
 export interface GrowthAccount {
   id: string;
   tenant_id: string;
+  owner_user_id?: string | null;
   persona: GrowthPersona;
   name: string;
   target_user: string;
@@ -44,6 +45,7 @@ export interface GrowthAccount {
   private_domain?: string;
   // 视角专属字段：key -> value
   persona_specific?: Record<string, string>;
+  stage_review?: StageReviewResult;
   created_at: string;
   updated_at: string;
 }
@@ -79,6 +81,7 @@ export const PERSONA_SPECIFIC_FIELDS: Record<GrowthPersona, PersonaSpecificField
 export interface GrowthPlan {
   id: string;
   tenant_id: string;
+  owner_user_id?: string | null;
   account_id: string;
   title: string;
   weeks: GrowthPlanWeek[];
@@ -123,6 +126,7 @@ export interface TopicCandidate {
 export interface GrowthRun {
   id: string;
   tenant_id: string;
+  owner_user_id?: string | null;
   account_id: string;
   plan_id?: string;
   status: ContentStatus;
@@ -142,6 +146,7 @@ export interface GrowthRun {
 export interface ContentDraft {
   id: string;
   tenant_id: string;
+  owner_user_id?: string | null;
   account_id: string;
   run_id: string;
   status: ContentStatus;
@@ -192,6 +197,7 @@ export interface GrowthReviewMetrics {
 export interface GrowthReview {
   id: string;
   tenant_id: string;
+  owner_user_id?: string | null;
   draft_id: string;
   metrics: GrowthReviewMetrics;
   classification: ReviewClassification;
@@ -240,8 +246,8 @@ export interface StageReviewResult {
 // 业务设置：面霸君可在界面里编辑的业务事实（当前只有两个报告价格，后续可扩展）
 export interface BusinessSettings {
   tenant_id: string;
-  report_lite_price: string; // 小报告价格（字符串，允许写「199」或「199 元」等）
-  report_deep_price: string; // 大报告价格
+  report_lite_price: string; // 初步诊断报告价格（字符串，允许写「199」或「199 元」等）
+  report_deep_price: string; // 深度诊断报告价格
   updated_at: string;
 }
 
@@ -253,6 +259,7 @@ export const DEFAULT_BUSINESS_SETTINGS: Omit<BusinessSettings, "tenant_id" | "up
 export interface UsageEvent {
   id: string;
   tenant_id: string;
+  user_id?: string | null;
   feature: "growth_text" | "growth_image" | "report_lite" | "report_deep" | "title_score";
   provider?: string;
   model?: string;

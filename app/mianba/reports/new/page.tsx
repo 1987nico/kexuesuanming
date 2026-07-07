@@ -3,10 +3,18 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { talentModeLabel, type AssessmentProfile } from "@/lib/reports/assessmentProfile";
 import type { TalentQuestionForClient } from "@/lib/reports/principlesyouQuestions";
-import type { ReportOrder, ReportType } from "@/lib/reports/store";
+import type { ReportOrder } from "@/lib/reports/store";
 
 const QUESTIONS_PER_PAGE = 4;
 const STORAGE_KEY = "mianba.report-intake.v1";
+
+interface SubmittedReportLinks {
+  initial_report_url?: string;
+  lite_report_url?: string;
+  initial_pdf_url?: string;
+  deep_report_url?: string;
+  deep_pdf_url?: string;
+}
 
 const VALUE_OPTIONS = [
   "被爱",
@@ -101,11 +109,11 @@ export default function NewReportProfilePage() {
   const [bottomValues, setBottomValues] = useState<string[]>([]);
   const [valueProfile, setValueProfile] = useState(JSON.stringify(defaultValueProfile, null, 2));
   const [profile, setProfile] = useState<AssessmentProfile | null>(null);
+  const [submittedLinks, setSubmittedLinks] = useState<SubmittedReportLinks>({});
   const [latestOrder, setLatestOrder] = useState<ReportOrder | null>(null);
   const [message, setMessage] = useState("加载 252 题模板中...");
   const [orderMessage, setOrderMessage] = useState("");
   const [loading, setLoading] = useState(false);
-  const [orderLoading, setOrderLoading] = useState<ReportType | null>(null);
   const [draftLoaded, setDraftLoaded] = useState(false);
   const [debugMode, setDebugMode] = useState(false);
   const [phase, setPhase] = useState<"intake" | "talent">("intake");
@@ -204,6 +212,7 @@ export default function NewReportProfilePage() {
   const allComplete = questions.length === 252 && answeredCount === questions.length;
   const intakeComplete = Boolean(customerName.trim()) && intakeQuestions.every((question) => intakeAnswers[question.key]?.trim());
   const valuesComplete = topValues.length === 3 && bottomValues.length === 3;
+  const submitted = Boolean(profile);
 
   function setAnswer(questionNumber: number, value: number) {
     setAnswers((current) => ({ ...current, [questionNumber]: value }));
@@ -249,6 +258,9 @@ export default function NewReportProfilePage() {
     setPage(0);
     setPhase("intake");
     setProfile(null);
+    setSubmittedLinks({});
+    setLatestOrder(null);
+    setOrderMessage("");
     setMessage("本地草稿已清空。");
   }
 
@@ -260,6 +272,10 @@ export default function NewReportProfilePage() {
   }
 
   async function submitProfile() {
+    if (profile) {
+      setMessage("底稿已生成，请使用下方链接查看或下载报告。");
+      return;
+    }
     if (!intakeComplete) {
       setMessage("请先填写客户姓名和 8 个关键问题。");
       return;
@@ -273,7 +289,7 @@ export default function NewReportProfilePage() {
       return;
     }
     setLoading(true);
-    setMessage("生成 assessment_profile 中...");
+    setMessage("正在整理测评画像，请不要关闭页面...");
     try {
       const res = await fetch("/api/reports/assessment-profiles", {
         method: "POST",
@@ -292,42 +308,16 @@ export default function NewReportProfilePage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || data.error || "生成底稿失败");
       setProfile(data.profile);
+      setSubmittedLinks(data.links ?? {});
       setLatestOrder(data.order ?? null);
       setOrderMessage(data.order ? `已自动登记初步诊断报告订单：${data.order.id}` : "");
       setMessage(
-        `测评提交成功，报告正在生成中（约 1 分钟后可查看）。天赋数据来源：${talentModeLabel(data.profile.talent_profile.mode)}`
+        `底稿已生成。你可以打开初步诊断报告；如首次打开仍在整理，请稍后刷新报告页。天赋数据来源：${talentModeLabel(data.profile.talent_profile.mode)}`
       );
     } catch (error) {
       setMessage((error as Error).message);
     } finally {
       setLoading(false);
-    }
-  }
-
-  async function createReportOrder(reportType: ReportType) {
-    if (!profile) return;
-    setOrderLoading(reportType);
-    setOrderMessage(`创建${reportType === "lite" ? "小" : "大"}报告订单中...`);
-    try {
-      const res = await fetch("/api/reports/orders", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          assessment_profile_id: profile.id,
-          report_type: reportType,
-          price_cents: reportType === "lite" ? 19900 : 699900,
-          customer_name: profile.customer_name,
-          customer_contact: profile.customer_contact,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.message || data.error || "创建订单失败");
-      setLatestOrder(data.order);
-      setOrderMessage(`已创建${reportType === "lite" ? "小" : "大"}报告订单：${data.order.id}`);
-    } catch (error) {
-      setOrderMessage((error as Error).message);
-    } finally {
-      setOrderLoading(null);
     }
   }
 
@@ -350,10 +340,10 @@ export default function NewReportProfilePage() {
               </div>
               <button
                 className="mt-5 w-full rounded-none bg-[#b9a36b] px-5 py-4 text-sm font-semibold text-[#09090b] transition hover:opacity-90 disabled:opacity-40"
-                disabled={loading || !allComplete || !intakeComplete || !valuesComplete}
+                disabled={loading || submitted || !allComplete || !intakeComplete || !valuesComplete}
                 onClick={submitProfile}
               >
-                {loading ? "生成中..." : "完成并生成底稿"}
+                {submitted ? "底稿已生成" : loading ? "正在整理..." : "完成并生成底稿"}
               </button>
               <button
                 className="mt-3 w-full rounded-none border border-[#22201c] px-5 py-4 text-sm font-semibold text-[#f4efe6]/75"
@@ -571,24 +561,12 @@ export default function NewReportProfilePage() {
           <h2 className="serif mb-2 text-2xl text-[#b9a36b]">底稿已生成</h2>
           <p className="text-sm leading-6 text-[#f4efe6]/55">底稿编号：{profile.id}；天赋数据来源：{talentModeLabel(profile.talent_profile.mode)}</p>
           <div className="mt-5 flex flex-wrap gap-3">
-            <a className="rounded-none bg-[#b9a36b] px-5 py-3 text-sm font-semibold text-[#09090b]" href={`/reports/initial/${profile.id}`} target="_blank">
+            <a className="rounded-none bg-[#b9a36b] px-5 py-3 text-sm font-semibold text-[#09090b]" href={submittedLinks.initial_report_url ?? `/reports/initial/${profile.id}`} target="_blank">
               查看初步诊断报告
             </a>
-            <a className="rounded-none border border-[#b9a36b] px-5 py-3 text-sm font-semibold text-[#b9a36b]" href={`/api/reports/initial/${profile.id}/pdf`} target="_blank">
+            <a className="rounded-none border border-[#b9a36b] px-5 py-3 text-sm font-semibold text-[#b9a36b]" href={submittedLinks.initial_pdf_url ?? `/api/reports/initial/${profile.id}/pdf`} target="_blank">
               下载报告 PDF
             </a>
-            <a className="rounded-none bg-[#b9a36b] px-5 py-3 text-sm font-semibold text-[#09090b]" href={`/reports/lite/${profile.id}`} target="_blank">
-              打开小报告
-            </a>
-            <a className="rounded-none bg-[#b9a36b] px-5 py-3 text-sm font-semibold text-[#09090b]" href={`/reports/deep/${profile.id}`} target="_blank">
-              打开大报告
-            </a>
-            <button className="rounded-none border border-[#22201c] px-5 py-3 text-sm font-semibold text-[#f4efe6]/75 disabled:opacity-40" disabled={!!orderLoading} onClick={() => createReportOrder("lite")}>
-              {orderLoading === "lite" ? "创建中..." : "创建小报告订单"}
-            </button>
-            <button className="rounded-none border border-[#22201c] px-5 py-3 text-sm font-semibold text-[#f4efe6]/75 disabled:opacity-40" disabled={!!orderLoading} onClick={() => createReportOrder("deep")}>
-              {orderLoading === "deep" ? "创建中..." : "创建大报告订单"}
-            </button>
             <a className="rounded-none border border-[#22201c] px-5 py-3 text-sm font-semibold text-[#f4efe6]/75" href="/mianba/orders" target="_blank">
               打开订单后台
             </a>

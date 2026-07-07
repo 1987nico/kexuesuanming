@@ -40,8 +40,8 @@ const goldenBody = {
   },
 };
 
-const REQUIRED_TERMS = ["金样本大报告", "科学算命咨询报告", "Step1", "Step3", "失败验尸", "90 天验证"];
-const BANNED_TERMS = ["尚未生成", "待生成", "未填写"];
+const REQUIRED_TERMS = ["金样本大报告", "咨询报告", "Step1", "Step3", "失败验尸", "90 天验证"];
+const BANNED_TERMS = ["尚未生成", "待生成", "未填写", "科学算命", "职场参谋"];
 
 function fail(message) {
   console.error(`✗ ${message}`);

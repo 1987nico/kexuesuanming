@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { requireMianbaApiAuth } from "@/lib/auth/mianba";
+import { appendPublicAccessToken } from "@/lib/auth/publicAccess";
 import { assertReportConsistency } from "@/lib/reports/assessmentProfile";
 import { buildDeepReport } from "@/lib/reports/builders";
 import { ensureDeepReport } from "@/lib/reports/ensureDeepReport";
@@ -8,7 +10,7 @@ import { reportStore } from "@/lib/reports/store";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export const maxDuration = 180;
+export const maxDuration = 300;
 
 const bodySchema = z.object({
   assessment_profile_id: z.string().uuid(),
@@ -17,6 +19,9 @@ const bodySchema = z.object({
 });
 
 export async function POST(req: Request) {
+  const guard = await requireMianbaApiAuth();
+  if ("response" in guard) return guard.response;
+
   const body = await req.json().catch(() => null);
   const parsed = bodySchema.safeParse(body);
   if (!parsed.success) {
@@ -53,7 +58,7 @@ export async function POST(req: Request) {
     generated: true,
     talent_source: effectiveProfile.talent_profile.mode,
     sensory_from_input: generated.sensory_from_input ?? false,
-    report_url: `/reports/deep/${profile.id}`,
-    pdf_url: `/api/reports/deep/${profile.id}/pdf`,
+    report_url: appendPublicAccessToken(`/reports/deep/${profile.id}`, "deep-report", profile.id),
+    pdf_url: appendPublicAccessToken(`/api/reports/deep/${profile.id}/pdf`, "deep-report", profile.id),
   });
 }

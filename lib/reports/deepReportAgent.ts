@@ -10,9 +10,9 @@ import { archetypeZhName, traitZhName } from "./talentNames";
 const MARKET_DISCLAIMER =
   "本节市场分析由 AI 基于公开常识与推理生成，其中涉及的行业规模、竞争格局、政策与数据均需人工核实真实来源后再交付，不可直接作为投资依据。";
 
-const DEEP_SYSTEM_PROMPT = `你是「职业/事业方向科学算命」大报告的首席顾问。你要基于客户的价值观双三圈、PrinciplesYou 天赋测评、问卷、小报告初步诊断，以及（如有）方向滑卡感性验证结果，产出一份逻辑自洽、可交付的深度咨询报告。
+const DEEP_SYSTEM_PROMPT = `你是「职业/事业方向深度诊断报告」的首席顾问。你要基于客户的价值观双三圈、PrinciplesYou 天赋测评、问卷、初步诊断报告，以及（如有）方向滑卡感性验证结果，产出一份逻辑自洽、可交付的深度诊断报告。
 
-报告体例对齐「年雪 · 职业/事业方向科学算命咨询报告」：
+报告体例对齐「年雪 · 职业/事业方向咨询报告」金样本：
 - 封面先给结论：主线、第一切口、暗线、行动方式（主次结构，不是并列创业项目）
 - 每个 Step 按「输入 → 推理 → 输出」三段写清楚
 - Step3 对每个达标方向给出 Step4 处理方式（进入/合并/淘汰/保留为策略）
@@ -23,9 +23,10 @@ const DEEP_SYSTEM_PROMPT = `你是「职业/事业方向科学算命」大报告
 - 90 天验证计划按三条推荐分列动作与继续条件
 
 硬性要求：
+- 全文不得出现「科学算命」「职场参谋」字样（内部代号与品牌名，不对客户暴露），也不要出现「小报告」「大报告」「完整咨询报告」等旧叫法，对客户统一说「初步诊断报告」「深度诊断报告」。
 - 全程中文、大白话，咨询顾问判断密度，不说空话套话。
 - 一切判断必须回扣价值观（喜欢区/排除带）和天赋特质。
-- 必须与小报告初步诊断逻辑一致；若最终推荐不同，在「与小报告的关系」里解释。
+- 必须与初步诊断报告逻辑一致；若最终推荐不同，在「与初步诊断报告的关系」里解释。
 - 方向滑卡「点亮」的方向必须进入 Step3 达标列表，不得忽略。
 - 市场分析可推理，但不得编造具体数字和来源；外部事实用「（待核实）」标注。
 - Step4 可以给顾问评分，但必须说明评分是决策判断，不是外部市场事实。
@@ -55,7 +56,7 @@ function buildDeepUserPrompt(input: DeepPromptInput) {
   const diagnosis = input.initialDiagnosis;
   const diagnosisBlock = diagnosis
     ? `
-【小报告初步诊断（大报告必须逻辑一致）】
+【初步诊断报告（深度诊断报告必须逻辑一致）】
 一句话结论：${diagnosis.one_line_conclusion}
 主判断：${diagnosis.main_judgement}
 推荐主切口：${diagnosis.recommended_cut}
@@ -71,7 +72,7 @@ function buildDeepUserPrompt(input: DeepPromptInput) {
   const dislikedCards = session ? sessionDislikedCards(session) : [];
   const sessionBlock = session
     ? `
-【方向滑卡测评（完整咨询报告测评）】
+【方向滑卡测评（深度诊断报告测评）】
 状态：${session.status}；点亮 ${likedCards.length} / ${session.target_likes} 个方向
 点亮方向（右滑，必须纳入 Step3 达标列表）：
 ${likedCards.map((c) => `- ${c.title}：${c.one_liner}`).join("\n") || "（暂无）"}
@@ -198,7 +199,7 @@ ${sensoryBlock}
     "推荐1主线": { "方向": "", "推荐逻辑": "" },
     "推荐2第一切口": { "方向": "", "推荐逻辑": "" },
     "推荐3暗线": { "方向": "", "推荐逻辑": "" },
-    "与小报告的关系": ""
+    "与初步诊断报告的关系": ""
   },
   "ninety_day_plan": {
     "表头": ["阶段", "主线", "切口", "暗线", "继续条件"],
@@ -225,6 +226,38 @@ ${sensoryBlock}
 - diagram_data 分数与上文判断一致`.trim();
 }
 
+// 兜底清洗：品牌与内部代号不允许出现在交付内容里（对客户只说「咨询报告」）。
+function normalizePublicReportTerms(text: string): string {
+  return text
+    .replaceAll("完整咨询报告", "深度诊断报告")
+    .replaceAll("大报告", "深度诊断报告")
+    .replaceAll("小报告", "初步诊断报告");
+}
+
+export function scrubBrandTerms<T>(value: T): T {
+  if (typeof value === "string") {
+    return normalizePublicReportTerms(value)
+      .replaceAll("科学算命咨询报告", "咨询报告")
+      .replaceAll("「科学算命」", "")
+      .replaceAll("“科学算命”", "")
+      .replaceAll(/科学算命\s*[·・]\s*/g, "")
+      .replaceAll("科学算命", "")
+      .replaceAll("「职场参谋」", "")
+      .replaceAll("“职场参谋”", "")
+      .replaceAll("职场参谋", "") as T;
+  }
+  if (Array.isArray(value)) return value.map((item) => scrubBrandTerms(item)) as T;
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([k, v]) => [
+        normalizePublicReportTerms(k),
+        scrubBrandTerms(v),
+      ])
+    ) as T;
+  }
+  return value;
+}
+
 export async function generateDeepReport(input: DeepPromptInput): Promise<{
   generated: DeepReportGenerated;
   usage?: Record<string, unknown>;
@@ -235,7 +268,7 @@ export async function generateDeepReport(input: DeepPromptInput): Promise<{
     maxTokens: 12000,
     temperature: 0.45,
   });
-  const d = result.data ?? {};
+  const d = scrubBrandTerms(result.data ?? {});
 
   const asArray = (v: unknown): Array<Record<string, unknown>> =>
     Array.isArray(v) ? (v as Array<Record<string, unknown>>) : [];

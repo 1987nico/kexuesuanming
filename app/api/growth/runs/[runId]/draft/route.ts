@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { requireMianbaApiAuth } from "@/lib/auth/mianba";
 import { generateDraft } from "@/lib/growth/runner";
 import { growthStore } from "@/lib/growth/store";
 
@@ -13,6 +14,9 @@ const bodySchema = z.object({
 });
 
 export async function POST(req: Request, { params }: { params: { runId: string } }) {
+  const guard = await requireMianbaApiAuth();
+  if ("response" in guard) return guard.response;
+
   const body = await req.json().catch(() => ({}));
   const parsed = bodySchema.safeParse(body);
   if (!parsed.success) {
@@ -32,11 +36,14 @@ export async function POST(req: Request, { params }: { params: { runId: string }
     selectedTopicId: parsed.data.selectedTopicId,
   });
 
+  result.draft.owner_user_id = result.draft.owner_user_id ?? guard.auth.user.id;
+  result.run.owner_user_id = result.run.owner_user_id ?? guard.auth.user.id;
   await store.saveRun(result.run);
   await store.saveDraft(result.draft);
   if (result.usage) {
     await store.saveUsage({
       tenant_id: DEFAULT_TENANT_ID,
+      user_id: guard.auth.user.id,
       feature: "growth_text",
       ...result.usage,
       metadata: { action: "draft", runId: run.id, draftId: result.draft.id },

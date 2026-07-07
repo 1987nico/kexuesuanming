@@ -4,6 +4,8 @@ export interface DeepReportGenerated {
   generated_at: string;
   provider?: string;
   model?: string;
+  // 生产方式："staged-v1" = 分步流水线（滑卡点亮→联网Step4→VRIN→验尸）；未设 = 一次性生成
+  pipeline?: string;
   // 市场分析统一免责声明：LLM 生成、需人工核实外部事实
   market_disclaimer: string;
   // 是否采用了客户真实感性打分（否则为 LLM 预判、待客户录入）
@@ -29,11 +31,26 @@ export interface DeepReportGenerated {
   >;
   // Step3 方向处理表（序号、来源、Step4 处理方式）
   sensory_table?: Array<Record<string, unknown>>;
+  // Step4 淘汰 / 不独立入围项概要（对齐年雪体例）
+  market_excluded?: Array<Record<string, unknown>>;
+  // Step4 外部事实依据（联网检索来源；未配 key 时为提示文案）
+  market_sources?: string[];
+  // Step6 浓缩版验尸表（方向 / 12个月后最可能怎么输 / 早期信号 / 止损线）
+  premortem_table?: Array<Record<string, unknown>>;
+  // Step5 Top3 表（排序 / 方向 / 角色 / 进入原因）
+  top3_table?: Array<Record<string, unknown>>;
 
   // 供图表使用的结构化数值（矩阵坐标、亮区分数等）
   diagram_data?: DeepDiagramData;
   // 生成好的图表（section key -> data URL），由 gpt-image-2 生成后回填
   images?: Partial<Record<DeepDiagramKey, string>>;
+
+  // 金样本大报告路线（golden-route-v1）直接产出的结构，供 goldenAdapter/goldenReportHtml 渲染。
+  cross?: Array<Record<string, unknown>>;
+  golden_roadmap?: Record<string, unknown>;
+  final_verdict?: Record<string, unknown>;
+  edited_at?: string;
+  edited_by?: string;
 }
 
 export interface MarketOverviewRow {
@@ -41,7 +58,8 @@ export interface MarketOverviewRow {
   方向: string;
   五力现状: number;
   五力未来: number;
-  Δ: number;
+  /** 带符号显示（"+16.0"），对齐年雪表格；旧数据可能是数字 */
+  Δ: number | string;
   机会现状: number;
   机会未来: number;
   合计: number;

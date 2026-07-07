@@ -1,4 +1,4 @@
-import { isDBConfigured, supabaseServer } from "@/lib/db/supabase";
+import { assertCloudDatabaseConfigured, isDBConfigured, supabaseServer } from "@/lib/db/supabase";
 import type {
   BusinessSettings,
   ContentDraft,
@@ -14,8 +14,22 @@ import { DEFAULT_BUSINESS_SETTINGS } from "./types";
 export interface GrowthStore {
   saveAccount(account: GrowthAccount): Promise<void>;
   getAccount(id: string): Promise<GrowthAccount | null>;
-  getLatestAccount(tenantId: string): Promise<GrowthAccount | null>;
-  getLatestAccountByPersona(tenantId: string, persona: GrowthPersona): Promise<GrowthAccount | null>;
+  /**
+   * 取该租户下最新账号。
+   * ownerUserId 传入时只返回「自己的或未归属（历史共享）」账号——操作者工作台隔离用；
+   * 不传则不限归属（管理员视角）。
+   */
+  getLatestAccount(tenantId: string, ownerUserId?: string): Promise<GrowthAccount | null>;
+  /**
+   * 取指定视角下最新的账号。
+   * ownerUserId 传入时只返回「自己的或未归属（历史共享）」账号——操作者工作台隔离用；
+   * 不传则不限归属（管理员视角）。
+   */
+  getLatestAccountByPersona(
+    tenantId: string,
+    persona: GrowthPersona,
+    ownerUserId?: string,
+  ): Promise<GrowthAccount | null>;
   savePlan(plan: GrowthPlan): Promise<void>;
   getPlan(id: string): Promise<GrowthPlan | null>;
   getLatestPlan(accountId: string): Promise<GrowthPlan | null>;
@@ -31,6 +45,11 @@ export interface GrowthStore {
   saveUsage(event: Omit<UsageEvent, "id" | "created_at">): Promise<void>;
   getBusinessSettings(tenantId: string): Promise<BusinessSettings>;
   saveBusinessSettings(settings: BusinessSettings): Promise<void>;
+}
+
+function matchesOwner(account: GrowthAccount, ownerUserId?: string) {
+  if (!ownerUserId) return true;
+  return account.owner_user_id === ownerUserId || account.owner_user_id == null;
 }
 
 function defaultBusinessSettings(tenantId: string): BusinessSettings {
@@ -58,18 +77,20 @@ class MemoryGrowthStore implements GrowthStore {
     return this.accounts.get(id) ?? null;
   }
 
-  async getLatestAccount(tenantId: string) {
+  async getLatestAccount(tenantId: string, ownerUserId?: string) {
     return (
       [...this.accounts.values()]
         .filter((account) => account.tenant_id === tenantId)
+        .filter((account) => matchesOwner(account, ownerUserId))
         .sort((a, b) => b.created_at.localeCompare(a.created_at))[0] ?? null
     );
   }
 
-  async getLatestAccountByPersona(tenantId: string, persona: GrowthPersona) {
+  async getLatestAccountByPersona(tenantId: string, persona: GrowthPersona, ownerUserId?: string) {
     return (
       [...this.accounts.values()]
         .filter((account) => account.tenant_id === tenantId && account.persona === persona)
+        .filter((account) => matchesOwner(account, ownerUserId))
         .sort((a, b) => b.created_at.localeCompare(a.created_at))[0] ?? null
     );
   }
@@ -167,6 +188,7 @@ class SupabaseGrowthStore implements GrowthStore {
     const { error } = await this.db.from("growth_accounts").upsert({
       id: account.id,
       tenant_id: account.tenant_id,
+      owner_user_id: account.owner_user_id ?? null,
       name: account.name,
       target_user: account.target_user,
       core_problem: account.core_problem,
@@ -186,19 +208,8 @@ class SupabaseGrowthStore implements GrowthStore {
     return (data?.payload as GrowthAccount) ?? null;
   }
 
-  async getLatestAccount(tenantId: string) {
-    const { data, error } = await this.db
-      .from("growth_accounts")
-      .select("payload")
-      .eq("tenant_id", tenantId)
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    if (error) throw error;
-    return (data?.payload as GrowthAccount) ?? null;
-  }
-
-  async getLatestAccountByPersona(tenantId: string, persona: GrowthPersona) {
+  async getLatestAccount(tenantId: string, ownerUserId?: string) {
+    // owner_user_id 存在 payload 里，无法用 SQL 直接过滤，取近 50 条后在内存里按归属挑选
     const { data, error } = await this.db
       .from("growth_accounts")
       .select("payload")
@@ -207,13 +218,26 @@ class SupabaseGrowthStore implements GrowthStore {
       .limit(50);
     if (error) throw error;
     const accounts = (data ?? []).map((row) => row.payload as GrowthAccount);
-    return accounts.find((account) => account.persona === persona) ?? null;
+    return accounts.find((account) => matchesOwner(account, ownerUserId)) ?? null;
+  }
+
+  async getLatestAccountByPersona(tenantId: string, persona: GrowthPersona, ownerUserId?: string) {
+    const { data, error } = await this.db
+      .from("growth_accounts")
+      .select("payload")
+      .eq("tenant_id", tenantId)
+      .order("created_at", { ascending: false })
+      .limit(50);
+    if (error) throw error;
+    const accounts = (data ?? []).map((row) => row.payload as GrowthAccount);
+    return accounts.find((account) => account.persona === persona && matchesOwner(account, ownerUserId)) ?? null;
   }
 
   async savePlan(plan: GrowthPlan) {
     const { error } = await this.db.from("growth_plans").upsert({
       id: plan.id,
       tenant_id: plan.tenant_id,
+      owner_user_id: plan.owner_user_id ?? null,
       account_id: plan.account_id,
       title: plan.title,
       payload: plan,
@@ -244,6 +268,7 @@ class SupabaseGrowthStore implements GrowthStore {
     const { error } = await this.db.from("growth_runs").upsert({
       id: run.id,
       tenant_id: run.tenant_id,
+      owner_user_id: run.owner_user_id ?? null,
       account_id: run.account_id,
       plan_id: run.plan_id,
       status: run.status,
@@ -277,6 +302,7 @@ class SupabaseGrowthStore implements GrowthStore {
     const { error } = await this.db.from("content_drafts").upsert({
       id: draft.id,
       tenant_id: draft.tenant_id,
+      owner_user_id: draft.owner_user_id ?? null,
       account_id: draft.account_id,
       run_id: draft.run_id,
       status: draft.status,
@@ -309,6 +335,7 @@ class SupabaseGrowthStore implements GrowthStore {
     const { error } = await this.db.from("growth_reviews").upsert({
       id: review.id,
       tenant_id: review.tenant_id,
+      owner_user_id: review.owner_user_id ?? null,
       draft_id: review.draft_id,
       classification: review.classification,
       payload: review,
@@ -344,6 +371,7 @@ class SupabaseGrowthStore implements GrowthStore {
   async saveUsage(event: Omit<UsageEvent, "id" | "created_at">) {
     const { error } = await this.db.from("usage_events").insert({
       tenant_id: event.tenant_id,
+      user_id: event.user_id ?? null,
       feature: event.feature,
       provider: event.provider,
       model: event.model,
@@ -383,6 +411,7 @@ declare global {
 
 export function growthStore(): GrowthStore {
   if (!globalThis.__GROWTH_STORE__) {
+    assertCloudDatabaseConfigured("growthStore");
     globalThis.__GROWTH_STORE__ = isDBConfigured() ? new SupabaseGrowthStore() : new MemoryGrowthStore();
     if (!isDBConfigured()) {
       console.warn("[growthStore] 未配置 Supabase，已启用增长模块内存存储。");

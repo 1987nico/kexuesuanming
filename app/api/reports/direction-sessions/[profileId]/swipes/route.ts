@@ -7,6 +7,7 @@ import {
   sessionClientView,
   sessionUnswipedCards,
 } from "@/lib/reports/directionSession";
+import { requireSignedOrMianbaAccess } from "@/lib/auth/publicAccess";
 import { warmupDeepReportAfterDirectionComplete } from "@/lib/reports/ensureDeepReport";
 import { reportStore } from "@/lib/reports/store";
 
@@ -23,6 +24,9 @@ const bodySchema = z.object({
  * 记录一次滑动。剩余卡片触底时后台预生成下一批（用户无感知）。
  */
 export async function POST(req: Request, { params }: { params: { profileId: string } }) {
+  const access = await requireSignedOrMianbaAccess(req, "direction-session", params.profileId);
+  if (access) return access;
+
   const body = await req.json().catch(() => null);
   const parsed = bodySchema.safeParse(body);
   if (!parsed.success) {

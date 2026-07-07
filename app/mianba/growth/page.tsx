@@ -189,6 +189,10 @@ export default function XiaohongshuNotesPage() {
     async (p: GrowthPersona) => {
       const res = await fetch(`/api/growth/bootstrap?persona=${p}`, { cache: "no-store" });
       const data = await res.json();
+      if (res.status === 401) {
+        window.location.href = `/mianba/login?next=${encodeURIComponent("/mianba/growth")}`;
+        return;
+      }
       const run: GrowthRun | null = (data.runs && data.runs[0]) || null;
       const drafts: ContentDraft[] = data.drafts ?? [];
       setState({ account: data.account ?? null, plan: data.plan ?? null, run, drafts });
@@ -199,14 +203,23 @@ export default function XiaohongshuNotesPage() {
       setVariants([]);
       setSelectedTopicId(run?.selected_topic?.id ?? null);
       applyReviews((data.reviews ?? {}) as Record<string, GrowthReview>, drafts);
-      setStageResult(null);
+      setStageResult((data.stageReview ?? data.account?.stage_review ?? null) as StageReviewResult | null);
     },
     [applyReviews]
   );
 
   useEffect(() => {
+    setMessage("");
     loadWorkspace(persona).catch((error) => setMessage((error as Error).message));
   }, [persona, loadWorkspace]);
+
+  const showCopyMessage = useCallback((label: string) => {
+    setMessage(`${label}已复制`);
+  }, []);
+
+  const showCopyError = useCallback((label: string) => {
+    setMessage(`${label}复制失败，请手动选择文本`);
+  }, []);
 
   async function run(label: string, action: () => Promise<void>, target = label) {
     setBusy(target);
@@ -325,6 +338,7 @@ export default function XiaohongshuNotesPage() {
     setState({ account: data.account ?? null, plan: data.plan ?? null, run: run2, drafts });
     setChosenDraft(draft);
     applyReviews((data.reviews ?? {}) as Record<string, GrowthReview>, drafts);
+    setStageResult((data.stageReview ?? data.account?.stage_review ?? null) as StageReviewResult | null);
   }
 
   async function markPublishedNote(draft: ContentDraft) {
@@ -368,6 +382,10 @@ export default function XiaohongshuNotesPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || data.error || "生成阶段复盘失败");
       setStageResult(data.result);
+      setState((current) => ({
+        ...current,
+        account: current.account ? { ...current.account, stage_review: data.result } : current.account,
+      }));
     });
   }
 
@@ -388,6 +406,15 @@ export default function XiaohongshuNotesPage() {
           <a className="rounded-full bg-white px-4 py-2 text-sm text-ink-600 shadow-sm" href="/mianba">
             返回首页
           </a>
+          <button
+            className="rounded-full bg-white px-4 py-2 text-sm text-ink-600 shadow-sm"
+            onClick={async () => {
+              await fetch("/api/mianba/auth/logout", { method: "POST" });
+              window.location.href = "/mianba/login";
+            }}
+          >
+            退出登录
+          </button>
           <div className="rounded-full bg-ink-900 px-4 py-2 text-sm text-white shadow-sm">
             {message || "就绪"}
           </div>
@@ -522,7 +549,7 @@ export default function XiaohongshuNotesPage() {
       </StepCard>
 
       {/* Step 2 选题 */}
-      <StepCard step="2" title="选题" desc="每点一次换成 2 个新选题（不与历史重复）；选一个进入正文。">
+      <StepCard step="2" title="选题">
         <button className="btn-primary" disabled={!!busy || !account} onClick={addTopics}>
           {busy === "生成 2 个选题" ? "生成中..." : "生成 2 个选题"}
         </button>
@@ -547,7 +574,7 @@ export default function XiaohongshuNotesPage() {
                   <button className="btn-primary" disabled={!!busy} onClick={() => generateVariants(topic)}>
                     {busy === `生成正文:${topic.id}` ? "生成中..." : "用这个选题写正文"}
                   </button>
-                  <CopyButton text={topic.title} label="复制标题" />
+                  <CopyButton text={topic.title} label="复制标题" onCopied={showCopyMessage} onCopyFailed={showCopyError} />
                 </div>
               </div>
             ))}
@@ -556,7 +583,7 @@ export default function XiaohongshuNotesPage() {
       </StepCard>
 
       {/* Step 3 正文 */}
-      <StepCard step="3" title="正文" desc="按选题生成一短一长两篇，二选一；每点一次生成 2 篇新的、不重复。">
+      <StepCard step="3" title="正文">
         {variants.length > 0 && (
           <div className="grid gap-4 md:grid-cols-2">
             {variants.map((draft, index) => (
@@ -569,8 +596,13 @@ export default function XiaohongshuNotesPage() {
                   <button className="btn-primary" disabled={!!busy} onClick={() => chooseDraft(draft)}>
                     {busy === `选正文:${draft.id}` ? "选定中..." : "选这篇"}
                   </button>
-                  <CopyButton text={draft.title} label="复制标题" />
-                  <CopyButton text={`${draft.body}\n\n${draft.hashtags.join(" ")}`} label="复制正文+话题" />
+                  <CopyButton text={draft.title} label="复制标题" onCopied={showCopyMessage} onCopyFailed={showCopyError} />
+                  <CopyButton
+                    text={`${draft.body}\n\n${draft.hashtags.join(" ")}`}
+                    label="复制正文+话题"
+                    onCopied={showCopyMessage}
+                    onCopyFailed={showCopyError}
+                  />
                 </div>
               </div>
             ))}
@@ -594,9 +626,14 @@ export default function XiaohongshuNotesPage() {
             <div className="font-medium leading-6">{chosenDraft.title}</div>
             <pre className="mt-3 max-h-72 overflow-auto whitespace-pre-wrap rounded-xl bg-white p-3 text-sm leading-7 text-ink-800">{chosenDraft.body}{"\n\n"}{chosenDraft.hashtags.join(" ")}</pre>
             <div className="mt-3 flex flex-wrap gap-2">
-              <CopyButton text={chosenDraft.title} label="复制标题" />
-              <CopyButton text={`${chosenDraft.body}\n\n${chosenDraft.hashtags.join(" ")}`} label="复制正文+话题" />
-              <CopyButton text={chosenDraft.hashtags.join(" ")} label="复制话题" />
+              <CopyButton text={chosenDraft.title} label="复制标题" onCopied={showCopyMessage} onCopyFailed={showCopyError} />
+              <CopyButton
+                text={`${chosenDraft.body}\n\n${chosenDraft.hashtags.join(" ")}`}
+                label="复制正文+话题"
+                onCopied={showCopyMessage}
+                onCopyFailed={showCopyError}
+              />
+              <CopyButton text={chosenDraft.hashtags.join(" ")} label="复制话题" onCopied={showCopyMessage} onCopyFailed={showCopyError} />
             </div>
             {(chosenDraft.cover_text || chosenDraft.cover_suggestion) && (
               <div className="mt-4 rounded-xl bg-white/70 p-3 text-sm leading-6 text-ink-700">
@@ -605,7 +642,7 @@ export default function XiaohongshuNotesPage() {
                 {chosenDraft.cover_suggestion && <div className="mt-1 text-xs text-ink-500">画面建议：{chosenDraft.cover_suggestion}</div>}
                 {chosenDraft.cover_text && (
                   <div className="mt-2">
-                    <CopyButton text={chosenDraft.cover_text} label="复制封面句" />
+                    <CopyButton text={chosenDraft.cover_text} label="复制封面句" onCopied={showCopyMessage} onCopyFailed={showCopyError} />
                   </div>
                 )}
               </div>
@@ -619,9 +656,6 @@ export default function XiaohongshuNotesPage() {
 
       {/* Step 4 单篇复盘（以笔记为基本单元） */}
       <StepCard step="4" title="单篇复盘" desc="每篇笔记都是一个独立单元：逐篇标记发布、回填数据、生成单篇结论。下面列出这个账号的所有笔记。">
-        <div className="mb-4 rounded-2xl border border-dashed border-ink-200 bg-ink-50 p-4 text-xs leading-6 text-ink-600">
-          扫码登录网页版小红书 + 后台自动抓数据：属于后续增强，且需账号主本人扫码授权、有平台风险。当前先按笔记手动/截图回填。
-        </div>
         {state.drafts.length === 0 ? (
           <p className="text-sm leading-6 text-ink-600">还没有笔记。先在第 2、3 步选题并选定一篇正文，它就会作为一篇笔记出现在这里。</p>
         ) : (
@@ -812,7 +846,19 @@ function DirectionAggregateCard({ agg }: { agg: DirectionAggregate }) {
   );
 }
 
-function CopyButton({ text, label = "一键复制", className = "" }: { text: string; label?: string; className?: string }) {
+function CopyButton({
+  text,
+  label = "一键复制",
+  className = "",
+  onCopied,
+  onCopyFailed,
+}: {
+  text: string;
+  label?: string;
+  className?: string;
+  onCopied?: (label: string) => void;
+  onCopyFailed?: (label: string) => void;
+}) {
   const [copied, setCopied] = useState(false);
   async function copy() {
     try {
@@ -829,9 +875,11 @@ function CopyButton({ text, label = "一键复制", className = "" }: { text: st
         document.body.removeChild(ta);
       }
       setCopied(true);
+      onCopied?.(label);
       setTimeout(() => setCopied(false), 1500);
     } catch {
       setCopied(false);
+      onCopyFailed?.(label);
     }
   }
   return (
@@ -845,14 +893,24 @@ function CopyButton({ text, label = "一键复制", className = "" }: { text: st
   );
 }
 
-function StepCard({ step, title, desc, children }: { step: string; title: string; desc: string; children: React.ReactNode }) {
+function StepCard({
+  step,
+  title,
+  desc,
+  children,
+}: {
+  step: string;
+  title: string;
+  desc?: string;
+  children: React.ReactNode;
+}) {
   return (
     <section className="mb-4 rounded-3xl bg-white p-5 shadow-sm">
       <div className="mb-4 flex items-start gap-3">
         <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-ink-900 text-sm font-semibold text-white">{step}</div>
         <div>
           <h2 className="font-semibold">{title}</h2>
-          <p className="mt-1 text-xs leading-5 text-ink-500">{desc}</p>
+          {desc && <p className="mt-1 text-xs leading-5 text-ink-500">{desc}</p>}
         </div>
       </div>
       {children}
@@ -886,4 +944,3 @@ function EditArea({ label, value, onChange }: { label: string; value: string; on
     </div>
   );
 }
-

@@ -518,6 +518,160 @@
   color: var(--ir-slate);
 }
 
+@media screen and (max-width: 720px) {
+  .ir-root {
+    overflow-x: hidden;
+    padding: 12px 0 28px;
+  }
+
+  .ir-toolbar {
+    width: calc(100vw - 24px);
+    max-width: calc(100vw - 24px);
+    flex-direction: column;
+    align-items: flex-start;
+    padding: 14px;
+    border-radius: 12px;
+  }
+
+  .ir-toolbar h1 {
+    font-size: 16px;
+    line-height: 1.4;
+    overflow-wrap: anywhere;
+  }
+
+  .ir-toolbar-actions,
+  .ir-toolbar-actions .ir-btn {
+    width: 100%;
+  }
+
+  .ir-toolbar-actions .ir-btn {
+    text-align: center;
+  }
+
+  .ir-editable-report,
+  .ir-doc,
+  .ir-page {
+    max-width: 100%;
+  }
+
+  .ir-doc {
+    align-items: stretch;
+    gap: 14px;
+    padding: 0 12px;
+  }
+
+  .ir-page {
+    width: 100%;
+    height: auto;
+    min-height: auto;
+    padding: 22px 18px 24px;
+    overflow: visible;
+    border-radius: 10px;
+  }
+
+  .ir-page,
+  .ir-page * {
+    overflow-wrap: anywhere;
+  }
+
+  .ir-toprule {
+    margin-bottom: 16px;
+  }
+
+  .ir-section-title {
+    font-size: 20px;
+    line-height: 1.35;
+    margin-bottom: 16px;
+  }
+
+  .ir-footer {
+    flex-direction: column;
+    gap: 4px;
+    letter-spacing: 0.08em;
+  }
+
+  .ir-grid-2,
+  .ir-grid-3 {
+    grid-template-columns: 1fr;
+  }
+
+  .ir-card {
+    padding: 14px 15px;
+  }
+
+  .ir-cover-head {
+    margin-top: 10px;
+  }
+
+  .ir-cover-head h1 {
+    font-size: 24px;
+    line-height: 1.35;
+  }
+
+  .ir-cover-head .ir-cover-sub {
+    font-size: 12px;
+    line-height: 1.6;
+  }
+
+  .ir-cover-client {
+    margin-top: 24px;
+  }
+
+  .ir-cover-client .ir-cover-name {
+    font-size: 20px;
+    line-height: 1.4;
+  }
+
+  .ir-cover-badges {
+    margin-top: 24px;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .ir-badge {
+    padding: 5px 12px;
+    font-size: 11px;
+  }
+
+  .ir-cover-cards {
+    margin-top: 24px;
+    margin-bottom: 0;
+  }
+
+  .ir-bar-row {
+    grid-template-columns: minmax(0, 1fr) 40px;
+  }
+
+  .ir-table {
+    display: block;
+    max-width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .ir-table th,
+  .ir-table td {
+    min-width: 88px;
+    padding: 7px 8px;
+  }
+
+  .ir-timeline-item {
+    grid-template-columns: 32px minmax(0, 1fr);
+    column-gap: 12px;
+    padding-bottom: 24px;
+  }
+
+  .ir-timeline-item::before {
+    left: 15.5px;
+  }
+
+  .ir-timeline-no {
+    width: 30px;
+    height: 30px;
+    font-size: 12px;
+  }
+}
+
 /* 打印 */
 @media print {
   .ir-root {

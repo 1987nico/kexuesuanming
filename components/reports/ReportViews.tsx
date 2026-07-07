@@ -54,8 +54,8 @@ function LiteCover({ value }: { value: unknown }) {
   return (
     <div className="lite-cover">
       <div>
-        <div className="lite-cover-kicker">职场参谋｜初步诊断报告</div>
-        <h1>{String(data.title || "职场参谋｜初步诊断报告")}</h1>
+        <div className="lite-cover-kicker">初步诊断报告</div>
+        <h1>{String(data.title || "初步诊断报告")}</h1>
         <p>{String(data.subtitle || "基于方向输入、价值观双三圈与天赋测评的初步判断")}</p>
       </div>
       <div className="lite-cover-meta">
@@ -270,12 +270,12 @@ export function LiteReportView({ report }: { report: LiteReportShape }) {
     <article className="report-document report-document-lite">
       {entries.map(([key, value], index) => (
         <section key={key} className="report-page">
-          <div className="report-header">职场参谋｜初步诊断报告｜保密交付 {String(index + 1).padStart(2, "0")}</div>
+          <div className="report-header">初步诊断报告｜保密交付 {String(index + 1).padStart(2, "0")}</div>
           <h1 className="report-title">{liteTitles[key]}</h1>
           <div className="report-section-body">
             <LiteSectionBody sectionKey={key} value={value} />
           </div>
-          <div className="report-footer">职场参谋 | 初步诊断报告 | 保密交付</div>
+          <div className="report-footer">初步诊断报告 | 保密交付</div>
         </section>
       ))}
     </article>
@@ -285,10 +285,10 @@ export function LiteReportView({ report }: { report: LiteReportShape }) {
 function DeepPage({ no, title, children }: { no: string; title: string; children: React.ReactNode }) {
   return (
     <section className="report-page report-page-deep">
-      <div className="report-header">职业 / 事业方向科学算命咨询报告 · {no}</div>
+      <div className="report-header">职业 / 事业方向咨询报告 · {no}</div>
       <h1 className="report-title">{title}</h1>
       <div className="report-section-body">{children}</div>
-      <div className="report-footer">科学算命咨询报告 | 保密交付</div>
+      <div className="report-footer">咨询报告 | 保密交付</div>
     </section>
   );
 }
@@ -366,8 +366,8 @@ export function DeepReportView({
       {/* 封面 */}
       <section className="report-page report-page-deep deep-cover">
         <div>
-          <div className="deep-cover-kicker">职业 / 事业方向 · 科学算命咨询报告</div>
-          <h1 className="deep-cover-title">科学算命咨询报告</h1>
+          <div className="deep-cover-kicker">职业 / 事业方向 · 咨询报告</div>
+          <h1 className="deep-cover-title">职业 / 事业方向咨询报告</h1>
           <p className="deep-cover-sub">价值观双三圈 · PrinciplesYou 天赋测评 · 六步决策漏斗</p>
         </div>
         <div className="deep-cover-conclusion">
@@ -390,7 +390,7 @@ export function DeepReportView({
       {/* 1 方法论 + 决策漏斗图 */}
       <DeepPage no="01" title={deepTitles.methodology}>
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img className="deep-figure" src="/report-assets/decision-funnel.png" alt="科学算命 · 职业/事业决策漏斗" />
+        <img className="deep-figure" src="/report-assets/decision-funnel.png" alt="职业/事业决策漏斗" />
         <DeepKV data={asRecord(s.methodology)} />
       </DeepPage>
 

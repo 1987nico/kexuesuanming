@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { requireMianbaApiAuth } from "@/lib/auth/mianba";
 import { assertReportConsistency } from "@/lib/reports/assessmentProfile";
 import { buildLiteReport } from "@/lib/reports/builders";
 import { missingLiteReportSections } from "@/lib/reports/reportShapes";
@@ -13,6 +14,9 @@ const bodySchema = z.object({
 });
 
 export async function POST(req: Request) {
+  const guard = await requireMianbaApiAuth();
+  if ("response" in guard) return guard.response;
+
   const body = await req.json().catch(() => null);
   const parsed = bodySchema.safeParse(body);
   if (!parsed.success) {

@@ -26,6 +26,7 @@ const SWIPE_THRESHOLD = 90;
 
 export default function DirectionSwipePage({ params }: { params: { profileId: string } }) {
   const { profileId } = params;
+  const [accessQuery, setAccessQuery] = useState<string | null>(null);
   const [session, setSession] = useState<SessionView | null>(null);
   const [loadError, setLoadError] = useState("");
   // 本地卡片队列：滑掉的立刻出队（乐观更新），服务器状态到达后合并新卡
@@ -50,7 +51,7 @@ export default function DirectionSwipePage({ params }: { params: { profileId: st
 
   const fetchSession = useCallback(async () => {
     try {
-      const res = await fetch(`/api/reports/direction-sessions/${profileId}`, { cache: "no-store" });
+      const res = await fetch(`/api/reports/direction-sessions/${profileId}${accessQuery ?? ""}`, { cache: "no-store" });
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || "加载失败，请稍后重试。");
       applyServerSession(data.session);
@@ -58,20 +59,27 @@ export default function DirectionSwipePage({ params }: { params: { profileId: st
     } catch (error) {
       setLoadError((error as Error).message);
     }
-  }, [applyServerSession, profileId]);
+  }, [accessQuery, applyServerSession, profileId]);
 
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get("access_token") || params.get("token") || "";
+    setAccessQuery(token ? `?access_token=${encodeURIComponent(token)}` : "");
+  }, []);
+
+  useEffect(() => {
+    if (accessQuery === null) return;
     fetchSession();
-  }, [fetchSession]);
+  }, [accessQuery, fetchSession]);
 
   // 队列见底但会话未完成时轮询等新卡
   useEffect(() => {
-    if (completed || queue.length > 0 || !session) return;
+    if (accessQuery === null || completed || queue.length > 0 || !session) return;
     pollTimer.current = setTimeout(fetchSession, 3000);
     return () => {
       if (pollTimer.current) clearTimeout(pollTimer.current);
     };
-  }, [completed, queue.length, session, fetchSession]);
+  }, [accessQuery, completed, queue.length, session, fetchSession]);
 
   const swipe = useCallback(
     (card: DirectionCard, liked: boolean) => {
@@ -79,7 +87,9 @@ export default function DirectionSwipePage({ params }: { params: { profileId: st
       setQueue((current) => current.filter((item) => item.id !== card.id));
       if (liked) setLikes((current) => Math.min(current + 1, session?.target_likes ?? 10));
 
-      fetch(`/api/reports/direction-sessions/${profileId}/swipes`, {
+      if (accessQuery === null) return;
+
+      fetch(`/api/reports/direction-sessions/${profileId}/swipes${accessQuery}`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ card_id: card.id, liked }),
@@ -92,7 +102,7 @@ export default function DirectionSwipePage({ params }: { params: { profileId: st
           // 网络失败不阻断滑卡体验；下一次轮询会校正状态
         });
     },
-    [applyServerSession, profileId, session?.target_likes]
+    [accessQuery, applyServerSession, profileId, session?.target_likes]
   );
 
   const targetLikes = session?.target_likes ?? 10;
@@ -129,7 +139,7 @@ export default function DirectionSwipePage({ params }: { params: { profileId: st
           ) : completed ? (
             <CenterNote
               title="已收集完成，谢谢你！"
-              body={`你一共点亮了 ${likes} 个方向。你的参谋顾问会基于这些直觉信号，为你完成后续的市场验证、胜算分析和完整咨询报告。`}
+              body={`你一共点亮了 ${likes} 个方向。你的参谋顾问会基于这些直觉信号，为你完成后续的市场验证、胜算分析和深度诊断报告。`}
             />
           ) : !session ? (
             <CenterNote title="正在加载..." body="第一批方向正在准备中。" pulsing />

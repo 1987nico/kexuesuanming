@@ -1,4 +1,8 @@
 import { NextResponse } from "next/server";
+import {
+  requireSignedOrMianbaAccess,
+  signPublicAccessToken,
+} from "@/lib/auth/publicAccess";
 import { ensureInitialDiagnosis } from "@/lib/reports/initialDiagnosis";
 import { getCachedPDF, putCachedPDF, renderPagePDF } from "@/lib/reports/pdf";
 import { reportStore } from "@/lib/reports/store";
@@ -15,6 +19,9 @@ function baseUrlFromRequest(req: Request) {
 }
 
 export async function GET(req: Request, { params }: { params: { profileId: string } }) {
+  const access = await requireSignedOrMianbaAccess(req, "initial-report", params.profileId);
+  if (access) return access;
+
   const store = reportStore();
   const profile = await store.getAssessmentProfile(params.profileId);
   if (!profile) {
@@ -34,9 +41,10 @@ export async function GET(req: Request, { params }: { params: { profileId: strin
     if (cached) return pdfResponse(cached, profile.customer_name);
   }
 
-  const pageUrl = `${baseUrlFromRequest(req)}/reports/initial/${profile.id}`;
+  const pageUrl = new URL(`/reports/initial/${profile.id}`, baseUrlFromRequest(req));
+  pageUrl.searchParams.set("access_token", signPublicAccessToken("initial-report", profile.id, 10 * 60));
   try {
-    const pdf = await renderPagePDF(pageUrl);
+    const pdf = await renderPagePDF(pageUrl.toString());
     await putCachedPDF(cacheKey, pdf);
     return pdfResponse(pdf, profile.customer_name);
   } catch (error) {

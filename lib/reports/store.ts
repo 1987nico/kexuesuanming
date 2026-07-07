@@ -1,4 +1,4 @@
-import { isDBConfigured, supabaseServer } from "@/lib/db/supabase";
+import { assertCloudDatabaseConfigured, isDBConfigured, supabaseServer } from "@/lib/db/supabase";
 import type { AssessmentProfile } from "./assessmentProfile";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -11,6 +11,7 @@ export type ReportType = "lite" | "deep";
 export interface ReportOrder {
   id: string;
   tenant_id: string;
+  owner_user_id?: string | null;
   assessment_profile_id?: string | null;
   report_type: ReportType;
   price_cents?: number | null;
@@ -23,6 +24,7 @@ export interface ReportOrder {
 
 export interface CreateReportOrderInput {
   tenant_id: string;
+  owner_user_id?: string | null;
   assessment_profile_id: string;
   report_type: ReportType;
   price_cents?: number | null;
@@ -44,6 +46,7 @@ export interface ReportStore {
   listReportOrders(tenantId: string): Promise<ReportOrder[]>;
   getReportOrder(id: string): Promise<ReportOrder | null>;
   updateReportOrderStatus(id: string, status: ReportOrderStatus): Promise<ReportOrder | null>;
+  updateReportOrderOwner(id: string, ownerUserId: string | null): Promise<ReportOrder | null>;
 }
 
 interface FileReportStoreState {
@@ -107,6 +110,7 @@ export class MemoryReportStore implements ReportStore {
     const order: ReportOrder = {
       id: crypto.randomUUID(),
       tenant_id: input.tenant_id,
+      owner_user_id: input.owner_user_id ?? null,
       assessment_profile_id: input.assessment_profile_id,
       report_type: input.report_type,
       price_cents: input.price_cents ?? null,
@@ -138,6 +142,14 @@ export class MemoryReportStore implements ReportStore {
       status,
       updated_at: new Date().toISOString(),
     };
+    this.orders.set(id, updated);
+    return updated;
+  }
+
+  async updateReportOrderOwner(id: string, ownerUserId: string | null) {
+    const existing = this.orders.get(id);
+    if (!existing) return null;
+    const updated = { ...existing, owner_user_id: ownerUserId, updated_at: new Date().toISOString() };
     this.orders.set(id, updated);
     return updated;
   }
@@ -189,6 +201,7 @@ export class FileReportStore implements ReportStore {
     const order: ReportOrder = {
       id: crypto.randomUUID(),
       tenant_id: input.tenant_id,
+      owner_user_id: input.owner_user_id ?? null,
       assessment_profile_id: input.assessment_profile_id,
       report_type: input.report_type,
       price_cents: input.price_cents ?? null,
@@ -221,6 +234,15 @@ export class FileReportStore implements ReportStore {
     this.persist();
     return updated;
   }
+
+  async updateReportOrderOwner(id: string, ownerUserId: string | null) {
+    const existing = this.state.orders.find((order) => order.id === id);
+    if (!existing) return null;
+    const updated = { ...existing, owner_user_id: ownerUserId, updated_at: new Date().toISOString() };
+    this.state.orders = this.state.orders.map((order) => (order.id === id ? updated : order));
+    this.persist();
+    return updated;
+  }
 }
 
 class SupabaseReportStore implements ReportStore {
@@ -232,6 +254,7 @@ class SupabaseReportStore implements ReportStore {
     const { error } = await this.db.from("assessment_profiles").upsert({
       id: profile.id,
       tenant_id: profile.tenant_id,
+      owner_user_id: profile.owner_user_id ?? null,
       customer_name: profile.customer_name,
       customer_contact: profile.customer_contact,
       value_profile: profile.value_profile,
@@ -284,6 +307,7 @@ class SupabaseReportStore implements ReportStore {
       .from("report_orders")
       .insert({
         tenant_id: input.tenant_id,
+        owner_user_id: input.owner_user_id ?? null,
         assessment_profile_id: input.assessment_profile_id,
         report_type: input.report_type,
         price_cents: input.price_cents ?? null,
@@ -323,6 +347,17 @@ class SupabaseReportStore implements ReportStore {
     if (error) throw error;
     return (data as ReportOrder | null) ?? null;
   }
+
+  async updateReportOrderOwner(id: string, ownerUserId: string | null) {
+    const { data, error } = await this.db
+      .from("report_orders")
+      .update({ owner_user_id: ownerUserId, updated_at: new Date().toISOString() })
+      .eq("id", id)
+      .select("*")
+      .maybeSingle();
+    if (error) throw error;
+    return (data as ReportOrder | null) ?? null;
+  }
 }
 
 declare global {
@@ -332,6 +367,7 @@ declare global {
 
 export function reportStore(): ReportStore {
   if (!globalThis.__REPORT_STORE__) {
+    assertCloudDatabaseConfigured("reportStore");
     globalThis.__REPORT_STORE__ = isDBConfigured() ? new SupabaseReportStore() : new FileReportStore();
     if (!isDBConfigured()) {
       console.warn("[reportStore] 未配置 Supabase，已启用报告模块本地文件存储。");

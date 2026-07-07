@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { requireMianbaApiAuth } from "@/lib/auth/mianba";
 import { generateTopicBatch } from "@/lib/growth/runner";
 import { growthStore } from "@/lib/growth/store";
 import type { GrowthRun } from "@/lib/growth/types";
@@ -21,6 +22,9 @@ function now() {
 }
 
 export async function POST(req: Request) {
+  const guard = await requireMianbaApiAuth();
+  if ("response" in guard) return guard.response;
+
   const body = await req.json().catch(() => ({}));
   const parsed = bodySchema.safeParse(body);
   if (!parsed.success) {
@@ -67,10 +71,12 @@ export async function POST(req: Request) {
     run = { ...run, topic_pool: topics, seen_titles: nextSeen, updated_at: timestamp };
   }
 
+  run.owner_user_id = run.owner_user_id ?? guard.auth.user.id;
   await store.saveRun(run);
   if (usage) {
     await store.saveUsage({
       tenant_id: DEFAULT_TENANT_ID,
+      user_id: guard.auth.user.id,
       feature: "growth_text",
       ...usage,
       metadata: { action: "topic_batch", runId: run.id },

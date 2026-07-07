@@ -99,7 +99,7 @@ export function buildLiteReport(profile: AssessmentProfile): LiteReportShape & {
   const customerInput = buildLiteCustomerInput(profile);
   const sections: LiteReportShape["sections"] = {
     cover: {
-      title: "职场参谋｜初步诊断报告",
+      title: "初步诊断报告",
       subtitle: "基于方向输入、价值观双三圈与天赋测评的初步判断",
       customer_name: profile.customer_name,
       delivery_date: new Date().toISOString().slice(0, 10),
@@ -167,7 +167,7 @@ export function buildLiteReport(profile: AssessmentProfile): LiteReportShape & {
   return { kind: "lite", sections, profile_reference: buildReportProfileReference(profile) };
 }
 
-const DEEP_PENDING = { 提示: "大报告内容尚未生成。请在大报告页面点击「生成大报告」，由系统结合价值观、天赋与小报告初筛自动生成。" };
+const DEEP_PENDING = { 提示: "深度诊断报告内容尚未生成。请在深度诊断报告页面点击「生成深度诊断报告」，由系统结合价值观、天赋与初步诊断报告初筛自动生成。" };
 
 export function buildDeepReport(
   profile: AssessmentProfile,

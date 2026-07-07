@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { requireMianbaApiAuth } from "@/lib/auth/mianba";
 import { growthStore } from "@/lib/growth/store";
 
 export const runtime = "nodejs";
@@ -13,12 +14,18 @@ const bodySchema = z.object({
 });
 
 export async function GET() {
+  const guard = await requireMianbaApiAuth(["admin"]);
+  if ("response" in guard) return guard.response;
+
   const store = growthStore();
   const settings = await store.getBusinessSettings(DEFAULT_TENANT_ID);
   return NextResponse.json({ settings });
 }
 
 export async function PUT(req: Request) {
+  const guard = await requireMianbaApiAuth(["admin"]);
+  if ("response" in guard) return guard.response;
+
   const body = await req.json().catch(() => null);
   const parsed = bodySchema.safeParse(body);
   if (!parsed.success) {

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { requireMianbaApiAuth } from "@/lib/auth/mianba";
 import { generateDraftVariants } from "@/lib/growth/runner";
 import { growthStore } from "@/lib/growth/store";
 
@@ -16,6 +17,9 @@ const bodySchema = z.object({
 });
 
 export async function POST(req: Request) {
+  const guard = await requireMianbaApiAuth();
+  if ("response" in guard) return guard.response;
+
   const body = await req.json().catch(() => ({}));
   const parsed = bodySchema.safeParse(body);
   if (!parsed.success) {
@@ -42,6 +46,7 @@ export async function POST(req: Request) {
   if (usage) {
     await store.saveUsage({
       tenant_id: DEFAULT_TENANT_ID,
+      user_id: guard.auth.user.id,
       feature: "growth_text",
       ...usage,
       metadata: { action: "draft_variants", runId: run.id, topicId: topic.id },

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { requireMianbaApiAuth } from "@/lib/auth/mianba";
 import { reviewDraft } from "@/lib/growth/runner";
 import { growthStore } from "@/lib/growth/store";
 
@@ -25,6 +26,9 @@ const metricsSchema = z.object({
 });
 
 export async function POST(req: Request, { params }: { params: { draftId: string } }) {
+  const guard = await requireMianbaApiAuth();
+  if ("response" in guard) return guard.response;
+
   const body = await req.json().catch(() => ({}));
   const parsed = metricsSchema.safeParse(body);
   if (!parsed.success) {
@@ -40,6 +44,7 @@ export async function POST(req: Request, { params }: { params: { draftId: string
     draft,
     metrics: parsed.data,
   });
+  review.owner_user_id = review.owner_user_id ?? guard.auth.user.id;
   await store.saveReview(review);
   const reviewedDraft = {
     ...draft,
@@ -62,6 +67,7 @@ export async function POST(req: Request, { params }: { params: { draftId: string
   if (usage) {
     await store.saveUsage({
       tenant_id: DEFAULT_TENANT_ID,
+      user_id: guard.auth.user.id,
       feature: "growth_text",
       ...usage,
       metadata: { action: "review", draftId: draft.id },

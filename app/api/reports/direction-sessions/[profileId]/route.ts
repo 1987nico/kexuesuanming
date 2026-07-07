@@ -3,6 +3,7 @@ import {
   generateNextBatchIfNeeded,
   sessionClientView,
 } from "@/lib/reports/directionSession";
+import { requireSignedOrMianbaAccess } from "@/lib/auth/publicAccess";
 import { reportStore } from "@/lib/reports/store";
 
 export const runtime = "nodejs";
@@ -13,6 +14,9 @@ export const maxDuration = 120;
  * 用户端拉取会话状态与未滑卡片。卡片不足时同步补生成（首次打开等待第一批）。
  */
 export async function GET(req: Request, { params }: { params: { profileId: string } }) {
+  const access = await requireSignedOrMianbaAccess(req, "direction-session", params.profileId);
+  if (access) return access;
+
   const store = reportStore();
   const profile = await store.getAssessmentProfile(params.profileId);
   if (!profile?.direction_session) {

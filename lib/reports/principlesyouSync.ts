@@ -11,6 +11,11 @@ export interface TalentProfileResult {
   attempts: number;
 }
 
+export interface TalentProfileOptions {
+  retries?: number;
+  timeoutMs?: number;
+}
+
 const DEFAULT_COLLECT_PATH = "/Users/qifeng/Documents/职场参谋/analysis_principlesyou/collect.mjs";
 
 function hashJSON(value: unknown) {
@@ -114,16 +119,31 @@ export async function syncOriginalTalentProfile(answers: TalentAnswers): Promise
   });
 }
 
+async function withOptionalTimeout<T>(promise: Promise<T>, timeoutMs?: number): Promise<T> {
+  if (!timeoutMs || timeoutMs <= 0) return promise;
+
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`original_sync_timeout_${timeoutMs}ms`)), timeoutMs);
+  });
+
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 export async function generateTalentProfileWithFallback(
   answers: TalentAnswers,
-  options: { retries?: number } = {}
+  options: TalentProfileOptions = {}
 ): Promise<TalentProfileResult> {
   const retries = options.retries ?? 2;
   let lastError: unknown = null;
 
   for (let attempt = 1; attempt <= retries + 1; attempt++) {
     try {
-      const profile = await syncOriginalTalentProfile(answers);
+      const profile = await withOptionalTimeout(syncOriginalTalentProfile(answers), options.timeoutMs);
       profile.evidence = {
         provider: "principlesyou",
         ...profile.evidence,

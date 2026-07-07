@@ -7,7 +7,7 @@
  * 任何业务代码都通过 store() 拿实例，不直接调 Supabase。
  */
 
-import { isDBConfigured, supabaseServer } from "./supabase";
+import { assertCloudDatabaseConfigured, isDBConfigured, supabaseServer } from "./supabase";
 import type { Step1Output } from "@/lib/llm/prompts/step1";
 import type { Step2Output, Step2Opportunity } from "@/lib/llm/prompts/step2";
 import type { Step4Output } from "@/lib/llm/prompts/step4";
@@ -538,6 +538,7 @@ declare global {
 
 export function store(): Store {
   if (!globalThis.__KXSM_STORE__) {
+    assertCloudDatabaseConfigured("store");
     globalThis.__KXSM_STORE__ = isDBConfigured() ? new SupabaseStore() : new MemoryStore();
     if (!isDBConfigured()) {
       // 仅在 dev 提示一次

@@ -26,3 +26,15 @@ export function supabaseServer(): SupabaseClient {
 export function isDBConfigured(): boolean {
   return !!(process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY);
 }
+
+export function isProductionRuntime(): boolean {
+  return process.env.NODE_ENV === "production" || process.env.VERCEL_ENV === "production";
+}
+
+export function assertCloudDatabaseConfigured(moduleName: string): void {
+  if (isDBConfigured()) return;
+  if (!isProductionRuntime()) return;
+  throw new Error(
+    `[${moduleName}] 生产环境必须配置 NEXT_PUBLIC_SUPABASE_URL 和 SUPABASE_SERVICE_ROLE_KEY，已拒绝启用本地/内存存储。`,
+  );
+}

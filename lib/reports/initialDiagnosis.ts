@@ -26,7 +26,7 @@ export const initialDiagnosisSchema = z.object({
   initial_direction: shortText(110),
   biggest_risk: shortText(90),
   next_action: shortText(90),
-  // 02 当前问题识别 · 参谋判断（3-4 条）
+  // 02 当前问题识别 · 判断（3-4 条）
   consultant_reading: z.array(shortText(110)).min(3).max(4),
   // 03 价值观 · 关键解释
   value_key_note: shortText(130),
@@ -134,7 +134,7 @@ function buildUserPrompt(profile: AssessmentProfile) {
   "initial_direction": "初步方向：哪些方向可进入候选池、核心卖点是什么（≤110字）",
   "biggest_risk": "最大风险：基于低分特质说清最容易翻车的地方（≤90字）",
   "next_action": "下一步动作：90天小样本验证怎么做、不要用什么来证明需求（≤90字）",
-  "consultant_reading": ["参谋判断3-4条：把客户输入组合起来读出底层诉求，每条≤110字"],
+  "consultant_reading": ["判断3-4条：把客户输入组合起来读出底层诉求，每条≤110字"],
   "value_key_note": "关键解释：针对排除带里最容易被误读的一个价值观做解释（≤130字）",
   "archetype_judgement": "天赋原型判断：主原型是什么、组合说明客户的优势形态（≤130字）",
   "key_signals": ["三个关键人格信号，每条格式『信号名：适合什么场景』≤60字"],
