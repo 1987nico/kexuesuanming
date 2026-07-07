@@ -490,3 +490,21 @@ create table if not exists activity_log (
 
 create index if not exists idx_activity_log_tenant on activity_log(tenant_id, created_at desc);
 create index if not exists idx_activity_log_user on activity_log(tenant_id, user_id, created_at desc);
+
+-- ============================================================
+-- 服务端访问授权
+-- Supabase 新版 sb_secret_* 会以 service_role 访问数据库；表由 SQL Editor
+-- 创建时不会自动授予表权限，因此生产 API 需要显式 grant。
+-- ============================================================
+
+grant usage on schema public to service_role;
+grant all privileges on all tables in schema public to service_role;
+grant all privileges on all sequences in schema public to service_role;
+grant execute on all functions in schema public to service_role;
+
+alter default privileges in schema public
+  grant all privileges on tables to service_role;
+alter default privileges in schema public
+  grant all privileges on sequences to service_role;
+alter default privileges in schema public
+  grant execute on functions to service_role;
