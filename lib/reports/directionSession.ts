@@ -17,8 +17,8 @@ import { archetypeZhName, traitZhName } from "./talentNames";
 export const DIRECTION_BATCH_SIZE = 10;
 export const DIRECTION_TARGET_LIKES = 10;
 export const DIRECTION_MAX_ROUNDS = 6;
-/** 剩余未滑卡片少于该值时预生成下一批 */
-export const DIRECTION_PREFETCH_THRESHOLD = 3;
+/** 剩余未滑卡片少于该值时预生成下一批：尽量让用户滑卡时后台提前补货 */
+export const DIRECTION_PREFETCH_THRESHOLD = 8;
 /** 生成锁超时（毫秒）：超过视为上次生成失败，允许重试 */
 const GENERATING_LOCK_TIMEOUT_MS = 90_000;
 
@@ -620,12 +620,13 @@ export function recordSwipe(session: DirectionSession, cardId: string, liked: bo
 
 /** 客户端视图（不泄露全部卡片与内部字段） */
 export function sessionClientView(session: DirectionSession) {
+  const cards = sessionUnswipedCards(session);
   return {
     status: session.status,
     likes: sessionLikes(session),
     target_likes: session.target_likes,
     swiped_count: session.swipes.length,
-    cards: sessionUnswipedCards(session),
-    generating: session.generating && isGenerationLocked(session),
+    cards,
+    generating: cards.length === 0 && session.generating && isGenerationLocked(session),
   };
 }

@@ -35,7 +35,6 @@ export default function DirectionSwipePage({ params }: { params: { profileId: st
   const [swipedCount, setSwipedCount] = useState(0);
   const [completed, setCompleted] = useState(false);
   const [exitDirection, setExitDirection] = useState<1 | -1>(1);
-  const seenIds = useRef(new Set<string>());
   const pollTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingCardIds = useRef(new Set<string>());
   const swipePostQueue = useRef(Promise.resolve());
@@ -45,12 +44,16 @@ export default function DirectionSwipePage({ params }: { params: { profileId: st
     setLikes((current) => Math.max(current, server.likes));
     setSwipedCount((current) => Math.max(current, server.swiped_count));
     if (server.status === "completed") setCompleted(true);
-    // 注意：去重标记必须放在 setState 更新函数外面（更新函数会被 React 严格模式双调用）
-    const fresh = server.cards.filter((card) => !seenIds.current.has(card.id));
-    for (const card of fresh) seenIds.current.add(card.id);
-    if (fresh.length) {
-      setQueue((current) => [...current, ...fresh]);
-    }
+    setQueue((current) => {
+      const currentIds = new Set(current.map((card) => card.id));
+      const next = [...current];
+      for (const card of server.cards) {
+        if (currentIds.has(card.id) || pendingCardIds.current.has(card.id)) continue;
+        currentIds.add(card.id);
+        next.push(card);
+      }
+      return next;
+    });
   }, []);
 
   const fetchSession = useCallback(async () => {
@@ -79,7 +82,7 @@ export default function DirectionSwipePage({ params }: { params: { profileId: st
   // 队列见底但会话未完成时轮询等新卡
   useEffect(() => {
     if (accessQuery === null || completed || queue.length > 0 || !session) return;
-    pollTimer.current = setTimeout(fetchSession, 3000);
+    pollTimer.current = setTimeout(fetchSession, 1500);
     return () => {
       if (pollTimer.current) clearTimeout(pollTimer.current);
     };
@@ -160,7 +163,13 @@ export default function DirectionSwipePage({ params }: { params: { profileId: st
           ) : !session ? (
             <CenterNote title="正在加载..." body="第一批方向正在准备中。" pulsing />
           ) : !topCard ? (
-            <CenterNote title="正在为你准备新的方向..." body="系统正根据你刚才的选择生成更贴合你的方向，几秒钟后自动出现。" pulsing />
+            <CenterNote
+              title="正在为你准备新的方向..."
+              body="系统会自动拉取下一批方向；如果网络慢，可以点下面按钮立即重试。"
+              pulsing
+              actionLabel="立即重试"
+              onAction={fetchSession}
+            />
           ) : (
             <>
               {/* 下一张卡的装饰性预览（跟随顶卡高度，不参与交互） */}
@@ -281,11 +290,32 @@ function CardSection({ label, body }: { label: string; body: string }) {
   );
 }
 
-function CenterNote({ title, body, pulsing }: { title: string; body: string; pulsing?: boolean }) {
+function CenterNote({
+  title,
+  body,
+  pulsing,
+  actionLabel,
+  onAction,
+}: {
+  title: string;
+  body: string;
+  pulsing?: boolean;
+  actionLabel?: string;
+  onAction?: () => void;
+}) {
   return (
     <div className="flex min-h-[300px] flex-col items-center justify-center rounded-2xl border border-[#2c2820] bg-[#141311] px-8 py-10 text-center">
       <div className={`serif text-xl text-[#b9a36b] ${pulsing ? "animate-pulse" : ""}`}>{title}</div>
       <p className="mt-3 text-sm leading-6 text-[#f4efe6]/55">{body}</p>
+      {actionLabel && onAction && (
+        <button
+          className="mt-5 rounded-full border border-[#b9a36b]/45 px-5 py-2 text-sm font-semibold text-[#d9c27d] transition active:scale-95"
+          type="button"
+          onClick={onAction}
+        >
+          {actionLabel}
+        </button>
+      )}
     </div>
   );
 }
