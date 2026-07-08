@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import {
+  createDirectionSession,
   generateNextBatchIfNeeded,
   sessionClientView,
 } from "@/lib/reports/directionSession";
@@ -19,11 +20,18 @@ export async function GET(req: Request, { params }: { params: { profileId: strin
 
   const store = reportStore();
   const profile = await store.getAssessmentProfile(params.profileId);
-  if (!profile?.direction_session) {
-    return NextResponse.json({ error: "not_found", message: "测评暂未开放，请联系你的参谋顾问。" }, { status: 404 });
+  if (!profile) {
+    console.warn("[direction-session:get] profile_not_found", { profileId: params.profileId });
+    return NextResponse.json({ error: "not_found", message: "没有找到这份测评，请联系你的参谋顾问重新发送。" }, { status: 404 });
   }
 
-  // 卡片见底时补生成（内部有锁与轮次上限；已有卡片时该调用立即返回）
+  if (!profile.direction_session) {
+    profile.direction_session = createDirectionSession();
+    profile.updated_at = new Date().toISOString();
+    await store.saveAssessmentProfile(profile);
+  }
+
+  // 首次公开打开或卡片见底时补生成（内部有锁与轮次上限；已有卡片时该调用立即返回）
   await generateNextBatchIfNeeded(
     profile,
     (p) => store.saveAssessmentProfile(p),
