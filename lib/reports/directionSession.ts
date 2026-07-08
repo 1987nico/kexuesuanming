@@ -622,7 +622,9 @@ export function sessionClientView(session: DirectionSession) {
     likes: sessionLikes(session),
     target_likes: session.target_likes,
     swiped_count: session.swipes.length,
+    swiped_card_ids: session.swipes.map((swipe) => swipe.card_id),
     cards,
     generating: cards.length === 0 && session.generating && isGenerationLocked(session),
+    updated_at: session.updated_at,
   };
 }

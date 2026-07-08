@@ -3,6 +3,7 @@ import {
   DIRECTION_MAX_ROUNDS,
   mergeDirectionSessions,
   recordSwipe,
+  sessionClientView,
   sessionLikes,
   type DirectionCard,
   type DirectionSession,
@@ -155,5 +156,20 @@ describe("direction session merge", () => {
     expect(sessionLikes(s)).toBe(1);
     expect(s.status).toBe("active");
     expect(s.completed_at).toBeUndefined();
+  });
+
+  it("exposes confirmed swipe ids in the client view so pending progress cannot roll back", () => {
+    const s = session({
+      swipes: [
+        { card_id: "c1", liked: true, swiped_at: "2026-07-08T00:00:01.000Z" },
+        { card_id: "c2", liked: false, swiped_at: "2026-07-08T00:00:02.000Z" },
+      ],
+      updated_at: "2026-07-08T00:00:03.000Z",
+    });
+
+    const view = sessionClientView(s);
+
+    expect(view.swiped_card_ids).toEqual(["c1", "c2"]);
+    expect(view.updated_at).toBe("2026-07-08T00:00:03.000Z");
   });
 });

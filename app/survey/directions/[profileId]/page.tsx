@@ -18,8 +18,10 @@ interface SessionView {
   likes: number;
   target_likes: number;
   swiped_count: number;
+  swiped_card_ids: string[];
   cards: DirectionCard[];
   generating: boolean;
+  updated_at: string;
 }
 
 const SWIPE_THRESHOLD = 90;
@@ -33,21 +35,53 @@ export default function DirectionSwipePage({ params }: { params: { profileId: st
   const [queue, setQueue] = useState<DirectionCard[]>([]);
   const [likes, setLikes] = useState(0);
   const [swipedCount, setSwipedCount] = useState(0);
-  const [pendingLikedCount, setPendingLikedCount] = useState(0);
-  const [pendingSwipeCount, setPendingSwipeCount] = useState(0);
+  const [pendingSwipes, setPendingSwipes] = useState<Record<string, boolean>>({});
   const [completed, setCompleted] = useState(false);
   const [exitDirection, setExitDirection] = useState<1 | -1>(1);
   const pollTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingCardIds = useRef(new Set<string>());
   const swipePostQueue = useRef(Promise.resolve());
+  const serverProgress = useRef({ likes: 0, swipedCount: 0, updatedAt: "" });
 
   const applyServerSession = useCallback((server: SessionView) => {
+    const current = serverProgress.current;
+    const serverUpdatedAt = Date.parse(server.updated_at || "");
+    const currentUpdatedAt = Date.parse(current.updatedAt || "");
+    const staleProgress =
+      server.swiped_count < current.swipedCount ||
+      (server.swiped_count === current.swipedCount && server.likes < current.likes) ||
+      (Number.isFinite(serverUpdatedAt) &&
+        Number.isFinite(currentUpdatedAt) &&
+        serverUpdatedAt < currentUpdatedAt &&
+        server.swiped_count <= current.swipedCount);
+    if (staleProgress) return;
+
+    serverProgress.current = {
+      likes: server.likes,
+      swipedCount: server.swiped_count,
+      updatedAt: server.updated_at,
+    };
     setSession(server);
     setLikes(server.likes);
     setSwipedCount(server.swiped_count);
+    const confirmedIds = new Set(server.swiped_card_ids ?? []);
+    if (confirmedIds.size > 0) {
+      setPendingSwipes((current) => {
+        let changed = false;
+        const next = { ...current };
+        for (const id of confirmedIds) {
+          if (id in next) {
+            delete next[id];
+            changed = true;
+          }
+        }
+        return changed ? next : current;
+      });
+    }
     if (server.status === "completed") {
       setCompleted(true);
       setQueue([]);
+      setPendingSwipes({});
       return;
     }
     setQueue((current) => {
@@ -100,13 +134,15 @@ export default function DirectionSwipePage({ params }: { params: { profileId: st
       pendingCardIds.current.add(card.id);
       setExitDirection(liked ? 1 : -1);
       setQueue((current) => current.filter((item) => item.id !== card.id));
-      if (liked) setPendingLikedCount((current) => current + 1);
-      setPendingSwipeCount((current) => current + 1);
+      setPendingSwipes((current) => ({ ...current, [card.id]: liked }));
 
       if (accessQuery === null) {
         pendingCardIds.current.delete(card.id);
-        if (liked) setPendingLikedCount((current) => Math.max(0, current - 1));
-        setPendingSwipeCount((current) => Math.max(0, current - 1));
+        setPendingSwipes((current) => {
+          const next = { ...current };
+          delete next[card.id];
+          return next;
+        });
         return;
       }
 
@@ -122,20 +158,27 @@ export default function DirectionSwipePage({ params }: { params: { profileId: st
           if (!res.ok) throw new Error(data.message || "提交失败");
           if (data.session) applyServerSession(data.session);
         })
-        .catch(() => {
+        .catch(async () => {
           // 网络失败时用服务器状态校正，避免本地显示假进度。
-          fetchSession();
+          pendingCardIds.current.delete(card.id);
+          setPendingSwipes((current) => {
+            const next = { ...current };
+            delete next[card.id];
+            return next;
+          });
+          await fetchSession();
         })
         .finally(() => {
           pendingCardIds.current.delete(card.id);
-          if (liked) setPendingLikedCount((current) => Math.max(0, current - 1));
-          setPendingSwipeCount((current) => Math.max(0, current - 1));
         });
     },
     [accessQuery, applyServerSession, fetchSession, profileId]
   );
 
   const targetLikes = session?.target_likes ?? 10;
+  const pendingSwipeEntries = Object.entries(pendingSwipes);
+  const pendingLikedCount = pendingSwipeEntries.filter(([, liked]) => liked).length;
+  const pendingSwipeCount = pendingSwipeEntries.length;
   const visibleLikes = Math.min(targetLikes, likes + pendingLikedCount);
   const visibleSwipedCount = swipedCount + pendingSwipeCount;
   const topCard = queue[0];
