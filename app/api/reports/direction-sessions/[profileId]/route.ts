@@ -24,7 +24,11 @@ export async function GET(req: Request, { params }: { params: { profileId: strin
   }
 
   // 卡片见底时补生成（内部有锁与轮次上限；已有卡片时该调用立即返回）
-  await generateNextBatchIfNeeded(profile, (p) => store.saveAssessmentProfile(p));
+  await generateNextBatchIfNeeded(
+    profile,
+    (p) => store.saveAssessmentProfile(p),
+    (id) => store.getAssessmentProfile(id)
+  );
 
   return NextResponse.json({ session: sessionClientView(profile.direction_session) });
 }

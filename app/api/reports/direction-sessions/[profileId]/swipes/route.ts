@@ -3,6 +3,7 @@ import { z } from "zod";
 import {
   DIRECTION_PREFETCH_THRESHOLD,
   generateNextBatchIfNeeded,
+  mergeDirectionSessions,
   recordSwipe,
   sessionClientView,
   sessionUnswipedCards,
@@ -45,10 +46,15 @@ export async function POST(req: Request, { params }: { params: { profileId: stri
   } catch (error) {
     return NextResponse.json({ error: "invalid_card", message: (error as Error).message }, { status: 400 });
   }
-  profile.updated_at = session.updated_at;
-  await store.saveAssessmentProfile(profile);
+  const latest = await store.getAssessmentProfile(params.profileId);
+  const mergedSession = mergeDirectionSessions(latest?.direction_session, session);
+  const nextProfile = latest ?? profile;
+  nextProfile.direction_session = mergedSession;
+  nextProfile.updated_at = mergedSession?.updated_at ?? session.updated_at;
+  await store.saveAssessmentProfile(nextProfile);
 
-  const justCompleted = session.status === "completed";
+  const responseSession = nextProfile.direction_session ?? session;
+  const justCompleted = responseSession.status === "completed";
   if (justCompleted) {
     warmupDeepReportAfterDirectionComplete(
       params.profileId,
@@ -58,10 +64,15 @@ export async function POST(req: Request, { params }: { params: { profileId: stri
   }
 
   // 触底预生成：后台跑，不阻塞本次滑动响应
-  if (session.status === "active" && sessionUnswipedCards(session).length <= DIRECTION_PREFETCH_THRESHOLD) {
-    const prefetch = generateNextBatchIfNeeded(profile, (p) => store.saveAssessmentProfile(p)).catch((error) =>
-      console.warn("[direction-swipes] 预生成下一批失败：", (error as Error)?.message)
-    );
+  if (
+    responseSession.status === "active" &&
+    sessionUnswipedCards(responseSession).length <= DIRECTION_PREFETCH_THRESHOLD
+  ) {
+    const prefetch = generateNextBatchIfNeeded(
+      nextProfile,
+      (p) => store.saveAssessmentProfile(p),
+      (id) => store.getAssessmentProfile(id)
+    ).catch((error) => console.warn("[direction-swipes] 预生成下一批失败：", (error as Error)?.message));
     try {
       const { waitUntil } = await import("@vercel/functions");
       waitUntil(prefetch);
@@ -70,5 +81,5 @@ export async function POST(req: Request, { params }: { params: { profileId: stri
     }
   }
 
-  return NextResponse.json({ session: sessionClientView(session) });
+  return NextResponse.json({ session: sessionClientView(responseSession) });
 }

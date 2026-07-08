@@ -254,6 +254,84 @@ export function sessionDislikedCards(session: DirectionSession): DirectionCard[]
   return session.cards.filter((card) => disliked.has(card.id));
 }
 
+function newerTimestamp(a?: string, b?: string) {
+  if (!a) return b;
+  if (!b) return a;
+  return Date.parse(a) >= Date.parse(b) ? a : b;
+}
+
+function earliestTimestamp(a?: string, b?: string) {
+  if (!a) return b;
+  if (!b) return a;
+  return Date.parse(a) <= Date.parse(b) ? a : b;
+}
+
+function pushUniqueCard(cards: DirectionCard[], card: DirectionCard) {
+  if (cards.some((item) => item.id === card.id || item.title === card.title)) return;
+  cards.push(card);
+}
+
+function pushUniqueSwipe(swipes: DirectionSwipe[], swipe: DirectionSwipe) {
+  if (swipes.some((item) => item.card_id === swipe.card_id)) return;
+  swipes.push(swipe);
+}
+
+export function mergeDirectionSessions(
+  latest: DirectionSession | undefined,
+  incoming: DirectionSession | undefined,
+  options: { preferIncomingGenerationState?: boolean } = {}
+): DirectionSession | undefined {
+  if (!latest && !incoming) return undefined;
+  if (!latest) return incoming ? { ...incoming, cards: [...incoming.cards], swipes: [...incoming.swipes] } : undefined;
+  if (!incoming) return { ...latest, cards: [...latest.cards], swipes: [...latest.swipes] };
+
+  const cards: DirectionCard[] = [];
+  for (const card of latest.cards) pushUniqueCard(cards, card);
+  for (const card of incoming.cards) pushUniqueCard(cards, card);
+
+  const swipes: DirectionSwipe[] = [];
+  for (const swipe of latest.swipes) pushUniqueSwipe(swipes, swipe);
+  for (const swipe of incoming.swipes) pushUniqueSwipe(swipes, swipe);
+  swipes.sort((a, b) => a.swiped_at.localeCompare(b.swiped_at));
+
+  const now = new Date().toISOString();
+  const targetLikes = latest.target_likes || incoming.target_likes || DIRECTION_TARGET_LIKES;
+  const likedCount = swipes.filter((swipe) => swipe.liked).length;
+  const roundsGenerated = Math.max(latest.rounds_generated, incoming.rounds_generated);
+  const unswipedCount = cards.filter((card) => !swipes.some((swipe) => swipe.card_id === card.id)).length;
+  const exhausted = roundsGenerated >= DIRECTION_MAX_ROUNDS && unswipedCount === 0;
+  const completed = latest.status === "completed" || incoming.status === "completed" || likedCount >= targetLikes || exhausted;
+  const latestLocked = isGenerationLocked(latest);
+  const incomingLocked = isGenerationLocked(incoming);
+  const latestStartedAt = latest.generating_started_at ? Date.parse(latest.generating_started_at) : 0;
+  const incomingStartedAt = incoming.generating_started_at ? Date.parse(incoming.generating_started_at) : 0;
+  const latestGenerationIsNewer = latestStartedAt > incomingStartedAt;
+  const generating = options.preferIncomingGenerationState
+    ? latestGenerationIsNewer
+      ? latestLocked
+      : incomingLocked
+    : latestLocked || incomingLocked;
+
+  return {
+    ...latest,
+    ...incoming,
+    status: completed ? "completed" : "active",
+    target_likes: targetLikes,
+    cards,
+    swipes,
+    rounds_generated: roundsGenerated,
+    generating: completed ? false : generating,
+    generating_started_at: completed
+      ? undefined
+      : generating
+        ? newerTimestamp(latest.generating_started_at, incoming.generating_started_at)
+        : undefined,
+    created_at: earliestTimestamp(latest.created_at, incoming.created_at) ?? now,
+    updated_at: newerTimestamp(latest.updated_at, incoming.updated_at) ?? now,
+    completed_at: completed ? latest.completed_at ?? incoming.completed_at ?? now : undefined,
+  };
+}
+
 export function createDirectionSession(): DirectionSession {
   const now = new Date().toISOString();
   return {
@@ -458,9 +536,21 @@ function isGenerationLocked(session: DirectionSession): boolean {
  */
 export async function generateNextBatchIfNeeded(
   profile: AssessmentProfile,
-  save: (profile: AssessmentProfile) => Promise<void>
+  save: (profile: AssessmentProfile) => Promise<void>,
+  loadLatest?: (id: string) => Promise<AssessmentProfile | null>
 ): Promise<boolean> {
-  const session = profile.direction_session;
+  let workingProfile = profile;
+  if (loadLatest) {
+    const latest = await loadLatest(profile.id);
+    if (latest?.direction_session) {
+      const mergedSession = mergeDirectionSessions(latest.direction_session, profile.direction_session);
+      workingProfile = { ...latest, direction_session: mergedSession, updated_at: mergedSession?.updated_at ?? latest.updated_at };
+      profile.direction_session = mergedSession;
+      profile.updated_at = workingProfile.updated_at;
+    }
+  }
+
+  const session = workingProfile.direction_session;
   if (!session || session.status !== "active") return false;
   if (sessionLikes(session) >= session.target_likes) return false;
   if (session.rounds_generated >= DIRECTION_MAX_ROUNDS) return false;
@@ -470,13 +560,14 @@ export async function generateNextBatchIfNeeded(
   session.generating = true;
   session.generating_started_at = new Date().toISOString();
   session.updated_at = session.generating_started_at;
-  await save(profile);
+  workingProfile.updated_at = session.updated_at;
+  await save(workingProfile);
 
   try {
     let cards: DirectionCard[] | null = null;
     for (let attempt = 0; attempt < 2 && !cards; attempt++) {
       try {
-        cards = await generateBatchOnce(profile, session);
+        cards = await generateBatchOnce(workingProfile, session);
       } catch (error) {
         console.warn(`[directionSession] 第 ${attempt + 1} 次批次生成失败：`, (error as Error)?.message);
       }
@@ -488,8 +579,23 @@ export async function generateNextBatchIfNeeded(
   } finally {
     session.generating = false;
     session.updated_at = new Date().toISOString();
-    profile.updated_at = session.updated_at;
-    await save(profile);
+    workingProfile.updated_at = session.updated_at;
+    if (loadLatest) {
+      const latest = await loadLatest(profile.id);
+      const mergedSession = mergeDirectionSessions(latest?.direction_session, session, {
+        preferIncomingGenerationState: true,
+      });
+      const nextProfile = latest ?? workingProfile;
+      nextProfile.direction_session = mergedSession;
+      nextProfile.updated_at = mergedSession?.updated_at ?? session.updated_at;
+      await save(nextProfile);
+      profile.direction_session = mergedSession;
+      profile.updated_at = nextProfile.updated_at;
+    } else {
+      await save(workingProfile);
+      profile.direction_session = session;
+      profile.updated_at = workingProfile.updated_at;
+    }
   }
 }
 

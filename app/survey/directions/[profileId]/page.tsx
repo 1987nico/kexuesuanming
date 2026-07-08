@@ -32,14 +32,18 @@ export default function DirectionSwipePage({ params }: { params: { profileId: st
   // 本地卡片队列：滑掉的立刻出队（乐观更新），服务器状态到达后合并新卡
   const [queue, setQueue] = useState<DirectionCard[]>([]);
   const [likes, setLikes] = useState(0);
+  const [swipedCount, setSwipedCount] = useState(0);
   const [completed, setCompleted] = useState(false);
   const [exitDirection, setExitDirection] = useState<1 | -1>(1);
   const seenIds = useRef(new Set<string>());
   const pollTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingCardIds = useRef(new Set<string>());
+  const swipePostQueue = useRef(Promise.resolve());
 
   const applyServerSession = useCallback((server: SessionView) => {
     setSession(server);
-    setLikes(server.likes);
+    setLikes((current) => Math.max(current, server.likes));
+    setSwipedCount((current) => Math.max(current, server.swiped_count));
     if (server.status === "completed") setCompleted(true);
     // 注意：去重标记必须放在 setState 更新函数外面（更新函数会被 React 严格模式双调用）
     const fresh = server.cards.filter((card) => !seenIds.current.has(card.id));
@@ -83,23 +87,35 @@ export default function DirectionSwipePage({ params }: { params: { profileId: st
 
   const swipe = useCallback(
     (card: DirectionCard, liked: boolean) => {
+      if (pendingCardIds.current.has(card.id)) return;
+      pendingCardIds.current.add(card.id);
       setExitDirection(liked ? 1 : -1);
       setQueue((current) => current.filter((item) => item.id !== card.id));
       if (liked) setLikes((current) => Math.min(current + 1, session?.target_likes ?? 10));
+      setSwipedCount((current) => current + 1);
 
-      if (accessQuery === null) return;
+      if (accessQuery === null) {
+        pendingCardIds.current.delete(card.id);
+        return;
+      }
 
-      fetch(`/api/reports/direction-sessions/${profileId}/swipes${accessQuery}`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ card_id: card.id, liked }),
-      })
-        .then((res) => res.json())
-        .then((data) => {
+      swipePostQueue.current = swipePostQueue.current
+        .catch(() => undefined)
+        .then(async () => {
+          const res = await fetch(`/api/reports/direction-sessions/${profileId}/swipes${accessQuery}`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ card_id: card.id, liked }),
+          });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.message || "提交失败");
           if (data.session) applyServerSession(data.session);
         })
         .catch(() => {
           // 网络失败不阻断滑卡体验；下一次轮询会校正状态
+        })
+        .finally(() => {
+          pendingCardIds.current.delete(card.id);
         });
     },
     [accessQuery, applyServerSession, profileId, session?.target_likes]
@@ -121,7 +137,7 @@ export default function DirectionSwipePage({ params }: { params: { profileId: st
           <div className="mt-3 [@media(max-height:680px)]:mt-2">
             <div className="flex items-baseline justify-between text-xs text-[#f4efe6]/55">
               <span>已点亮 {likes} / {targetLikes}</span>
-              <span>已看 {session?.swiped_count ?? 0} 个方向</span>
+              <span>已看 {swipedCount} 个方向</span>
             </div>
             <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-[#22201c]">
               <div

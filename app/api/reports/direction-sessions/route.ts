@@ -44,10 +44,13 @@ export async function POST(req: Request) {
   }
 
   // 操作员拿到链接前，先把首批 10 个方向卡生成好。
-  const session = profile.direction_session;
-  if (session.status === "active" && session.rounds_generated === 0) {
+  if (profile.direction_session.status === "active" && profile.direction_session.rounds_generated === 0) {
     try {
-      await generateNextBatchIfNeeded(profile, (p) => store.saveAssessmentProfile(p));
+      await generateNextBatchIfNeeded(
+        profile,
+        (p) => store.saveAssessmentProfile(p),
+        (id) => store.getAssessmentProfile(id)
+      );
     } catch (error) {
       console.warn("[direction-sessions] 首批方向生成失败：", (error as Error)?.message);
       return NextResponse.json(
@@ -56,7 +59,7 @@ export async function POST(req: Request) {
       );
     }
 
-    if (session.rounds_generated === 0) {
+    if (!profile.direction_session || profile.direction_session.rounds_generated === 0) {
       return NextResponse.json(
         { error: "direction_generation_failed", message: "首批深度诊断报告测评选项还没有生成完成，请稍后重试。" },
         { status: 500 }
@@ -64,6 +67,7 @@ export async function POST(req: Request) {
     }
   }
 
+  const session = profile.direction_session;
   return NextResponse.json({
     survey_url: surveyPath,
     session: {
