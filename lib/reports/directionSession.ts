@@ -17,8 +17,8 @@ import { archetypeZhName, traitZhName } from "./talentNames";
 export const DIRECTION_BATCH_SIZE = 10;
 export const DIRECTION_TARGET_LIKES = 10;
 export const DIRECTION_MAX_ROUNDS = 6;
-/** 剩余未滑卡片少于该值时预生成下一批：至少吃到半批反馈，再用剩余卡片给后台生成争取时间 */
-export const DIRECTION_PREFETCH_THRESHOLD = 5;
+/** 剩余未滑卡片少于该值时预生成下一批：优先让下一批充分参考上一批反馈 */
+export const DIRECTION_PREFETCH_THRESHOLD = 2;
 /** 生成锁超时（毫秒）：超过视为上次生成失败，允许重试 */
 const GENERATING_LOCK_TIMEOUT_MS = 90_000;
 
