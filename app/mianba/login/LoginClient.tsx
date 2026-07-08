@@ -35,7 +35,7 @@ export default function LoginClient({ nextPath }: { nextPath: string }) {
     <main className="mianba-workspace flex min-h-screen items-center justify-center px-5 py-12 text-ink-900">
       <form onSubmit={submit} className="w-full max-w-md rounded-3xl bg-white p-6 shadow-sm md:p-8">
         <div className="mb-3 text-xs tracking-[0.35em] text-gold-700">面霸君</div>
-        <h1 className="serif text-4xl leading-tight">账号登录</h1>
+        <h1 className="serif text-4xl leading-tight">双手剑系统-面霸君版</h1>
         <p className="mt-3 text-sm leading-6 text-ink-600">管理员和操作者从这里进入工作台。</p>
 
         <label className="mt-6 block text-xs text-ink-500">账号</label>
