@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { mergeDirectionSessions, sessionLikes, type DirectionCard, type DirectionSession } from "./directionSession";
+import {
+  DIRECTION_MAX_ROUNDS,
+  mergeDirectionSessions,
+  recordSwipe,
+  sessionLikes,
+  type DirectionCard,
+  type DirectionSession,
+} from "./directionSession";
 
 function card(id: string, round = 1): DirectionCard {
   return {
@@ -107,5 +114,46 @@ describe("direction session merge", () => {
     expect(merged?.status).toBe("completed");
     expect(merged?.completed_at).toBeTruthy();
     expect(merged?.generating).toBe(false);
+  });
+
+  it("does not complete a session below target even when the old max-round fallback had completed it", () => {
+    const cards = Array.from({ length: 10 }, (_, index) => card(`c${index + 1}`, DIRECTION_MAX_ROUNDS));
+    const latest = session({
+      status: "completed",
+      target_likes: 10,
+      cards,
+      swipes: cards.map((item, index) => ({
+        card_id: item.id,
+        liked: index < 8,
+        swiped_at: `2026-07-08T00:00:${String(index + 1).padStart(2, "0")}.000Z`,
+      })),
+      rounds_generated: DIRECTION_MAX_ROUNDS,
+      completed_at: "2026-07-08T00:01:00.000Z",
+    });
+
+    const merged = mergeDirectionSessions(latest, latest);
+
+    expect(sessionLikes(merged!)).toBe(8);
+    expect(merged?.status).toBe("active");
+    expect(merged?.completed_at).toBeUndefined();
+  });
+
+  it("only recordSwipe-completes when likes reach target", () => {
+    const cards = [card("c1"), card("c2"), card("c3")];
+    const s = session({
+      target_likes: 3,
+      cards,
+      swipes: [
+        { card_id: "c1", liked: true, swiped_at: "2026-07-08T00:00:01.000Z" },
+        { card_id: "c2", liked: false, swiped_at: "2026-07-08T00:00:02.000Z" },
+      ],
+      rounds_generated: DIRECTION_MAX_ROUNDS,
+    });
+
+    recordSwipe(s, "c3", false);
+
+    expect(sessionLikes(s)).toBe(1);
+    expect(s.status).toBe("active");
+    expect(s.completed_at).toBeUndefined();
   });
 });

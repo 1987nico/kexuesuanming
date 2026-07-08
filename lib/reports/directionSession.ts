@@ -5,7 +5,7 @@
  * - 操作员在交付后台点「深度诊断报告测评入口」→ 基于初步诊断生成第一批 10 个方向卡。
  * - 用户打开链接滑卡：右滑 = 想试试（点亮），左滑 = 不感兴趣。
  * - 每批 10 个；剩余未滑卡片 ≤ 3 时，后台按用户的左右滑反馈自适应生成下一批（用户无感知）。
- * - 收集到 10 个「点亮」即完成；安全上限 6 批（60 卡），避免无限生成。
+ * - 收集到 10 个「点亮」即完成；未满 10 个不能提前完成。
  */
 
 import { z } from "zod";
@@ -16,7 +16,7 @@ import { archetypeZhName, traitZhName } from "./talentNames";
 
 export const DIRECTION_BATCH_SIZE = 10;
 export const DIRECTION_TARGET_LIKES = 10;
-export const DIRECTION_MAX_ROUNDS = 6;
+export const DIRECTION_MAX_ROUNDS = 12;
 /** 剩余未滑卡片少于该值时预生成下一批：优先让下一批充分参考上一批反馈 */
 export const DIRECTION_PREFETCH_THRESHOLD = 2;
 /** 生成锁超时（毫秒）：超过视为上次生成失败，允许重试 */
@@ -298,9 +298,7 @@ export function mergeDirectionSessions(
   const targetLikes = latest.target_likes || incoming.target_likes || DIRECTION_TARGET_LIKES;
   const likedCount = swipes.filter((swipe) => swipe.liked).length;
   const roundsGenerated = Math.max(latest.rounds_generated, incoming.rounds_generated);
-  const unswipedCount = cards.filter((card) => !swipes.some((swipe) => swipe.card_id === card.id)).length;
-  const exhausted = roundsGenerated >= DIRECTION_MAX_ROUNDS && unswipedCount === 0;
-  const completed = latest.status === "completed" || incoming.status === "completed" || likedCount >= targetLikes || exhausted;
+  const completed = likedCount >= targetLikes;
   const latestLocked = isGenerationLocked(latest);
   const incomingLocked = isGenerationLocked(incoming);
   const latestStartedAt = latest.generating_started_at ? Date.parse(latest.generating_started_at) : 0;
@@ -608,9 +606,7 @@ export function recordSwipe(session: DirectionSession, cardId: string, liked: bo
 
   session.swipes.push({ card_id: cardId, liked, swiped_at: new Date().toISOString() });
 
-  const exhausted =
-    session.rounds_generated >= DIRECTION_MAX_ROUNDS && sessionUnswipedCards(session).length === 0;
-  if (sessionLikes(session) >= session.target_likes || exhausted) {
+  if (sessionLikes(session) >= session.target_likes) {
     session.status = "completed";
     session.completed_at = new Date().toISOString();
   }
