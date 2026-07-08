@@ -41,10 +41,7 @@ export default async function InitialDiagnosisReportPage({
       <div className="ir-toolbar">
         <div>
           <h1>初步诊断报告：{profile.customer_name}</h1>
-          <p>
-            文案来源：{diagnosis.llm_generated ? `AI 生成（${diagnosis.model}）` : "标准模板"} · 生成时间：
-            {new Date(diagnosis.generated_at).toLocaleString("zh-CN")}
-          </p>
+          <p>交付时间：{new Date(diagnosis.generated_at).toLocaleString("zh-CN")}</p>
         </div>
         <div className="ir-toolbar-actions">
           <PrintButton label="一键生成 PDF" />

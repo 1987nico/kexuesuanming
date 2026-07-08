@@ -70,6 +70,7 @@
 /* ---------- 文档主体 ---------- */
 
 .dr-doc {
+  position: relative;
   width: 210mm;
   max-width: calc(100vw - 32px);
   margin: 0 auto;
@@ -79,6 +80,16 @@
   font-size: 15px;
   line-height: 1.9;
   color: var(--dr-ink);
+}
+
+.dr-route-marker {
+  position: absolute;
+  right: 0;
+  bottom: -12mm;
+  font-size: 6px;
+  line-height: 1;
+  color: rgba(23, 25, 28, 0.32);
+  letter-spacing: 0;
 }
 
 .dr-editable-report {

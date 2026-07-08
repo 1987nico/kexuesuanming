@@ -4,7 +4,7 @@ html,body { margin:0; background:#fff; font-family:-apple-system,BlinkMacSystemF
 .golden-doc { width:1196px; margin:0 auto; color:#24292f; }
 .golden-doc[contenteditable="true"] { outline:none; caret-color:#a07a14; }
 .golden-doc[contenteditable="true"]:focus { box-shadow:0 0 0 3px rgba(160,122,20,.16); }
-.gsec { width:1196px; box-sizing:border-box; padding:8px 18px 30px; }
+.gsec { width:1196px; box-sizing:border-box; padding:8px 18px 30px; position:relative; }
 .golden-doc .gsec.dr-root { min-height:0; }
 .gsec + .gsec { break-before: page; }
 .gsec .wrap { width:100%; max-width:100%; padding:0; margin:0; }
@@ -162,6 +162,7 @@ html,body { margin:0; background:#fff; font-family:-apple-system,BlinkMacSystemF
 .fv-pre .fv-cell-t:before{content:"✓ ";}
 .fv-flow{margin-top:20px;font-size:11px;color:#9a9488;text-align:center;}
 .fv-flow b{color:#a07a14;}
+.golden-route-marker{position:absolute;right:18px;bottom:12px;font-size:8px;line-height:1;color:rgba(23,25,28,.32);letter-spacing:0;}
 
 /* ===== from report_intro_gen.py ===== */
 

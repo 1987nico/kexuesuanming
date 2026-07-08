@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { pathToFileURL } from "node:url";
 import type { TalentProfile, TalentTrait } from "./assessmentProfile";
+import * as bundledCollector from "./principlesyouCollector";
 import { generateLocalTalentProfile } from "./principlesyouLocal";
 
 export type TalentAnswers = Record<number, number>;
@@ -15,8 +16,6 @@ export interface TalentProfileOptions {
   retries?: number;
   timeoutMs?: number;
 }
-
-const DEFAULT_COLLECT_PATH = "/Users/qifeng/Documents/职场参谋/analysis_principlesyou/collect.mjs";
 
 function hashJSON(value: unknown) {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
@@ -81,7 +80,8 @@ function mapOriginalResultsToTalentProfile(
 }
 
 async function importCollector() {
-  const collectPath = process.env.PRINCIPLESYOU_COLLECT_PATH || DEFAULT_COLLECT_PATH;
+  const collectPath = process.env.PRINCIPLESYOU_COLLECT_PATH;
+  if (!collectPath) return bundledCollector;
   // collect.mjs compares import.meta.url with process.argv[1] at module load time.
   // Some embedded runtimes (or node --eval smoke checks) do not set argv[1].
   process.argv[1] ||= "next-server.mjs";

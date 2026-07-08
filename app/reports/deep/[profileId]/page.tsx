@@ -53,8 +53,9 @@ export default async function DeepReportPage({
     generated = await ensureDeepReport(profile, (p) => store.saveAssessmentProfile(p));
   }
 
+  const routeMarker = profile.talent_profile.mode === "local" ? "B" : undefined;
   const reportHtml = goldenReport
-    ? renderGoldenReportInner({ ...goldenReport, generatedAt: goldenReport.generatedAt ?? goldenGeneratedAt }, { editable: true })
+    ? renderGoldenReportInner({ ...goldenReport, generatedAt: goldenReport.generatedAt ?? goldenGeneratedAt, routeMarker }, { editable: true })
     : generated
       ? renderGoldenReportInner(toGoldenReportData(profile, generated), { editable: true })
       : null;
@@ -70,7 +71,7 @@ export default async function DeepReportPage({
             {needsDirection
               ? "方向滑卡测评尚未完成，完成后再生成完整报告。"
               : reportReady && generatedAt
-                ? `已生成 · ${generated?.sensory_from_input === false ? "AI 预判" : "含真实感性验证"} · ${new Date(generatedAt).toLocaleString("zh-CN")}`
+                ? `已生成 · ${new Date(generatedAt).toLocaleString("zh-CN")}`
                 : "报告生成中..."}
           </p>
         </div>

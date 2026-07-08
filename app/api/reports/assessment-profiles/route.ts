@@ -14,6 +14,7 @@ import type { ReportOrder } from "@/lib/reports/store";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const maxDuration = 120;
 
 const DEFAULT_TENANT_ID = "mianbajun";
 
@@ -180,8 +181,8 @@ export async function POST(req: Request) {
   const timestamp = new Date().toISOString();
   const talentAnswers = numericAnswers(parsed.data.talent_answers);
   const talentResult = await generateTalentProfileWithFallback(talentAnswers, {
-    retries: 0,
-    timeoutMs: 45000,
+    retries: 1,
+    timeoutMs: 90000,
   });
   const profile: AssessmentProfile = {
     id: crypto.randomUUID(),

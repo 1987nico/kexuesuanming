@@ -38,7 +38,19 @@ function formatDateTimeCN(iso: string) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-function Page({ no, title, intro, children }: { no: string; title: string; intro?: string; children: React.ReactNode }) {
+function Page({
+  no,
+  title,
+  intro,
+  routeMarker,
+  children,
+}: {
+  no: string;
+  title: string;
+  intro?: string;
+  routeMarker?: string;
+  children: React.ReactNode;
+}) {
   const pageNo = String(Number(no) + 1).padStart(2, "0");
   return (
     <section className="ir-page">
@@ -50,6 +62,7 @@ function Page({ no, title, intro, children }: { no: string; title: string; intro
         <span>初步诊断报告 | 保密交付</span>
         <span>{pageNo}</span>
       </div>
+      {routeMarker && <div className="ir-route-marker">{routeMarker}</div>}
     </section>
   );
 }
@@ -177,6 +190,7 @@ export function InitialDiagnosisReport({
   const distribution = tp.answer_distribution;
   const distTotal = Object.values(distribution).reduce((sum, n) => sum + n, 0) || 1;
   const distMax = Math.max(...Object.values(distribution), 1);
+  const routeMarker = tp.mode === "local" ? "B" : undefined;
 
   const inputCards: Array<{ label: string; value: string }> = [
     { label: "当前决策", value: input.current_decision },
@@ -494,7 +508,7 @@ export function InitialDiagnosisReport({
       </Page>
 
       {/* 11 数据附录 */}
-      <Page no="11" title="数据附录">
+      <Page no="11" title="数据附录" routeMarker={routeMarker}>
         <Card tone="teal" title="数据完整性">
           {`尾号 ${profile.id.slice(-12)}；客户：${name}；252题完整；更新：${formatDateTimeCN(profile.updated_at)}（中国时间）。`}
         </Card>

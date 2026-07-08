@@ -125,10 +125,6 @@ function LiteTalentArchetype({ value }: { value: unknown }) {
         <div className="lite-label">职业翻译</div>
         <p>{String(data.career_translation || "")}</p>
       </div>
-      <div className="lite-wide-card lite-muted-text">
-        <div className="lite-label">数据模式</div>
-        <TextBlock value={{ mode: data.mode, evidence: data.evidence }} />
-      </div>
     </div>
   );
 }
@@ -211,10 +207,6 @@ function LiteDataAppendix({ value }: { value: unknown }) {
             <span>{String(count)}题</span>
           </div>
         ))}
-      </div>
-      <div className="lite-wide-card lite-muted-text">
-        <div className="lite-label">同步证据</div>
-        <TextBlock value={data.evidence} />
       </div>
     </div>
   );

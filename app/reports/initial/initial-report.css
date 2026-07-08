@@ -101,6 +101,16 @@
   box-sizing: border-box;
 }
 
+.ir-route-marker {
+  position: absolute;
+  right: 7mm;
+  bottom: 5mm;
+  font-size: 6px;
+  line-height: 1;
+  color: rgba(17, 24, 38, 0.32);
+  letter-spacing: 0;
+}
+
 /* 页首金色细线 */
 .ir-toprule {
   height: 2px;

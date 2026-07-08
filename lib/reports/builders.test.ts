@@ -142,7 +142,7 @@ describe("report builders", () => {
       主线: "高客单职业决策诊断",
     });
     expect(report.sections.step3_sensory_validation).toMatchObject({
-      数据来源: "客户本人真实感性验证（方向滑卡点亮）",
+      数据来源: "方向滑卡点亮结果",
     });
     expect(assertReportConsistency(profile, report.profile_reference)).toEqual([]);
   });

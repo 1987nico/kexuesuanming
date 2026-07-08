@@ -175,6 +175,7 @@ export function toGoldenReportData(profile: AssessmentProfile, generated: DeepRe
   return {
     customerName: profile.customer_name,
     generatedAt: generated.generated_at,
+    routeMarker: profile.talent_profile.mode === "local" ? "B" : undefined,
     market: toMarket(generated),
     vrin: toVrin(generated),
     premortem: toPremortem(generated),

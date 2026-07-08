@@ -10,7 +10,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-export const GOLDEN_REPORT_RENDER_VERSION = "golden-deep-diagnosis-cover-v2";
+export const GOLDEN_REPORT_RENDER_VERSION = "golden-deep-diagnosis-cover-v3-local-route-marker";
 
 const esc = (s: unknown): string =>
   String(s ?? "")
@@ -135,6 +135,7 @@ export interface VerdictData {
 export interface GoldenReportData {
   customerName: string;
   generatedAt?: string;
+  routeMarker?: "B";
   market: MarketRow[];
   vrin: VrinRow[];
   cross?: CrossPit[];
@@ -527,6 +528,7 @@ function sectionVerdict(data: GoldenReportData): string {
   <div class="fv-grid2 fv-dont">${cellsOf(v.dont)}</div>
   <div class="fv-h2">成败四大前提</div>
   <div class="fv-grid2 fv-pre">${cellsOf(v.prereq)}</div>
+  ${data.routeMarker ? `<div class="golden-route-marker">${esc(data.routeMarker)}</div>` : ""}
 </div>`;
 }
 

@@ -554,6 +554,7 @@ export function DeepConsultationReport({
   const likedTitles = Array.isArray(sensory["达标方向"]) ? (sensory["达标方向"] as unknown[]).map((x) => str(x)) : [];
   const clusterThemes = Array.isArray(sensory["聚类主题"]) ? (sensory["聚类主题"] as unknown[]).map((x) => str(x)) : [];
   const finalJudgement = str(asRecord(generated.final_judgement)["判断"], "报告判断待生成。");
+  const routeMarker = tp.mode === "local" ? "B" : undefined;
 
   return (
     <div className="dr-doc">
@@ -580,7 +581,7 @@ export function DeepConsultationReport({
       <UL
         items={[
           `${name}问卷：决策类型、时间窗口、卡点、能量来源、可迁移资产、感兴趣与排除方向。`,
-          `PrinciplesYou 天赋测评（252 题，${tp.mode === "original-sync" ? "真实同步" : "本地兜底"}）。`,
+          "252 题天赋测评。",
           "方向滑卡感性验证（客户本人点亮）结果。",
           "外部市场事实：联网检索的行业规模、竞争格局、政策与趋势公开数据（需人工核实）。",
         ]}
@@ -761,6 +762,7 @@ export function DeepConsultationReport({
       {/* 10. 最后判断 */}
       <H2>{`10. 给${name}的最后判断`}</H2>
       <Paras text={finalJudgement} />
+      {routeMarker && <div className="dr-route-marker">{routeMarker}</div>}
     </div>
   );
 }

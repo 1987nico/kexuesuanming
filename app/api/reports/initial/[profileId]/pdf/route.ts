@@ -11,6 +11,8 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
 
+const INITIAL_REPORT_RENDER_VERSION = "initial-report-v2-local-route-marker";
+
 function baseUrlFromRequest(req: Request) {
   if (process.env.APP_BASE_URL) return process.env.APP_BASE_URL;
   const url = new URL(req.url);
@@ -32,7 +34,7 @@ export async function GET(req: Request, { params }: { params: { profileId: strin
   const diagnosis = await ensureInitialDiagnosis(profile, (p) => store.saveAssessmentProfile(p));
 
   // 缓存 key 与文案版本绑定：重新生成文案后会自动重渲染
-  const version = Buffer.from(diagnosis.generated_at).toString("hex").slice(0, 12);
+  const version = Buffer.from(`${INITIAL_REPORT_RENDER_VERSION}:${diagnosis.generated_at}:${profile.talent_profile.mode}`).toString("hex").slice(0, 20);
   const cacheKey = `initial-${profile.id}-${version}`;
 
   const refresh = new URL(req.url).searchParams.get("refresh") === "1";

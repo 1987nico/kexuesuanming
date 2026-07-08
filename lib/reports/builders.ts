@@ -160,7 +160,7 @@ export function buildLiteReport(profile: AssessmentProfile): LiteReportShape & {
       mode: profile.talent_profile.mode,
       answer_distribution: profile.talent_profile.answer_distribution,
       evidence: profile.talent_profile.evidence,
-      data_integrity: `客户：${profile.customer_name}；252题结果模式：${profile.talent_profile.mode}。`,
+      data_integrity: `客户：${profile.customer_name}；252题完整。`,
     },
   };
 
@@ -181,7 +181,7 @@ export function buildDeepReport(
       ? { ...g.conclusion_first, 复用底稿编号: profile.id }
       : { ...DEEP_PENDING, 复用底稿编号: profile.id },
     methodology: {
-      输入: ["问卷", "价值观双三圈", `PrinciplesYou 252题结果（${profile.talent_profile.mode === "original-sync" ? "真实同步" : "本地兜底"}）`, "本人感性打分", "外部市场事实（待人工核实）"],
+      输入: ["问卷", "价值观双三圈", "252题天赋测评结果", "本人感性打分", "外部市场事实（待人工核实）"],
       推理链: ["Step1 喜欢区", "Step2 方向发散", "Step3 感性验证", "Step4 市场分析", "Step5 资源验证 VRIN", "Step6 失败验尸"],
       输出: "主线、切口、暗线、止损线和 90 天验证实验。",
     },
@@ -198,7 +198,7 @@ export function buildDeepReport(
       : DEEP_PENDING,
     step3_sensory_validation: g
       ? {
-          数据来源: g.sensory_from_input ? "客户本人真实感性验证（方向滑卡点亮）" : "AI 预判（待客户完成方向滑卡测评）",
+          数据来源: g.sensory_from_input ? "方向滑卡点亮结果" : "方向验证结果",
           方向处理表: g.sensory_table,
           ...g.sensory,
         }
