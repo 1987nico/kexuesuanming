@@ -33,6 +33,8 @@ export default function DirectionSwipePage({ params }: { params: { profileId: st
   const [queue, setQueue] = useState<DirectionCard[]>([]);
   const [likes, setLikes] = useState(0);
   const [swipedCount, setSwipedCount] = useState(0);
+  const [pendingLikedCount, setPendingLikedCount] = useState(0);
+  const [pendingSwipeCount, setPendingSwipeCount] = useState(0);
   const [completed, setCompleted] = useState(false);
   const [exitDirection, setExitDirection] = useState<1 | -1>(1);
   const pollTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -41,9 +43,13 @@ export default function DirectionSwipePage({ params }: { params: { profileId: st
 
   const applyServerSession = useCallback((server: SessionView) => {
     setSession(server);
-    setLikes((current) => Math.max(current, server.likes));
-    setSwipedCount((current) => Math.max(current, server.swiped_count));
-    if (server.status === "completed") setCompleted(true);
+    setLikes(server.likes);
+    setSwipedCount(server.swiped_count);
+    if (server.status === "completed") {
+      setCompleted(true);
+      setQueue([]);
+      return;
+    }
     setQueue((current) => {
       const currentIds = new Set(current.map((card) => card.id));
       const next = [...current];
@@ -94,11 +100,13 @@ export default function DirectionSwipePage({ params }: { params: { profileId: st
       pendingCardIds.current.add(card.id);
       setExitDirection(liked ? 1 : -1);
       setQueue((current) => current.filter((item) => item.id !== card.id));
-      if (liked) setLikes((current) => Math.min(current + 1, session?.target_likes ?? 10));
-      setSwipedCount((current) => current + 1);
+      if (liked) setPendingLikedCount((current) => current + 1);
+      setPendingSwipeCount((current) => current + 1);
 
       if (accessQuery === null) {
         pendingCardIds.current.delete(card.id);
+        if (liked) setPendingLikedCount((current) => Math.max(0, current - 1));
+        setPendingSwipeCount((current) => Math.max(0, current - 1));
         return;
       }
 
@@ -115,16 +123,21 @@ export default function DirectionSwipePage({ params }: { params: { profileId: st
           if (data.session) applyServerSession(data.session);
         })
         .catch(() => {
-          // 网络失败不阻断滑卡体验；下一次轮询会校正状态
+          // 网络失败时用服务器状态校正，避免本地显示假进度。
+          fetchSession();
         })
         .finally(() => {
           pendingCardIds.current.delete(card.id);
+          if (liked) setPendingLikedCount((current) => Math.max(0, current - 1));
+          setPendingSwipeCount((current) => Math.max(0, current - 1));
         });
     },
-    [accessQuery, applyServerSession, profileId, session?.target_likes]
+    [accessQuery, applyServerSession, fetchSession, profileId]
   );
 
   const targetLikes = session?.target_likes ?? 10;
+  const visibleLikes = Math.min(targetLikes, likes + pendingLikedCount);
+  const visibleSwipedCount = swipedCount + pendingSwipeCount;
   const topCard = queue[0];
 
   return (
@@ -139,13 +152,13 @@ export default function DirectionSwipePage({ params }: { params: { profileId: st
           </p>
           <div className="mt-3 [@media(max-height:680px)]:mt-2">
             <div className="flex items-baseline justify-between text-xs text-[#f4efe6]/55">
-              <span>已点亮 {likes} / {targetLikes}</span>
-              <span>已看 {swipedCount} 个方向</span>
+              <span>已点亮 {visibleLikes} / {targetLikes}</span>
+              <span>已看 {visibleSwipedCount} 个方向</span>
             </div>
             <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-[#22201c]">
               <div
                 className="h-full rounded-full bg-[#b9a36b] transition-all duration-500"
-                style={{ width: `${Math.min(100, (likes / targetLikes) * 100)}%` }}
+                style={{ width: `${Math.min(100, (visibleLikes / targetLikes) * 100)}%` }}
               />
             </div>
           </div>
@@ -162,6 +175,8 @@ export default function DirectionSwipePage({ params }: { params: { profileId: st
             />
           ) : !session ? (
             <CenterNote title="正在加载..." body="第一批方向正在准备中。" pulsing />
+          ) : visibleLikes >= targetLikes ? (
+            <CenterNote title="正在确认完成..." body="正在保存最后一次点亮，保存成功后会自动结束。" pulsing />
           ) : !topCard ? (
             <CenterNote
               title="正在为你准备新的方向..."
@@ -189,7 +204,7 @@ export default function DirectionSwipePage({ params }: { params: { profileId: st
         </div>
 
         {/* 操作按钮：固定底部，长卡片时仍可点 */}
-        {!completed && topCard && (
+        {!completed && visibleLikes < targetLikes && topCard && (
           <div className="fixed inset-x-0 bottom-0 z-20 mx-auto max-w-md px-5 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-3">
             <div className="pointer-events-none absolute inset-x-0 bottom-0 h-28 bg-gradient-to-t from-[#09090b] via-[#09090b]/95 to-transparent" />
             <div className="relative flex items-center justify-center gap-6">
