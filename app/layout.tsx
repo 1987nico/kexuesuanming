@@ -4,6 +4,9 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "科学算命 · 5 步漏斗",
   description: "把职业/事业选择做成一个漏斗：从喜欢的范围里发散，再用感性、市场、资源三层验证收敛到 3 个最终选项。",
+  icons: {
+    icon: "/favicon.svg",
+  },
 };
 
 export const viewport: Viewport = {
