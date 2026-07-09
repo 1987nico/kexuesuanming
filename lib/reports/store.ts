@@ -82,6 +82,23 @@ export function mergeAssessmentProfileForSave(
   return next;
 }
 
+function assessmentProfileRow(profile: AssessmentProfile) {
+  return {
+    id: profile.id,
+    tenant_id: profile.tenant_id,
+    owner_user_id: profile.owner_user_id ?? null,
+    customer_name: profile.customer_name,
+    customer_contact: profile.customer_contact,
+    value_profile: profile.value_profile,
+    talent_mode: profile.talent_profile.mode,
+    talent_answers: profile.talent_answers,
+    talent_profile: profile.talent_profile,
+    survey_answers: profile.survey_answers,
+    payload: profile,
+    updated_at: profile.updated_at,
+  };
+}
+
 function reportStoreFilePath() {
   return path.join(process.cwd(), ".data", "report-store.json");
 }
@@ -280,29 +297,37 @@ class SupabaseReportStore implements ReportStore {
   }
 
   async saveAssessmentProfile(profile: AssessmentProfile) {
-    const { data: existingData, error: existingError } = await this.db
-      .from("assessment_profiles")
-      .select("payload")
-      .eq("id", profile.id)
-      .maybeSingle();
-    if (existingError) throw existingError;
-    const mergedProfile = mergeAssessmentProfileForSave((existingData?.payload as AssessmentProfile | null) ?? null, profile);
+    for (let attempt = 1; attempt <= 6; attempt++) {
+      const { data: existingData, error: existingError } = await this.db
+        .from("assessment_profiles")
+        .select("updated_at,payload")
+        .eq("id", profile.id)
+        .maybeSingle();
+      if (existingError) throw existingError;
 
-    const { error } = await this.db.from("assessment_profiles").upsert({
-      id: mergedProfile.id,
-      tenant_id: mergedProfile.tenant_id,
-      owner_user_id: mergedProfile.owner_user_id ?? null,
-      customer_name: mergedProfile.customer_name,
-      customer_contact: mergedProfile.customer_contact,
-      value_profile: mergedProfile.value_profile,
-      talent_mode: mergedProfile.talent_profile.mode,
-      talent_answers: mergedProfile.talent_answers,
-      talent_profile: mergedProfile.talent_profile,
-      survey_answers: mergedProfile.survey_answers,
-      payload: mergedProfile,
-      updated_at: mergedProfile.updated_at,
-    });
-    if (error) throw error;
+      const existingProfile = (existingData?.payload as AssessmentProfile | null) ?? null;
+      const mergedProfile = mergeAssessmentProfileForSave(existingProfile, profile);
+      const row = assessmentProfileRow(mergedProfile);
+
+      if (!existingData) {
+        const { error: insertError } = await this.db.from("assessment_profiles").insert(row);
+        if (!insertError) return;
+        if (attempt === 6 || insertError.code !== "23505") throw insertError;
+        continue;
+      }
+
+      const { data: updatedRow, error: updateError } = await this.db
+        .from("assessment_profiles")
+        .update(row)
+        .eq("id", profile.id)
+        .eq("updated_at", existingData.updated_at)
+        .select("id")
+        .maybeSingle();
+      if (updateError) throw updateError;
+      if (updatedRow) return;
+    }
+
+    throw new Error(`[reportStore] assessment profile ${profile.id} 保存冲突过多，请重试。`);
   }
 
   async getAssessmentProfile(id: string) {
