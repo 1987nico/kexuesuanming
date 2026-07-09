@@ -6,7 +6,6 @@ import { mianbaAuthStore } from "@/lib/auth/mianbaStore";
 import { appendPublicAccessToken } from "@/lib/auth/publicAccess";
 import { canSeeOwnedRecord, toReportAuthContext } from "@/lib/auth/tenant";
 import { growthStore } from "@/lib/growth/store";
-import { ensureInitialDiagnosis } from "@/lib/reports/initialDiagnosis";
 import { generateTalentProfileWithFallback } from "@/lib/reports/principlesyouSync";
 import { reportStore } from "@/lib/reports/store";
 import type { AssessmentProfile } from "@/lib/reports/assessmentProfile";
@@ -210,22 +209,6 @@ export async function POST(req: Request) {
     entityId: profile.id,
     metadata: { customer_name: profile.customer_name },
   });
-
-  // 异步预生成初步诊断文案（不阻塞提交响应）。
-  // Serverless 环境下若被提前回收，报告页首次访问时会兜底生成。
-  const warmup = ensureInitialDiagnosis(
-    profile,
-    (p) => store.saveAssessmentProfile(p),
-    (id) => store.getAssessmentProfile(id)
-  ).catch((error) =>
-    console.warn("[assessment-profiles] 初步诊断预生成失败：", (error as Error)?.message)
-  );
-  try {
-    const { waitUntil } = await import("@vercel/functions");
-    waitUntil(warmup);
-  } catch {
-    void warmup;
-  }
 
   const links = publicReportLinks(profile.id);
 

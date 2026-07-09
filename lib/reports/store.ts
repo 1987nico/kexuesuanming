@@ -99,6 +99,14 @@ function assessmentProfileRow(profile: AssessmentProfile) {
   };
 }
 
+function wait(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function profileSaveRetryDelayMs(attempt: number) {
+  return Math.min(1200, 80 * attempt + Math.floor(Math.random() * 120));
+}
+
 function reportStoreFilePath() {
   return path.join(process.cwd(), ".data", "report-store.json");
 }
@@ -297,7 +305,7 @@ class SupabaseReportStore implements ReportStore {
   }
 
   async saveAssessmentProfile(profile: AssessmentProfile) {
-    for (let attempt = 1; attempt <= 6; attempt++) {
+    for (let attempt = 1; attempt <= 20; attempt++) {
       const { data: existingData, error: existingError } = await this.db
         .from("assessment_profiles")
         .select("updated_at,payload")
@@ -312,7 +320,8 @@ class SupabaseReportStore implements ReportStore {
       if (!existingData) {
         const { error: insertError } = await this.db.from("assessment_profiles").insert(row);
         if (!insertError) return;
-        if (attempt === 6 || insertError.code !== "23505") throw insertError;
+        if (attempt === 20 || insertError.code !== "23505") throw insertError;
+        await wait(profileSaveRetryDelayMs(attempt));
         continue;
       }
 
@@ -325,6 +334,7 @@ class SupabaseReportStore implements ReportStore {
         .maybeSingle();
       if (updateError) throw updateError;
       if (updatedRow) return;
+      await wait(profileSaveRetryDelayMs(attempt));
     }
 
     throw new Error(`[reportStore] assessment profile ${profile.id} 保存冲突过多，请重试。`);
