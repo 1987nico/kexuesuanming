@@ -197,7 +197,8 @@ export async function POST(req: Request) {
     updated_at: timestamp,
   };
 
-  await reportStore().saveAssessmentProfile(profile);
+  const store = reportStore();
+  await store.saveAssessmentProfile(profile);
 
   // 交付模块登记：每份底稿自动生成一条初步诊断订单（状态：交付中）
   const order = await createDeliveryOrder(profile);
@@ -212,7 +213,11 @@ export async function POST(req: Request) {
 
   // 异步预生成初步诊断文案（不阻塞提交响应）。
   // Serverless 环境下若被提前回收，报告页首次访问时会兜底生成。
-  const warmup = ensureInitialDiagnosis(profile, (p) => reportStore().saveAssessmentProfile(p)).catch((error) =>
+  const warmup = ensureInitialDiagnosis(
+    profile,
+    (p) => store.saveAssessmentProfile(p),
+    (id) => store.getAssessmentProfile(id)
+  ).catch((error) =>
     console.warn("[assessment-profiles] 初步诊断预生成失败：", (error as Error)?.message)
   );
   try {

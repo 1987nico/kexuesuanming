@@ -66,6 +66,19 @@ export interface InitialDiagnosisGenerated extends InitialDiagnosisFields {
   llm_generated: boolean;
 }
 
+export function mergeInitialDiagnosisIntoProfile(
+  baseProfile: AssessmentProfile,
+  generated: InitialDiagnosisGenerated,
+  updatedAt: string,
+  latestProfile?: AssessmentProfile | null
+): AssessmentProfile {
+  return {
+    ...(latestProfile ?? baseProfile),
+    initial_diagnosis: generated,
+    updated_at: updatedAt,
+  };
+}
+
 // 内部工作术语，绝不允许出现在客户可见文案里
 const BANNED_TERMS = ["科学算命", "小报告", "大报告", "lite", "deep", "VRIN", "转化桥", "upsell", "客单"];
 
@@ -287,12 +300,16 @@ export async function generateInitialDiagnosis(profile: AssessmentProfile): Prom
  */
 export async function ensureInitialDiagnosis(
   profile: AssessmentProfile,
-  save: (profile: AssessmentProfile) => Promise<void>
+  save: (profile: AssessmentProfile) => Promise<void>,
+  loadLatest?: (id: string) => Promise<AssessmentProfile | null>
 ): Promise<InitialDiagnosisGenerated> {
   if (profile.initial_diagnosis?.llm_generated) return profile.initial_diagnosis;
   const generated = await generateInitialDiagnosis(profile);
+  const updatedAt = new Date().toISOString();
+  const latest = loadLatest ? await loadLatest(profile.id) : null;
+  const nextProfile = mergeInitialDiagnosisIntoProfile(profile, generated, updatedAt, latest);
+  await save(nextProfile);
   profile.initial_diagnosis = generated;
-  profile.updated_at = new Date().toISOString();
-  await save(profile);
+  profile.updated_at = updatedAt;
   return generated;
 }

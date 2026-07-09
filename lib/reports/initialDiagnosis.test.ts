@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { AssessmentProfile } from "./assessmentProfile";
-import { buildFallbackDiagnosis, findBannedTerms, initialDiagnosisSchema } from "./initialDiagnosis";
+import {
+  buildFallbackDiagnosis,
+  findBannedTerms,
+  initialDiagnosisSchema,
+  mergeInitialDiagnosisIntoProfile,
+  type InitialDiagnosisGenerated,
+} from "./initialDiagnosis";
 
 const profile: AssessmentProfile = {
   id: "550e8400-e29b-41d4-a716-446655440000",
@@ -65,5 +71,35 @@ describe("initial diagnosis fallback", () => {
     const fallback = buildFallbackDiagnosis(profile);
     const polluted = { ...fallback, main_judgement: "这份小报告使用了科学算命方法论。" };
     expect(findBannedTerms(polluted)).toEqual(expect.arrayContaining(["科学算命", "小报告"]));
+  });
+
+  it("merges generated diagnosis into the latest profile without resetting direction progress", () => {
+    const generated: InitialDiagnosisGenerated = {
+      ...buildFallbackDiagnosis(profile),
+      generated_at: "2026-07-09T00:00:00.000Z",
+      provider: "fallback",
+      model: "deterministic",
+      llm_generated: false,
+    };
+    const latest: AssessmentProfile = {
+      ...profile,
+      direction_session: {
+        status: "active",
+        target_likes: 10,
+        cards: [],
+        swipes: [{ card_id: "c7", liked: true, swiped_at: "2026-07-09T00:00:07.000Z" }],
+        rounds_generated: 1,
+        generating: false,
+        created_at: "2026-07-09T00:00:00.000Z",
+        updated_at: "2026-07-09T00:00:07.000Z",
+      },
+      updated_at: "2026-07-09T00:00:07.000Z",
+    };
+
+    const merged = mergeInitialDiagnosisIntoProfile(profile, generated, "2026-07-09T00:01:00.000Z", latest);
+
+    expect(merged.initial_diagnosis).toBe(generated);
+    expect(merged.direction_session?.swipes).toHaveLength(1);
+    expect(merged.direction_session?.swipes[0]).toMatchObject({ card_id: "c7", liked: true });
   });
 });

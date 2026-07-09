@@ -31,7 +31,11 @@ export async function GET(req: Request, { params }: { params: { profileId: strin
   }
 
   // 确保判断性文案已生成（正常情况下提交时已异步生成并缓存）
-  const diagnosis = await ensureInitialDiagnosis(profile, (p) => store.saveAssessmentProfile(p));
+  const diagnosis = await ensureInitialDiagnosis(
+    profile,
+    (p) => store.saveAssessmentProfile(p),
+    (id) => store.getAssessmentProfile(id)
+  );
 
   // 缓存 key 与文案版本绑定：重新生成文案后会自动重渲染
   const version = Buffer.from(`${INITIAL_REPORT_RENDER_VERSION}:${diagnosis.generated_at}:${profile.talent_profile.mode}`).toString("hex").slice(0, 20);

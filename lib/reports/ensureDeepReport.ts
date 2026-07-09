@@ -35,6 +35,7 @@ function isDeepReportStale(profile: AssessmentProfile): boolean {
 export interface EnsureDeepReportOptions {
   regenerate?: boolean;
   withDiagrams?: boolean;
+  loadLatest?: (id: string) => Promise<AssessmentProfile | null>;
 }
 
 /**
@@ -52,16 +53,20 @@ export async function ensureDeepReport(
   }
 
   // 小报告判断层必须先就绪，大报告与之逻辑一致
-  await ensureInitialDiagnosis(profile, save);
+  await ensureInitialDiagnosis(profile, save, opts?.loadLatest);
 
   const { generated } = await generateGoldenDeepReport(profile, {
     initialDiagnosis: profile.initial_diagnosis,
     forceFixture: process.env.GOLDEN_DEEP_FORCE_FIXTURE === "1",
   });
 
+  const latest = opts?.loadLatest ? await opts.loadLatest(profile.id) : null;
+  const nextProfile = latest ?? profile;
+  nextProfile.deep_report = generated;
+  nextProfile.updated_at = new Date().toISOString();
+  await save(nextProfile);
   profile.deep_report = generated;
-  profile.updated_at = new Date().toISOString();
-  await save(profile);
+  profile.updated_at = nextProfile.updated_at;
   return generated;
 }
 
@@ -74,7 +79,7 @@ export function warmupDeepReportAfterDirectionComplete(
   const run = async () => {
     const profile = await get(profileId);
     if (!profile?.direction_session || profile.direction_session.status !== "completed") return;
-    await ensureDeepReport(profile, save);
+    await ensureDeepReport(profile, save, { loadLatest: get });
   };
   run().catch((error) => console.warn("[ensureDeepReport] 异步预热失败：", (error as Error)?.message));
 }

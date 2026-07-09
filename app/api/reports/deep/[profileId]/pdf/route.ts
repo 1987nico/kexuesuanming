@@ -37,7 +37,9 @@ export async function GET(req: Request, { params }: { params: { profileId: strin
   if (goldenReport) {
     data = { ...goldenReport, generatedAt: goldenReport.generatedAt ?? goldenGeneratedAt, routeMarker };
   } else {
-    const generated = await ensureDeepReport(profile, (p) => store.saveAssessmentProfile(p));
+    const generated = await ensureDeepReport(profile, (p) => store.saveAssessmentProfile(p), {
+      loadLatest: (id) => store.getAssessmentProfile(id),
+    });
     data = toGoldenReportData(profile, generated);
     versionSource = generated.generated_at;
   }

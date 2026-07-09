@@ -30,10 +30,11 @@ export async function POST(req: Request, { params }: { params: { profileId: stri
   try {
     const data = await runGoldenReport(profile);
     // 存到 profile（新字段，不动旧 deep_report）
-    (profile as unknown as Record<string, unknown>).golden_report = data;
-    (profile as unknown as Record<string, unknown>).golden_generated_at = new Date().toISOString();
-    profile.updated_at = new Date().toISOString();
-    await store.saveAssessmentProfile(profile);
+    const latest = (await store.getAssessmentProfile(profile.id)) ?? profile;
+    (latest as unknown as Record<string, unknown>).golden_report = data;
+    (latest as unknown as Record<string, unknown>).golden_generated_at = new Date().toISOString();
+    latest.updated_at = new Date().toISOString();
+    await store.saveAssessmentProfile(latest);
 
     return NextResponse.json({
       ok: true,

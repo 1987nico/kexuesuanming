@@ -34,7 +34,11 @@ export default async function InitialDiagnosisReportPage({
   if (!profile) notFound();
 
   // 提交后已异步生成并缓存；这里兜底：首次访问若还没生成，同步生成一次
-  const diagnosis = await ensureInitialDiagnosis(profile, (p) => store.saveAssessmentProfile(p));
+  const diagnosis = await ensureInitialDiagnosis(
+    profile,
+    (p) => store.saveAssessmentProfile(p),
+    (id) => store.getAssessmentProfile(id)
+  );
 
   return (
     <main className="ir-root">

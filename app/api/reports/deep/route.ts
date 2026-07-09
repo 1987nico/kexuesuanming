@@ -42,6 +42,7 @@ export async function POST(req: Request) {
   const generated = await ensureDeepReport(profile, (p) => store.saveAssessmentProfile(p), {
     regenerate: parsed.data.regenerate,
     withDiagrams: parsed.data.with_diagrams,
+    loadLatest: (id) => store.getAssessmentProfile(id),
   });
 
   const effectiveProfile = { ...profile, deep_report: generated };
