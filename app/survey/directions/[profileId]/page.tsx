@@ -2,7 +2,11 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion, useMotionValue, useTransform } from "framer-motion";
-import { getDirectionSwipeProgress, shouldRestoreFailedSwipe } from "@/lib/reports/directionSwipeClient";
+import {
+  getDirectionSwipeProgress,
+  shouldIgnoreStaleServerSession,
+  shouldRestoreFailedSwipe,
+} from "@/lib/reports/directionSwipeClient";
 
 interface DirectionCard {
   id: string;
@@ -29,6 +33,10 @@ const SWIPE_THRESHOLD = 90;
 const SESSION_FETCH_TIMEOUT_MS = 15_000;
 const SWIPE_POST_TIMEOUT_MS = 15_000;
 const PENDING_SWIPE_STALE_MS = 12_000;
+
+interface ApplySessionOptions {
+  trustServer?: boolean;
+}
 
 async function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit = {}, timeoutMs = SESSION_FETCH_TIMEOUT_MS) {
   const controller = new AbortController();
@@ -95,18 +103,18 @@ export default function DirectionSwipePage({ params }: { params: { profileId: st
     });
   }, []);
 
-  const applyServerSession = useCallback((server: SessionView) => {
+  const applyServerSession = useCallback((server: SessionView, options: ApplySessionOptions = {}) => {
     const current = serverProgress.current;
-    const serverUpdatedAt = Date.parse(server.updated_at || "");
-    const currentUpdatedAt = Date.parse(current.updatedAt || "");
-    const staleProgress =
-      server.status !== "completed" &&
-      (server.swiped_count < current.swipedCount ||
-        (server.swiped_count === current.swipedCount && server.likes < current.likes) ||
-        (Number.isFinite(serverUpdatedAt) &&
-          Number.isFinite(currentUpdatedAt) &&
-          serverUpdatedAt < currentUpdatedAt &&
-          server.swiped_count <= current.swipedCount));
+    const staleProgress = shouldIgnoreStaleServerSession({
+      trustServer: Boolean(options.trustServer),
+      serverStatus: server.status,
+      serverLikes: server.likes,
+      serverSwipedCount: server.swiped_count,
+      serverUpdatedAt: server.updated_at,
+      currentLikes: current.likes,
+      currentSwipedCount: current.swipedCount,
+      currentUpdatedAt: current.updatedAt,
+    });
     if (staleProgress) {
       // 后台生成和滑动提交可能交错返回：进度旧可以丢，但新卡不能丢。
       mergeServerCards(server.cards);
@@ -146,7 +154,7 @@ export default function DirectionSwipePage({ params }: { params: { profileId: st
     mergeServerCards(server.cards);
   }, [mergeServerCards]);
 
-  const fetchSession = useCallback(async () => {
+  const fetchSession = useCallback(async (options: ApplySessionOptions = {}) => {
     try {
       const res = await fetchWithTimeout(
         `/api/reports/direction-sessions/${profileId}${accessQuery ?? ""}`,
@@ -155,7 +163,7 @@ export default function DirectionSwipePage({ params }: { params: { profileId: st
       );
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || "加载失败，请稍后重试。");
-      applyServerSession(data.session);
+      applyServerSession(data.session, options);
       setLoadError("");
     } catch (error) {
       setLoadError((error as Error).message);
@@ -170,7 +178,22 @@ export default function DirectionSwipePage({ params }: { params: { profileId: st
 
   useEffect(() => {
     if (accessQuery === null) return;
-    fetchSession();
+    fetchSession({ trustServer: true });
+  }, [accessQuery, fetchSession]);
+
+  useEffect(() => {
+    if (accessQuery === null) return;
+    const revalidateFromServer = () => {
+      if (document.visibilityState === "visible") {
+        void fetchSession({ trustServer: true });
+      }
+    };
+    window.addEventListener("pageshow", revalidateFromServer);
+    document.addEventListener("visibilitychange", revalidateFromServer);
+    return () => {
+      window.removeEventListener("pageshow", revalidateFromServer);
+      document.removeEventListener("visibilitychange", revalidateFromServer);
+    };
   }, [accessQuery, fetchSession]);
 
   // 队列见底但会话未完成时轮询等新卡
@@ -217,7 +240,7 @@ export default function DirectionSwipePage({ params }: { params: { profileId: st
           );
           const data = await res.json();
           if (!res.ok) throw new Error(data.message || "提交失败");
-          if (data.session) applyServerSession(data.session);
+          if (data.session) applyServerSession(data.session, { trustServer: true });
           setLastSwipeError("");
         })
         .catch(async () => {
@@ -229,7 +252,7 @@ export default function DirectionSwipePage({ params }: { params: { profileId: st
             return next;
           });
           setLastSwipeError(liked ? "刚才这次点亮还没有保存成功，请再点一次。" : "刚才这次划走还没有保存成功，请再试一次。");
-          await fetchSession();
+          await fetchSession({ trustServer: true });
           if (
             shouldRestoreFailedSwipe({
               cardId: card.id,
@@ -308,7 +331,7 @@ export default function DirectionSwipePage({ params }: { params: { profileId: st
               body="系统会自动拉取下一批方向；如果网络慢，可以点下面按钮立即重试。"
               pulsing
               actionLabel="立即重试"
-              onAction={fetchSession}
+              onAction={() => fetchSession({ trustServer: true })}
             />
           ) : (
             <>

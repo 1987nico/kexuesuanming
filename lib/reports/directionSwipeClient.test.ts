@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { getDirectionSwipeProgress, shouldRestoreFailedSwipe } from "./directionSwipeClient";
+import { getDirectionSwipeProgress, shouldIgnoreStaleServerSession, shouldRestoreFailedSwipe } from "./directionSwipeClient";
 
 describe("direction swipe client progress", () => {
   it("does not show a fake 10/10 while the final liked swipe is still pending", () => {
@@ -66,5 +66,20 @@ describe("direction swipe client progress", () => {
         completed: true,
       })
     ).toBe(false);
+  });
+
+  it("ignores older background responses but accepts trusted server revalidation", () => {
+    const base = {
+      serverStatus: "active" as const,
+      serverLikes: 0,
+      serverSwipedCount: 0,
+      serverUpdatedAt: "2026-07-08T12:00:00.000Z",
+      currentLikes: 7,
+      currentSwipedCount: 20,
+      currentUpdatedAt: "2026-07-09T02:30:00.000Z",
+    };
+
+    expect(shouldIgnoreStaleServerSession({ ...base, trustServer: false })).toBe(true);
+    expect(shouldIgnoreStaleServerSession({ ...base, trustServer: true })).toBe(false);
   });
 });

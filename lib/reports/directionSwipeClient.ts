@@ -45,3 +45,26 @@ export function shouldRestoreFailedSwipe(input: {
   if (input.completed || input.confirmedLikes >= input.targetLikes) return false;
   return !input.confirmedSwipedIds.has(input.cardId);
 }
+
+export function shouldIgnoreStaleServerSession(input: {
+  trustServer: boolean;
+  serverStatus: "active" | "completed";
+  serverLikes: number;
+  serverSwipedCount: number;
+  serverUpdatedAt: string;
+  currentLikes: number;
+  currentSwipedCount: number;
+  currentUpdatedAt: string;
+}) {
+  if (input.trustServer || input.serverStatus === "completed") return false;
+  const serverUpdatedAt = Date.parse(input.serverUpdatedAt || "");
+  const currentUpdatedAt = Date.parse(input.currentUpdatedAt || "");
+  return (
+    input.serverSwipedCount < input.currentSwipedCount ||
+    (input.serverSwipedCount === input.currentSwipedCount && input.serverLikes < input.currentLikes) ||
+    (Number.isFinite(serverUpdatedAt) &&
+      Number.isFinite(currentUpdatedAt) &&
+      serverUpdatedAt < currentUpdatedAt &&
+      input.serverSwipedCount <= input.currentSwipedCount)
+  );
+}
