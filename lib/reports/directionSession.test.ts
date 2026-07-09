@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   DIRECTION_MAX_ROUNDS,
   finalizeDirectionSessionIfNeeded,
+  lockDirectionGenerationIfNeeded,
   mergeDirectionSessions,
   recordSwipe,
   sessionClientView,
@@ -9,6 +10,7 @@ import {
   type DirectionCard,
   type DirectionSession,
 } from "./directionSession";
+import type { AssessmentProfile } from "./assessmentProfile";
 
 function card(id: string, round = 1): DirectionCard {
   return {
@@ -239,5 +241,34 @@ describe("direction session merge", () => {
     expect(result.duplicate).toBe(true);
     expect(s.swipes.map((swipe) => swipe.card_id)).toEqual(["c1"]);
     expect(sessionLikes(s)).toBe(1);
+  });
+
+  it("locks generation without blocking on new cards", async () => {
+    const s = session({
+      cards: [],
+      rounds_generated: 0,
+      updated_at: "2026-07-08T00:00:00.000Z",
+    });
+    const profile = {
+      id: "profile-1",
+      direction_session: s,
+      updated_at: s.updated_at,
+    } as AssessmentProfile;
+    let saved: DirectionSession | undefined;
+
+    const locked = await lockDirectionGenerationIfNeeded(profile, async (nextProfile) => {
+      saved = nextProfile.direction_session;
+    });
+
+    expect(locked).toBeTruthy();
+    expect(saved?.generating).toBe(true);
+    expect(saved?.rounds_generated).toBe(0);
+    expect(saved?.cards).toEqual([]);
+    expect(sessionClientView(saved!)).toMatchObject({
+      cards: [],
+      generating: true,
+      likes: 0,
+      swiped_count: 0,
+    });
   });
 });

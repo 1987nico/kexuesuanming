@@ -4,7 +4,8 @@ import { requireMianbaApiAuth } from "@/lib/auth/mianba";
 import { appendPublicAccessToken } from "@/lib/auth/publicAccess";
 import {
   createDirectionSession,
-  generateNextBatchIfNeeded,
+  lockDirectionGenerationIfNeeded,
+  runLockedDirectionGeneration,
 } from "@/lib/reports/directionSession";
 import { reportStore } from "@/lib/reports/store";
 
@@ -17,7 +18,7 @@ const bodySchema = z.object({
 });
 
 /**
- * 操作员发起「深度诊断报告测评」：创建（或复用）滑卡会话并预生成第一批方向。
+ * 操作员发起「深度诊断报告测评」：创建（或复用）滑卡会话并启动首批方向生成。
  */
 export async function POST(req: Request) {
   const guard = await requireMianbaApiAuth();
@@ -43,27 +44,24 @@ export async function POST(req: Request) {
     await store.saveAssessmentProfile(profile);
   }
 
-  // 操作员拿到链接前，先把首批 10 个方向卡生成好。
   if (profile.direction_session.status === "active" && profile.direction_session.rounds_generated === 0) {
-    try {
-      await generateNextBatchIfNeeded(
-        profile,
+    const generationProfile = await lockDirectionGenerationIfNeeded(
+      profile,
+      (p) => store.saveAssessmentProfile(p),
+      (id) => store.getAssessmentProfile(id)
+    );
+    if (generationProfile) {
+      const generation = runLockedDirectionGeneration(
+        generationProfile,
         (p) => store.saveAssessmentProfile(p),
         (id) => store.getAssessmentProfile(id)
-      );
-    } catch (error) {
-      console.warn("[direction-sessions] 首批方向生成失败：", (error as Error)?.message);
-      return NextResponse.json(
-        { error: "direction_generation_failed", message: "首批深度诊断报告测评选项生成失败，请稍后重试。" },
-        { status: 500 }
-      );
-    }
-
-    if (!profile.direction_session || profile.direction_session.rounds_generated === 0) {
-      return NextResponse.json(
-        { error: "direction_generation_failed", message: "首批深度诊断报告测评选项还没有生成完成，请稍后重试。" },
-        { status: 500 }
-      );
+      ).catch((error) => console.warn("[direction-sessions] 首批方向生成失败：", (error as Error)?.message));
+      try {
+        const { waitUntil } = await import("@vercel/functions");
+        waitUntil(generation);
+      } catch {
+        void generation;
+      }
     }
   }
 
@@ -75,6 +73,7 @@ export async function POST(req: Request) {
       rounds_generated: session.rounds_generated,
       swiped_count: session.swipes.length,
       likes: session.swipes.filter((swipe) => swipe.liked).length,
+      generating: session.generating,
     },
   });
 }

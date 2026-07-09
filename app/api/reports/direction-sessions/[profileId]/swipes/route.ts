@@ -3,9 +3,10 @@ import { z } from "zod";
 import {
   DIRECTION_PREFETCH_THRESHOLD,
   finalizeDirectionSessionIfNeeded,
-  generateNextBatchIfNeeded,
+  lockDirectionGenerationIfNeeded,
   mergeDirectionSessions,
   recordSwipe,
+  runLockedDirectionGeneration,
   sessionClientView,
   sessionVisibleUnswipedCards,
 } from "@/lib/reports/directionSession";
@@ -76,18 +77,25 @@ export async function POST(req: Request, { params }: { params: { profileId: stri
     responseSession.status === "active" &&
     sessionVisibleUnswipedCards(responseSession).length <= DIRECTION_PREFETCH_THRESHOLD
   ) {
-    const prefetch = generateNextBatchIfNeeded(
+    const generationProfile = await lockDirectionGenerationIfNeeded(
       nextProfile,
       (p) => store.saveAssessmentProfile(p),
       (id) => store.getAssessmentProfile(id)
-    ).catch((error) => console.warn("[direction-swipes] 预生成下一批失败：", (error as Error)?.message));
-    try {
-      const { waitUntil } = await import("@vercel/functions");
-      waitUntil(prefetch);
-    } catch {
-      void prefetch;
+    );
+    if (generationProfile) {
+      const prefetch = runLockedDirectionGeneration(
+        generationProfile,
+        (p) => store.saveAssessmentProfile(p),
+        (id) => store.getAssessmentProfile(id)
+      ).catch((error) => console.warn("[direction-swipes] 预生成下一批失败：", (error as Error)?.message));
+      try {
+        const { waitUntil } = await import("@vercel/functions");
+        waitUntil(prefetch);
+      } catch {
+        void prefetch;
+      }
     }
   }
 
-  return NextResponse.json({ session: sessionClientView(responseSession) });
+  return NextResponse.json({ session: sessionClientView(nextProfile.direction_session ?? responseSession) });
 }

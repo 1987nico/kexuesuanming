@@ -625,14 +625,14 @@ function isGenerationLocked(session: DirectionSession): boolean {
 }
 
 /**
- * 需要时生成下一批（带锁防并发；失败重试一次）。
- * 返回 true 表示实际生成了新批次。
+ * 需要时先抢占生成锁。这个函数只做轻量读写，不调用 LLM，
+ * 方便 API 先快速返回状态，再把耗时生成交给 waitUntil。
  */
-export async function generateNextBatchIfNeeded(
+export async function lockDirectionGenerationIfNeeded(
   profile: AssessmentProfile,
   save: (profile: AssessmentProfile) => Promise<void>,
   loadLatest?: (id: string) => Promise<AssessmentProfile | null>
-): Promise<boolean> {
+): Promise<AssessmentProfile | null> {
   let workingProfile = profile;
   if (loadLatest) {
     const latest = await loadLatest(profile.id);
@@ -645,18 +645,35 @@ export async function generateNextBatchIfNeeded(
   }
 
   const session = workingProfile.direction_session;
-  if (!session || session.status !== "active") return false;
-  if (sessionLikes(session) >= session.target_likes) return false;
-  if (session.rounds_generated >= DIRECTION_MAX_ROUNDS) return false;
-  if (sessionVisibleUnswipedCards(session).length > DIRECTION_PREFETCH_THRESHOLD) return false;
-  if (isGenerationLocked(session)) return false;
+  if (!session || session.status !== "active") return null;
+  if (sessionLikes(session) >= session.target_likes) return null;
+  if (session.rounds_generated >= DIRECTION_MAX_ROUNDS) return null;
+  if (sessionVisibleUnswipedCards(session).length > DIRECTION_PREFETCH_THRESHOLD) return null;
+  if (isGenerationLocked(session)) return null;
 
   session.generating = true;
   session.generating_started_at = new Date().toISOString();
   session.updated_at = session.generating_started_at;
   workingProfile.updated_at = session.updated_at;
   await save(workingProfile);
+  profile.direction_session = session;
+  profile.updated_at = workingProfile.updated_at;
 
+  return workingProfile;
+}
+
+/**
+ * 执行已抢锁的方向生成。调用方应通过 waitUntil/后台任务运行它，
+ * 避免用户取状态或滑卡请求被 LLM 耗时拖到超时。
+ */
+export async function runLockedDirectionGeneration(
+  profile: AssessmentProfile,
+  save: (profile: AssessmentProfile) => Promise<void>,
+  loadLatest?: (id: string) => Promise<AssessmentProfile | null>
+): Promise<boolean> {
+  const workingProfile = profile;
+  const session = workingProfile.direction_session;
+  if (!session || session.status !== "active") return false;
   try {
     let cards: DirectionCard[] | null = null;
     for (let attempt = 0; attempt < 3 && !cards; attempt++) {
@@ -691,6 +708,20 @@ export async function generateNextBatchIfNeeded(
       profile.updated_at = workingProfile.updated_at;
     }
   }
+}
+
+/**
+ * 需要时生成下一批（带锁防并发）。
+ * 返回 true 表示实际生成了新批次。
+ */
+export async function generateNextBatchIfNeeded(
+  profile: AssessmentProfile,
+  save: (profile: AssessmentProfile) => Promise<void>,
+  loadLatest?: (id: string) => Promise<AssessmentProfile | null>
+): Promise<boolean> {
+  const lockedProfile = await lockDirectionGenerationIfNeeded(profile, save, loadLatest);
+  if (!lockedProfile) return false;
+  return runLockedDirectionGeneration(lockedProfile, save, loadLatest);
 }
 
 /**

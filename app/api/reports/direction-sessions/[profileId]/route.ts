@@ -2,7 +2,8 @@ import { NextResponse } from "next/server";
 import {
   createDirectionSession,
   finalizeDirectionSessionIfNeeded,
-  generateNextBatchIfNeeded,
+  lockDirectionGenerationIfNeeded,
+  runLockedDirectionGeneration,
   sessionClientView,
 } from "@/lib/reports/directionSession";
 import { requireSignedOrMianbaAccess } from "@/lib/auth/publicAccess";
@@ -13,7 +14,8 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 120;
 
 /**
- * 用户端拉取会话状态与未滑卡片。卡片不足时同步补生成（首次打开等待第一批）。
+ * 用户端拉取会话状态与未滑卡片。卡片不足时只启动后台补生成，
+ * 状态接口本身必须快速返回，避免真实手机网络下被 LLM 生成拖超时。
  */
 export async function GET(req: Request, { params }: { params: { profileId: string } }) {
   const access = await requireSignedOrMianbaAccess(req, "direction-session", params.profileId);
@@ -37,12 +39,25 @@ export async function GET(req: Request, { params }: { params: { profileId: strin
     await store.saveAssessmentProfile(profile);
   }
 
-  // 首次公开打开或卡片见底时补生成（内部有锁与轮次上限；已有卡片时该调用立即返回）
-  await generateNextBatchIfNeeded(
+  // 首次公开打开或卡片见底时补生成；这里只抢锁并快速返回，耗时生成交给 waitUntil。
+  const generationProfile = await lockDirectionGenerationIfNeeded(
     profile,
     (p) => store.saveAssessmentProfile(p),
     (id) => store.getAssessmentProfile(id)
   );
+  if (generationProfile) {
+    const generation = runLockedDirectionGeneration(
+      generationProfile,
+      (p) => store.saveAssessmentProfile(p),
+      (id) => store.getAssessmentProfile(id)
+    ).catch((error) => console.warn("[direction-session:get] 后台生成方向失败：", (error as Error)?.message));
+    try {
+      const { waitUntil } = await import("@vercel/functions");
+      waitUntil(generation);
+    } catch {
+      void generation;
+    }
+  }
 
   return NextResponse.json({ session: sessionClientView(profile.direction_session) });
 }
