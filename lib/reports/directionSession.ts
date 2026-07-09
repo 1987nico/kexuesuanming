@@ -15,6 +15,7 @@ import { buildLiteCustomerInput } from "./builders";
 import { archetypeZhName, traitZhName } from "./talentNames";
 
 export const DIRECTION_BATCH_SIZE = 10;
+const DIRECTION_GENERATION_CANDIDATES = 12;
 export const DIRECTION_TARGET_LIKES = 10;
 export const DIRECTION_MAX_ROUNDS = 12;
 /** 剩余未滑卡片少于该值时预生成下一批：优先让下一批充分参考上一批反馈 */
@@ -183,7 +184,7 @@ title/role 约束：${rule.title_constraint}
 }
 
 const verifyBatchSchema = z.object({
-  invalid_titles: z.array(z.string()).max(DIRECTION_BATCH_SIZE),
+  invalid_titles: z.array(z.string()).max(DIRECTION_GENERATION_CANDIDATES),
 });
 
 // ---------- 类型 ----------
@@ -198,6 +199,8 @@ export interface DirectionCard {
   scene: string;
   role: string;
 }
+
+type DirectionLike = Pick<DirectionCard, "title" | "one_liner" | "typical_day" | "work_content" | "scene" | "role">;
 
 export interface DirectionSwipe {
   card_id: string;
@@ -230,7 +233,7 @@ const cardSchema = z.object({
 });
 
 const batchSchema = z.object({
-  directions: z.array(cardSchema).min(DIRECTION_BATCH_SIZE).max(DIRECTION_BATCH_SIZE + 2),
+  directions: z.array(cardSchema).min(DIRECTION_BATCH_SIZE).max(DIRECTION_GENERATION_CANDIDATES),
 });
 
 // ---------- 会话状态辅助 ----------
@@ -242,6 +245,15 @@ export function sessionLikes(session: DirectionSession): number {
 export function sessionUnswipedCards(session: DirectionSession): DirectionCard[] {
   const swiped = new Set(session.swipes.map((swipe) => swipe.card_id));
   return session.cards.filter((card) => !swiped.has(card.id));
+}
+
+export function sessionVisibleUnswipedCards(session: DirectionSession): DirectionCard[] {
+  const swiped = new Set(session.swipes.map((swipe) => swipe.card_id));
+  const swipedCards = session.cards.filter((card) => swiped.has(card.id));
+  return dedupeDirectionCards(
+    session.cards.filter((card) => !swiped.has(card.id)),
+    swipedCards
+  );
 }
 
 export function sessionLikedCards(session: DirectionSession): DirectionCard[] {
@@ -266,8 +278,72 @@ function earliestTimestamp(a?: string, b?: string) {
   return Date.parse(a) <= Date.parse(b) ? a : b;
 }
 
+function normalizeDirectionText(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/人工智能|ai|ＡＩ/gi, "")
+    .replace(/[\s\p{P}\p{S}]+/gu, "")
+    .trim();
+}
+
+function charSimilarity(a: string, b: string) {
+  if (!a || !b) return 0;
+  if (a === b) return 1;
+  const left = new Set([...a]);
+  const right = new Set([...b]);
+  let overlap = 0;
+  for (const item of left) {
+    if (right.has(item)) overlap += 1;
+  }
+  return overlap / Math.max(left.size, right.size);
+}
+
+function isDuplicateDirectionCard(left: DirectionLike, right: DirectionLike) {
+  const leftTitle = normalizeDirectionText(left.title);
+  const rightTitle = normalizeDirectionText(right.title);
+  if (leftTitle && leftTitle === rightTitle) return true;
+
+  const leftRole = normalizeDirectionText(left.role);
+  const rightRole = normalizeDirectionText(right.role);
+  const leftScene = normalizeDirectionText(left.scene);
+  const rightScene = normalizeDirectionText(right.scene);
+  if (leftRole && leftScene && leftRole === rightRole && leftScene === rightScene) return true;
+
+  const titleSimilarity = charSimilarity(leftTitle, rightTitle);
+  if (
+    titleSimilarity >= 0.82 &&
+    (charSimilarity(normalizeDirectionText(left.one_liner), normalizeDirectionText(right.one_liner)) >= 0.58 ||
+      charSimilarity(leftRole, rightRole) >= 0.72 ||
+      charSimilarity(leftScene, rightScene) >= 0.66)
+  ) {
+    return true;
+  }
+
+  return (
+    leftRole.length >= 4 &&
+    rightRole.length >= 4 &&
+    charSimilarity(leftRole, rightRole) >= 0.88 &&
+    charSimilarity(leftScene, rightScene) >= 0.72
+  );
+}
+
+function hasDuplicateDirectionCard(cards: DirectionLike[], card: DirectionLike) {
+  return cards.some((item) => isDuplicateDirectionCard(item, card));
+}
+
+function dedupeDirectionCards<T extends DirectionLike>(cards: T[], baseline: DirectionLike[] = []) {
+  const accepted = [...baseline];
+  const result: T[] = [];
+  for (const card of cards) {
+    if (hasDuplicateDirectionCard(accepted, card)) continue;
+    accepted.push(card);
+    result.push(card);
+  }
+  return result;
+}
+
 function pushUniqueCard(cards: DirectionCard[], card: DirectionCard) {
-  if (cards.some((item) => item.id === card.id || item.title === card.title)) return;
+  if (cards.some((item) => item.id === card.id) || hasDuplicateDirectionCard(cards, card)) return;
   cards.push(card);
 }
 
@@ -350,6 +426,7 @@ const SYSTEM_PROMPT = `你是「职场参谋」的职业/事业方向发散顾�
 
 硬性要求：
 - 全程中文、大白话。每个方向必须具体到「角色 + 场景」，不能是笼统的行业名（「做餐饮」不行，「夜市小吃摊主理人」可以）。
+- 同一批、同一会话内绝不允许重复或换皮重复：标题、角色、场景、典型一天高度相似的方向都算重复。
 - 严格遵守【决策类型约束】中的存在性规则——这是最高优先级，高于多样性要求。
 - 方向必须落在客户价值观喜欢区内，避开排除带、客户明确不碰的方向和想避开的状态。
 - 方向要与客户天赋高分特质匹配，避开重度依赖低分特质的形态。
@@ -438,7 +515,7 @@ ${decisionBlock}
 
 ${feedbackBlock}
 
-请输出如下 JSON，共 ${DIRECTION_BATCH_SIZE} 个方向（字数上限单位为中文字符，务必遵守）：
+请输出如下 JSON，共 ${DIRECTION_GENERATION_CANDIDATES} 个候选方向（系统会自动去重后展示 10 个；字数上限单位为中文字符，务必遵守）：
 {
   "directions": [
     {
@@ -509,9 +586,8 @@ async function generateBatchOnce(profile: AssessmentProfile, session: DirectionS
     }
   }
 
-  const existingTitles = new Set(session.cards.map((card) => card.title));
   const round = session.rounds_generated + 1;
-  const fresh = directions.filter((card) => !existingTitles.has(card.title));
+  const fresh = dedupeDirectionCards(directions, session.cards);
   if (fresh.length < DIRECTION_BATCH_SIZE - 2) {
     throw new Error(`生成的方向重复或不合规过多（仅 ${fresh.length} 个可用方向）`);
   }
@@ -601,6 +677,15 @@ export async function generateNextBatchIfNeeded(
  * 记录一次滑动并推进会话状态（够 10 个喜欢即完成）。
  */
 export function recordSwipe(session: DirectionSession, cardId: string, liked: boolean): { duplicate: boolean } {
+  if (sessionLikes(session) >= session.target_likes) {
+    session.status = "completed";
+    session.completed_at ??= new Date().toISOString();
+    session.generating = false;
+    session.generating_started_at = undefined;
+    session.updated_at = new Date().toISOString();
+    return { duplicate: true };
+  }
+  if (session.status === "completed") return { duplicate: true };
   if (session.swipes.some((swipe) => swipe.card_id === cardId)) return { duplicate: true };
   if (!session.cards.some((card) => card.id === cardId)) throw new Error("未知卡片");
 
@@ -609,6 +694,8 @@ export function recordSwipe(session: DirectionSession, cardId: string, liked: bo
   if (sessionLikes(session) >= session.target_likes) {
     session.status = "completed";
     session.completed_at = new Date().toISOString();
+    session.generating = false;
+    session.generating_started_at = undefined;
   }
   session.updated_at = new Date().toISOString();
   return { duplicate: false };
@@ -616,15 +703,16 @@ export function recordSwipe(session: DirectionSession, cardId: string, liked: bo
 
 /** 客户端视图（不泄露全部卡片与内部字段） */
 export function sessionClientView(session: DirectionSession) {
-  const cards = sessionUnswipedCards(session);
+  const completed = session.status === "completed" || sessionLikes(session) >= session.target_likes;
+  const cards = completed ? [] : sessionVisibleUnswipedCards(session);
   return {
-    status: session.status,
+    status: completed ? "completed" : session.status,
     likes: sessionLikes(session),
     target_likes: session.target_likes,
     swiped_count: session.swipes.length,
     swiped_card_ids: session.swipes.map((swipe) => swipe.card_id),
     cards,
-    generating: cards.length === 0 && session.generating && isGenerationLocked(session),
+    generating: !completed && cards.length === 0 && session.generating && isGenerationLocked(session),
     updated_at: session.updated_at,
   };
 }

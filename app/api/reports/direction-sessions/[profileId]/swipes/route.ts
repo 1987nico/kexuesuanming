@@ -40,6 +40,9 @@ export async function POST(req: Request, { params }: { params: { profileId: stri
     return NextResponse.json({ error: "not_found", message: "测评暂未开放。" }, { status: 404 });
   }
   const session = profile.direction_session;
+  if (session.status === "completed") {
+    return NextResponse.json({ session: sessionClientView(session) });
+  }
 
   try {
     recordSwipe(session, parsed.data.card_id, parsed.data.liked);

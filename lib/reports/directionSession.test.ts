@@ -17,8 +17,8 @@ function card(id: string, round = 1): DirectionCard {
     one_liner: "一句话说明",
     typical_day: "早上访谈，中午拆解，晚上输出方案。",
     work_content: "访谈/判断/输出",
-    scene: "测试场景",
-    role: "测试角色",
+    scene: `测试场景${id}`,
+    role: `测试角色${id}`,
   };
 }
 
@@ -171,5 +171,49 @@ describe("direction session merge", () => {
 
     expect(view.swiped_card_ids).toEqual(["c1", "c2"]);
     expect(view.updated_at).toBe("2026-07-08T00:00:03.000Z");
+  });
+
+  it("hides duplicate options from the client view", () => {
+    const s = session({
+      cards: [
+        { ...card("c1"), title: "AI社媒增长方案工作室主理人", role: "增长方案工作室主理人" },
+        { ...card("c2"), title: "AI社媒增长工作室主理人", role: "增长方案工作室主理人" },
+        { ...card("c3"), title: "本地商家AI获客服务站老板", role: "本地获客服务站老板" },
+      ],
+    });
+
+    const view = sessionClientView(s);
+
+    expect(view.cards.map((item) => item.id)).toEqual(["c1", "c3"]);
+  });
+
+  it("does not expose more options after completion", () => {
+    const s = session({
+      target_likes: 1,
+      cards: [card("c1"), card("c2")],
+      swipes: [{ card_id: "c1", liked: true, swiped_at: "2026-07-08T00:00:01.000Z" }],
+    });
+
+    const view = sessionClientView(s);
+
+    expect(view.status).toBe("completed");
+    expect(view.cards).toEqual([]);
+    expect(view.generating).toBe(false);
+  });
+
+  it("ignores new swipes after a session is complete", () => {
+    const s = session({
+      status: "completed",
+      target_likes: 1,
+      cards: [card("c1"), card("c2")],
+      swipes: [{ card_id: "c1", liked: true, swiped_at: "2026-07-08T00:00:01.000Z" }],
+      completed_at: "2026-07-08T00:00:02.000Z",
+    });
+
+    const result = recordSwipe(s, "c2", true);
+
+    expect(result.duplicate).toBe(true);
+    expect(s.swipes.map((swipe) => swipe.card_id)).toEqual(["c1"]);
+    expect(sessionLikes(s)).toBe(1);
   });
 });

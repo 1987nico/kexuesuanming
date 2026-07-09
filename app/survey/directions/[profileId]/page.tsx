@@ -48,12 +48,13 @@ export default function DirectionSwipePage({ params }: { params: { profileId: st
     const serverUpdatedAt = Date.parse(server.updated_at || "");
     const currentUpdatedAt = Date.parse(current.updatedAt || "");
     const staleProgress =
-      server.swiped_count < current.swipedCount ||
-      (server.swiped_count === current.swipedCount && server.likes < current.likes) ||
-      (Number.isFinite(serverUpdatedAt) &&
-        Number.isFinite(currentUpdatedAt) &&
-        serverUpdatedAt < currentUpdatedAt &&
-        server.swiped_count <= current.swipedCount);
+      server.status !== "completed" &&
+      (server.swiped_count < current.swipedCount ||
+        (server.swiped_count === current.swipedCount && server.likes < current.likes) ||
+        (Number.isFinite(serverUpdatedAt) &&
+          Number.isFinite(currentUpdatedAt) &&
+          serverUpdatedAt < currentUpdatedAt &&
+          server.swiped_count <= current.swipedCount));
     if (staleProgress) return;
 
     serverProgress.current = {
