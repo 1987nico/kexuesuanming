@@ -2,11 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireMianbaApiAuth } from "@/lib/auth/mianba";
 import { appendPublicAccessToken } from "@/lib/auth/publicAccess";
-import {
-  createDirectionSession,
-  lockDirectionGenerationIfNeeded,
-  runLockedDirectionGeneration,
-} from "@/lib/reports/directionSession";
+import { createDirectionSession } from "@/lib/reports/directionSession";
 import { reportStore } from "@/lib/reports/store";
 
 export const runtime = "nodejs";
@@ -18,7 +14,8 @@ const bodySchema = z.object({
 });
 
 /**
- * 操作员发起「深度诊断报告测评」：创建（或复用）滑卡会话并启动首批方向生成。
+ * 操作员发起「深度诊断报告测评」：创建（或复用）滑卡会话。
+ * 首批方向由用户端生成接口启动，避免后台生成链接时被 LLM 拖超时。
  */
 export async function POST(req: Request) {
   const guard = await requireMianbaApiAuth();
@@ -42,27 +39,6 @@ export async function POST(req: Request) {
     profile.direction_session = createDirectionSession();
     profile.updated_at = new Date().toISOString();
     await store.saveAssessmentProfile(profile);
-  }
-
-  if (profile.direction_session.status === "active" && profile.direction_session.rounds_generated === 0) {
-    const generationProfile = await lockDirectionGenerationIfNeeded(
-      profile,
-      (p) => store.saveAssessmentProfile(p),
-      (id) => store.getAssessmentProfile(id)
-    );
-    if (generationProfile) {
-      const generation = runLockedDirectionGeneration(
-        generationProfile,
-        (p) => store.saveAssessmentProfile(p),
-        (id) => store.getAssessmentProfile(id)
-      ).catch((error) => console.warn("[direction-sessions] 首批方向生成失败：", (error as Error)?.message));
-      try {
-        const { waitUntil } = await import("@vercel/functions");
-        waitUntil(generation);
-      } catch {
-        void generation;
-      }
-    }
   }
 
   const session = profile.direction_session;

@@ -33,7 +33,9 @@ interface SessionView {
 const SWIPE_THRESHOLD = 90;
 const SESSION_FETCH_TIMEOUT_MS = 15_000;
 const SWIPE_POST_TIMEOUT_MS = 15_000;
+const GENERATION_POST_TIMEOUT_MS = 115_000;
 const PENDING_SWIPE_STALE_MS = 12_000;
+const CLIENT_PREFETCH_THRESHOLD = 2;
 
 interface ApplySessionOptions {
   trustServer?: boolean;
@@ -53,6 +55,12 @@ async function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit = {}
   }
 }
 
+async function readResponseJson<T>(res: Response): Promise<T> {
+  const text = await res.text();
+  if (!text) return {} as T;
+  return JSON.parse(text) as T;
+}
+
 export default function DirectionSwipePage({ params }: { params: { profileId: string } }) {
   const { profileId } = params;
   const [accessQuery, setAccessQuery] = useState<string | null>(null);
@@ -70,6 +78,7 @@ export default function DirectionSwipePage({ params }: { params: { profileId: st
   const pendingCardIds = useRef(new Map<string, number>());
   const confirmedSwipedIds = useRef(new Set<string>());
   const swipePostQueue = useRef(Promise.resolve());
+  const generationInFlight = useRef(false);
   const serverProgress = useRef({ likes: 0, swipedCount: 0, updatedAt: "" });
 
   const clearStalePendingSwipes = useCallback((now = Date.now()) => {
@@ -171,14 +180,39 @@ export default function DirectionSwipePage({ params }: { params: { profileId: st
         { cache: "no-store" },
         SESSION_FETCH_TIMEOUT_MS
       );
-      const data = await res.json();
+      const data = await readResponseJson<{ session?: SessionView; message?: string }>(res);
       if (!res.ok) throw new Error(data.message || "加载失败，请稍后重试。");
+      if (!data.session) throw new Error("加载失败，请稍后重试。");
       applyServerSession(data.session, options);
       setLoadError("");
     } catch (error) {
       setLoadError((error as Error).message);
     }
   }, [accessQuery, applyServerSession, profileId]);
+
+  const triggerGeneration = useCallback(async () => {
+    if (accessQuery === null || generationInFlight.current || completed) return;
+    generationInFlight.current = true;
+    try {
+      const res = await fetchWithTimeout(
+        `/api/reports/direction-sessions/${profileId}/generate${accessQuery}`,
+        { method: "POST", cache: "no-store" },
+        GENERATION_POST_TIMEOUT_MS
+      );
+      const data = await readResponseJson<{ session?: SessionView; message?: string }>(res);
+      if (!res.ok) throw new Error(data.message || "方向生成失败，请稍后重试。");
+      if (data.session) {
+        applyServerSession(data.session, { trustServer: true });
+        setLoadError("");
+        setLastSwipeError("");
+      }
+    } catch (error) {
+      setLastSwipeError((error as Error).message || "方向生成还没成功，请点立即重试。");
+      await fetchSession({ trustServer: true });
+    } finally {
+      generationInFlight.current = false;
+    }
+  }, [accessQuery, applyServerSession, completed, fetchSession, profileId]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -222,6 +256,15 @@ export default function DirectionSwipePage({ params }: { params: { profileId: st
       if (pollTimer.current) clearTimeout(pollTimer.current);
     };
   }, [accessQuery, completed, queue.length, session, fetchSession]);
+
+  // 没卡或剩余卡片很少时，由客户端单独触发生成接口；状态/滑卡接口保持轻量。
+  useEffect(() => {
+    if (accessQuery === null || completed || !session || session.status === "completed") return;
+    const availableCards = Math.max(queue.length, session.cards.length);
+    if (availableCards <= CLIENT_PREFETCH_THRESHOLD && !session.generating) {
+      void triggerGeneration();
+    }
+  }, [accessQuery, completed, queue.length, session, triggerGeneration]);
 
   const targetLikes = session?.target_likes ?? 10;
 
@@ -273,7 +316,7 @@ export default function DirectionSwipePage({ params }: { params: { profileId: st
             },
             SWIPE_POST_TIMEOUT_MS
           );
-          const data = await res.json();
+          const data = await readResponseJson<{ session?: SessionView; message?: string }>(res);
           if (!res.ok) throw new Error(data.message || "提交失败");
           if (data.session) applyServerSession(data.session, { trustServer: true });
           setLastSwipeError("");
@@ -367,7 +410,10 @@ export default function DirectionSwipePage({ params }: { params: { profileId: st
               body="系统会自动拉取下一批方向；如果网络慢，可以点下面按钮立即重试。"
               pulsing
               actionLabel="立即重试"
-              onAction={() => fetchSession({ trustServer: true })}
+              onAction={() => {
+                void triggerGeneration();
+                void fetchSession({ trustServer: true });
+              }}
             />
           ) : (
             <>

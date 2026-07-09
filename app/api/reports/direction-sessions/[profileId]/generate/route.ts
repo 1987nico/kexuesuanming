@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import {
   createDirectionSession,
   finalizeDirectionSessionIfNeeded,
+  generateNextBatchIfNeeded,
   sessionClientView,
 } from "@/lib/reports/directionSession";
 import { requireSignedOrMianbaAccess } from "@/lib/auth/publicAccess";
@@ -12,17 +13,17 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 120;
 
 /**
- * 用户端拉取会话状态与未滑卡片。这个接口只读/轻量保存状态，
- * 不调用 LLM，避免真实手机网络下被方向生成拖超时。
+ * 独立生成下一批方向。这个接口可以等待 LLM，
+ * 但它不承载“保存滑卡进度”，因此不会把点亮数卡住或回退。
  */
-export async function GET(req: Request, { params }: { params: { profileId: string } }) {
+export async function POST(req: Request, { params }: { params: { profileId: string } }) {
   const access = await requireSignedOrMianbaAccess(req, "direction-session", params.profileId);
   if (access) return access;
 
   const store = reportStore();
   const profile = await store.getAssessmentProfile(params.profileId);
   if (!profile) {
-    console.warn("[direction-session:get] profile_not_found", { profileId: params.profileId });
+    console.warn("[direction-session:generate] profile_not_found", { profileId: params.profileId });
     return NextResponse.json({ error: "not_found", message: "没有找到这份测评，请联系你的参谋顾问重新发送。" }, { status: 404 });
   }
 
@@ -35,7 +36,20 @@ export async function GET(req: Request, { params }: { params: { profileId: strin
   if (finalizeDirectionSessionIfNeeded(profile.direction_session)) {
     profile.updated_at = profile.direction_session.updated_at;
     await store.saveAssessmentProfile(profile);
+    return NextResponse.json({ session: sessionClientView(profile.direction_session) });
   }
 
-  return NextResponse.json({ session: sessionClientView(profile.direction_session) });
+  await generateNextBatchIfNeeded(
+    profile,
+    (p) => store.saveAssessmentProfile(p),
+    (id) => store.getAssessmentProfile(id)
+  );
+
+  const latest = (await store.getAssessmentProfile(params.profileId)) ?? profile;
+  if (latest.direction_session && finalizeDirectionSessionIfNeeded(latest.direction_session)) {
+    latest.updated_at = latest.direction_session.updated_at;
+    await store.saveAssessmentProfile(latest);
+  }
+
+  return NextResponse.json({ session: sessionClientView(latest.direction_session ?? profile.direction_session) });
 }
