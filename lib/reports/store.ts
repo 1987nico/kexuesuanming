@@ -1,5 +1,6 @@
 import { assertCloudDatabaseConfigured, isDBConfigured, supabaseServer } from "@/lib/db/supabase";
 import type { AssessmentProfile } from "./assessmentProfile";
+import { mergeDirectionSessions } from "./directionSession";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
@@ -54,6 +55,33 @@ interface FileReportStoreState {
   orders: ReportOrder[];
 }
 
+type AssessmentProfilePayload = AssessmentProfile & Record<string, unknown>;
+
+export function mergeAssessmentProfileForSave(
+  existing: AssessmentProfile | null | undefined,
+  incoming: AssessmentProfile
+): AssessmentProfile {
+  if (!existing) return incoming;
+  const next: AssessmentProfilePayload = {
+    ...(existing as AssessmentProfilePayload),
+    ...(incoming as AssessmentProfilePayload),
+  };
+
+  const mergedDirectionSession = mergeDirectionSessions(existing.direction_session, incoming.direction_session, {
+    preferIncomingGenerationState: true,
+  });
+  if (mergedDirectionSession) next.direction_session = mergedDirectionSession;
+
+  if (existing.initial_diagnosis && !incoming.initial_diagnosis) {
+    next.initial_diagnosis = existing.initial_diagnosis;
+  }
+  if (existing.deep_report && !incoming.deep_report) {
+    next.deep_report = existing.deep_report;
+  }
+
+  return next;
+}
+
 function reportStoreFilePath() {
   return path.join(process.cwd(), ".data", "report-store.json");
 }
@@ -79,7 +107,7 @@ export class MemoryReportStore implements ReportStore {
   private orders = new Map<string, ReportOrder>();
 
   async saveAssessmentProfile(profile: AssessmentProfile) {
-    this.profiles.set(profile.id, profile);
+    this.profiles.set(profile.id, mergeAssessmentProfileForSave(this.profiles.get(profile.id), profile));
   }
 
   async getAssessmentProfile(id: string) {
@@ -168,8 +196,9 @@ export class FileReportStore implements ReportStore {
 
   async saveAssessmentProfile(profile: AssessmentProfile) {
     const index = this.state.profiles.findIndex((item) => item.id === profile.id);
-    if (index >= 0) this.state.profiles[index] = profile;
-    else this.state.profiles.push(profile);
+    const merged = mergeAssessmentProfileForSave(index >= 0 ? this.state.profiles[index] : null, profile);
+    if (index >= 0) this.state.profiles[index] = merged;
+    else this.state.profiles.push(merged);
     this.persist();
   }
 
@@ -251,19 +280,27 @@ class SupabaseReportStore implements ReportStore {
   }
 
   async saveAssessmentProfile(profile: AssessmentProfile) {
+    const { data: existingData, error: existingError } = await this.db
+      .from("assessment_profiles")
+      .select("payload")
+      .eq("id", profile.id)
+      .maybeSingle();
+    if (existingError) throw existingError;
+    const mergedProfile = mergeAssessmentProfileForSave((existingData?.payload as AssessmentProfile | null) ?? null, profile);
+
     const { error } = await this.db.from("assessment_profiles").upsert({
-      id: profile.id,
-      tenant_id: profile.tenant_id,
-      owner_user_id: profile.owner_user_id ?? null,
-      customer_name: profile.customer_name,
-      customer_contact: profile.customer_contact,
-      value_profile: profile.value_profile,
-      talent_mode: profile.talent_profile.mode,
-      talent_answers: profile.talent_answers,
-      talent_profile: profile.talent_profile,
-      survey_answers: profile.survey_answers,
-      payload: profile,
-      updated_at: profile.updated_at,
+      id: mergedProfile.id,
+      tenant_id: mergedProfile.tenant_id,
+      owner_user_id: mergedProfile.owner_user_id ?? null,
+      customer_name: mergedProfile.customer_name,
+      customer_contact: mergedProfile.customer_contact,
+      value_profile: mergedProfile.value_profile,
+      talent_mode: mergedProfile.talent_profile.mode,
+      talent_answers: mergedProfile.talent_answers,
+      talent_profile: mergedProfile.talent_profile,
+      survey_answers: mergedProfile.survey_answers,
+      payload: mergedProfile,
+      updated_at: mergedProfile.updated_at,
     });
     if (error) throw error;
   }
