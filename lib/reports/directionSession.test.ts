@@ -97,6 +97,29 @@ describe("direction session merge", () => {
     expect(merged?.generating).toBe(true);
   });
 
+  it("clears an older generation lock when the completed generation state is newer", () => {
+    const latest = session({
+      cards: [card("c1"), card("c2")],
+      generating: true,
+      generating_started_at: "2026-07-08T00:00:01.000Z",
+      updated_at: "2026-07-08T00:00:01.000Z",
+    });
+    const incoming = session({
+      cards: [card("c1"), card("c2"), card("c3", 2), card("c4", 2)],
+      rounds_generated: 2,
+      generating: false,
+      generating_started_at: undefined,
+      updated_at: "2026-07-08T00:01:00.000Z",
+    });
+
+    const merged = mergeDirectionSessions(latest, incoming, { preferIncomingGenerationState: true });
+
+    expect(merged?.cards).toHaveLength(4);
+    expect(merged?.rounds_generated).toBe(2);
+    expect(merged?.generating).toBe(false);
+    expect(merged?.generating_started_at).toBeUndefined();
+  });
+
   it("marks the merged session completed once combined likes reach the target", () => {
     const latest = session({
       target_likes: 3,

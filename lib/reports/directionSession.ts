@@ -377,13 +377,13 @@ export function mergeDirectionSessions(
   const completed = likedCount >= targetLikes;
   const latestLocked = isGenerationLocked(latest);
   const incomingLocked = isGenerationLocked(incoming);
-  const latestStartedAt = latest.generating_started_at ? Date.parse(latest.generating_started_at) : 0;
-  const incomingStartedAt = incoming.generating_started_at ? Date.parse(incoming.generating_started_at) : 0;
-  const latestGenerationIsNewer = latestStartedAt > incomingStartedAt;
+  const latestUpdatedAt = latest.updated_at ? Date.parse(latest.updated_at) : 0;
+  const incomingUpdatedAt = incoming.updated_at ? Date.parse(incoming.updated_at) : 0;
+  const incomingStateIsNewer = incomingUpdatedAt >= latestUpdatedAt;
   const generating = options.preferIncomingGenerationState
-    ? latestGenerationIsNewer
-      ? latestLocked
-      : incomingLocked
+    ? incomingStateIsNewer
+      ? incomingLocked
+      : latestLocked
     : latestLocked || incomingLocked;
 
   return {
@@ -689,6 +689,7 @@ export async function runLockedDirectionGeneration(
     return true;
   } finally {
     session.generating = false;
+    session.generating_started_at = undefined;
     session.updated_at = new Date().toISOString();
     workingProfile.updated_at = session.updated_at;
     if (loadLatest) {
