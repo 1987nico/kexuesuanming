@@ -25,6 +25,19 @@ interface SessionView {
 }
 
 const SWIPE_THRESHOLD = 90;
+const SESSION_FETCH_TIMEOUT_MS = 15_000;
+const SWIPE_POST_TIMEOUT_MS = 15_000;
+const PENDING_SWIPE_STALE_MS = 12_000;
+
+async function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit = {}, timeoutMs = SESSION_FETCH_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(input, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 export default function DirectionSwipePage({ params }: { params: { profileId: string } }) {
   const { profileId } = params;
@@ -39,12 +52,34 @@ export default function DirectionSwipePage({ params }: { params: { profileId: st
   const [completed, setCompleted] = useState(false);
   const [exitDirection, setExitDirection] = useState<1 | -1>(1);
   const pollTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const pendingCardIds = useRef(new Set<string>());
+  const pendingCardIds = useRef(new Map<string, number>());
   const swipePostQueue = useRef(Promise.resolve());
   const serverProgress = useRef({ likes: 0, swipedCount: 0, updatedAt: "" });
 
   const mergeServerCards = useCallback((cards: DirectionCard[]) => {
     if (cards.length === 0) return;
+    const now = Date.now();
+    const stalePendingIds: string[] = [];
+    for (const card of cards) {
+      const startedAt = pendingCardIds.current.get(card.id);
+      if (startedAt && now - startedAt > PENDING_SWIPE_STALE_MS) {
+        pendingCardIds.current.delete(card.id);
+        stalePendingIds.push(card.id);
+      }
+    }
+    if (stalePendingIds.length > 0) {
+      setPendingSwipes((current) => {
+        let changed = false;
+        const next = { ...current };
+        for (const id of stalePendingIds) {
+          if (id in next) {
+            delete next[id];
+            changed = true;
+          }
+        }
+        return changed ? next : current;
+      });
+    }
     setQueue((current) => {
       const currentIds = new Set(current.map((card) => card.id));
       const next = [...current];
@@ -108,7 +143,11 @@ export default function DirectionSwipePage({ params }: { params: { profileId: st
 
   const fetchSession = useCallback(async () => {
     try {
-      const res = await fetch(`/api/reports/direction-sessions/${profileId}${accessQuery ?? ""}`, { cache: "no-store" });
+      const res = await fetchWithTimeout(
+        `/api/reports/direction-sessions/${profileId}${accessQuery ?? ""}`,
+        { cache: "no-store" },
+        SESSION_FETCH_TIMEOUT_MS
+      );
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || "加载失败，请稍后重试。");
       applyServerSession(data.session);
@@ -141,7 +180,7 @@ export default function DirectionSwipePage({ params }: { params: { profileId: st
   const swipe = useCallback(
     (card: DirectionCard, liked: boolean) => {
       if (pendingCardIds.current.has(card.id)) return;
-      pendingCardIds.current.add(card.id);
+      pendingCardIds.current.set(card.id, Date.now());
       setExitDirection(liked ? 1 : -1);
       setQueue((current) => current.filter((item) => item.id !== card.id));
       setPendingSwipes((current) => ({ ...current, [card.id]: liked }));
@@ -159,11 +198,15 @@ export default function DirectionSwipePage({ params }: { params: { profileId: st
       swipePostQueue.current = swipePostQueue.current
         .catch(() => undefined)
         .then(async () => {
-          const res = await fetch(`/api/reports/direction-sessions/${profileId}/swipes${accessQuery}`, {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({ card_id: card.id, liked }),
-          });
+          const res = await fetchWithTimeout(
+            `/api/reports/direction-sessions/${profileId}/swipes${accessQuery}`,
+            {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ card_id: card.id, liked }),
+            },
+            SWIPE_POST_TIMEOUT_MS
+          );
           const data = await res.json();
           if (!res.ok) throw new Error(data.message || "提交失败");
           if (data.session) applyServerSession(data.session);
