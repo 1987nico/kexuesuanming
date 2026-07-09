@@ -210,6 +210,7 @@ export default function NewReportProfilePage() {
   const answeredCount = questions.filter((question) => answers[question.number]).length;
   const currentPageComplete = currentQuestions.every((question) => answers[question.number]);
   const allComplete = questions.length === 252 && answeredCount === questions.length;
+  const isLastTalentPage = totalPages > 0 && page >= totalPages - 1;
   const intakeComplete = Boolean(customerName.trim()) && intakeQuestions.every((question) => intakeAnswers[question.key]?.trim());
   const valuesComplete = topValues.length === 3 && bottomValues.length === 3;
   const submitted = Boolean(profile);
@@ -338,13 +339,6 @@ export default function NewReportProfilePage() {
                 <div>天赋测评：{answeredCount} / {questions.length || 252}</div>
                 <div>当前页：{page + 1} / {totalPages || 1}</div>
               </div>
-              <button
-                className="mt-5 w-full rounded-none bg-[#b9a36b] px-5 py-4 text-sm font-semibold text-[#09090b] transition hover:opacity-90 disabled:opacity-40"
-                disabled={loading || submitted || !allComplete || !intakeComplete || !valuesComplete}
-                onClick={submitProfile}
-              >
-                {submitted ? "底稿已生成" : loading ? "正在整理..." : "完成并生成底稿"}
-              </button>
               <button
                 className="mt-3 w-full rounded-none border border-[#22201c] px-5 py-4 text-sm font-semibold text-[#f4efe6]/75"
                 type="button"
@@ -543,10 +537,20 @@ export default function NewReportProfilePage() {
                   </button>
                   <button
                     className="rounded-none bg-[#b9a36b] px-5 py-3 text-sm font-semibold text-[#09090b] disabled:opacity-40"
-                    disabled={!currentPageComplete || page >= totalPages - 1}
-                    onClick={() => goToPage((current) => current + 1)}
+                    disabled={
+                      isLastTalentPage
+                        ? loading || submitted || !allComplete || !intakeComplete || !valuesComplete
+                        : loading || !questions.length || !currentPageComplete
+                    }
+                    onClick={() => {
+                      if (isLastTalentPage) {
+                        void submitProfile();
+                      } else {
+                        goToPage((current) => current + 1);
+                      }
+                    }}
                   >
-                    下一页
+                    {isLastTalentPage ? (submitted ? "底稿已生成" : loading ? "提交中" : "完成提交") : "下一页"}
                   </button>
                 </div>
               </section>
