@@ -420,6 +420,26 @@ export function createDirectionSession(): DirectionSession {
   };
 }
 
+export function finalizeDirectionSessionIfNeeded(session: DirectionSession): boolean {
+  if (session.status === "completed") {
+    if (session.generating || session.generating_started_at) {
+      session.generating = false;
+      session.generating_started_at = undefined;
+      session.updated_at = new Date().toISOString();
+      return true;
+    }
+    return false;
+  }
+  if (sessionLikes(session) < session.target_likes) return false;
+
+  session.status = "completed";
+  session.completed_at ??= new Date().toISOString();
+  session.generating = false;
+  session.generating_started_at = undefined;
+  session.updated_at = session.completed_at;
+  return true;
+}
+
 // ---------- Prompt ----------
 
 const SYSTEM_PROMPT = `你是「职场参谋」的职业/事业方向发散顾问。你要基于客户的测评画像和「决策类型约束」，生成具体、可代入的方向卡片，供客户凭直觉判断「我每天真的过这种日子，我有多想做」。
@@ -677,11 +697,7 @@ export async function generateNextBatchIfNeeded(
  * 记录一次滑动并推进会话状态（够 10 个喜欢即完成）。
  */
 export function recordSwipe(session: DirectionSession, cardId: string, liked: boolean): { duplicate: boolean } {
-  if (sessionLikes(session) >= session.target_likes) {
-    session.status = "completed";
-    session.completed_at ??= new Date().toISOString();
-    session.generating = false;
-    session.generating_started_at = undefined;
+  if (finalizeDirectionSessionIfNeeded(session)) {
     session.updated_at = new Date().toISOString();
     return { duplicate: true };
   }
@@ -691,12 +707,7 @@ export function recordSwipe(session: DirectionSession, cardId: string, liked: bo
 
   session.swipes.push({ card_id: cardId, liked, swiped_at: new Date().toISOString() });
 
-  if (sessionLikes(session) >= session.target_likes) {
-    session.status = "completed";
-    session.completed_at = new Date().toISOString();
-    session.generating = false;
-    session.generating_started_at = undefined;
-  }
+  finalizeDirectionSessionIfNeeded(session);
   session.updated_at = new Date().toISOString();
   return { duplicate: false };
 }

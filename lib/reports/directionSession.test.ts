@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   DIRECTION_MAX_ROUNDS,
+  finalizeDirectionSessionIfNeeded,
   mergeDirectionSessions,
   recordSwipe,
   sessionClientView,
@@ -199,6 +200,29 @@ describe("direction session merge", () => {
     expect(view.status).toBe("completed");
     expect(view.cards).toEqual([]);
     expect(view.generating).toBe(false);
+  });
+
+  it("finalizes active sessions that already reached the target", () => {
+    const s = session({
+      target_likes: 2,
+      cards: [card("c1"), card("c2"), card("c3")],
+      swipes: [
+        { card_id: "c1", liked: true, swiped_at: "2026-07-08T00:00:01.000Z" },
+        { card_id: "c2", liked: true, swiped_at: "2026-07-08T00:00:02.000Z" },
+      ],
+      generating: true,
+      generating_started_at: "2026-07-08T00:00:03.000Z",
+    });
+
+    expect(finalizeDirectionSessionIfNeeded(s)).toBe(true);
+    expect(s.status).toBe("completed");
+    expect(s.generating).toBe(false);
+    expect(s.generating_started_at).toBeUndefined();
+    expect(sessionClientView(s)).toMatchObject({
+      status: "completed",
+      cards: [],
+      generating: false,
+    });
   });
 
   it("ignores new swipes after a session is complete", () => {

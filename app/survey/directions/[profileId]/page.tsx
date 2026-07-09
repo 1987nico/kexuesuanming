@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion, useMotionValue, useTransform } from "framer-motion";
+import { getDirectionSwipeProgress, shouldRestoreFailedSwipe } from "@/lib/reports/directionSwipeClient";
 
 interface DirectionCard {
   id: string;
@@ -50,9 +51,11 @@ export default function DirectionSwipePage({ params }: { params: { profileId: st
   const [swipedCount, setSwipedCount] = useState(0);
   const [pendingSwipes, setPendingSwipes] = useState<Record<string, boolean>>({});
   const [completed, setCompleted] = useState(false);
+  const [lastSwipeError, setLastSwipeError] = useState("");
   const [exitDirection, setExitDirection] = useState<1 | -1>(1);
   const pollTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingCardIds = useRef(new Map<string, number>());
+  const confirmedSwipedIds = useRef(new Set<string>());
   const swipePostQueue = useRef(Promise.resolve());
   const serverProgress = useRef({ likes: 0, swipedCount: 0, updatedAt: "" });
 
@@ -119,6 +122,7 @@ export default function DirectionSwipePage({ params }: { params: { profileId: st
     setLikes(server.likes);
     setSwipedCount(server.swiped_count);
     const confirmedIds = new Set(server.swiped_card_ids ?? []);
+    confirmedSwipedIds.current = confirmedIds;
     if (confirmedIds.size > 0) {
       setPendingSwipes((current) => {
         let changed = false;
@@ -136,6 +140,7 @@ export default function DirectionSwipePage({ params }: { params: { profileId: st
       setCompleted(true);
       setQueue([]);
       setPendingSwipes({});
+      setLastSwipeError("");
       return;
     }
     mergeServerCards(server.cards);
@@ -177,10 +182,13 @@ export default function DirectionSwipePage({ params }: { params: { profileId: st
     };
   }, [accessQuery, completed, queue.length, session, fetchSession]);
 
+  const targetLikes = session?.target_likes ?? 10;
+
   const swipe = useCallback(
     (card: DirectionCard, liked: boolean) => {
       if (pendingCardIds.current.has(card.id)) return;
       pendingCardIds.current.set(card.id, Date.now());
+      setLastSwipeError("");
       setExitDirection(liked ? 1 : -1);
       setQueue((current) => current.filter((item) => item.id !== card.id));
       setPendingSwipes((current) => ({ ...current, [card.id]: liked }));
@@ -210,6 +218,7 @@ export default function DirectionSwipePage({ params }: { params: { profileId: st
           const data = await res.json();
           if (!res.ok) throw new Error(data.message || "提交失败");
           if (data.session) applyServerSession(data.session);
+          setLastSwipeError("");
         })
         .catch(async () => {
           // 网络失败时用服务器状态校正，避免本地显示假进度。
@@ -219,21 +228,36 @@ export default function DirectionSwipePage({ params }: { params: { profileId: st
             delete next[card.id];
             return next;
           });
+          setLastSwipeError(liked ? "刚才这次点亮还没有保存成功，请再点一次。" : "刚才这次划走还没有保存成功，请再试一次。");
           await fetchSession();
+          if (
+            shouldRestoreFailedSwipe({
+              cardId: card.id,
+              confirmedSwipedIds: confirmedSwipedIds.current,
+              confirmedLikes: serverProgress.current.likes,
+              targetLikes,
+              completed,
+            })
+          ) {
+            setQueue((current) => (current.some((item) => item.id === card.id) ? current : [card, ...current]));
+          }
         })
         .finally(() => {
           pendingCardIds.current.delete(card.id);
         });
     },
-    [accessQuery, applyServerSession, fetchSession, profileId]
+    [accessQuery, applyServerSession, completed, fetchSession, profileId, targetLikes]
   );
 
-  const targetLikes = session?.target_likes ?? 10;
-  const pendingSwipeEntries = Object.entries(pendingSwipes);
-  const pendingLikedCount = pendingSwipeEntries.filter(([, liked]) => liked).length;
-  const pendingSwipeCount = pendingSwipeEntries.length;
-  const visibleLikes = Math.min(targetLikes, likes + pendingLikedCount);
-  const visibleSwipedCount = swipedCount + pendingSwipeCount;
+  const progress = getDirectionSwipeProgress({
+    confirmedLikes: likes,
+    confirmedSwipedCount: swipedCount,
+    targetLikes,
+    pendingSwipes,
+    completed,
+  });
+  const visibleLikes = progress.visibleLikes;
+  const visibleSwipedCount = progress.visibleSwipedCount;
   const topCard = queue[0];
 
   return (
@@ -257,6 +281,11 @@ export default function DirectionSwipePage({ params }: { params: { profileId: st
                 style={{ width: `${Math.min(100, (visibleLikes / targetLikes) * 100)}%` }}
               />
             </div>
+            {(progress.pendingSwipeCount > 0 || lastSwipeError) && (
+              <p className="mt-2 text-xs leading-5 text-[#b9a36b]/75">
+                {lastSwipeError || (progress.waitingForFinalConfirmation ? "正在保存最后一次点亮..." : "正在保存刚才的选择...")}
+              </p>
+            )}
           </div>
         </header>
 
@@ -271,7 +300,7 @@ export default function DirectionSwipePage({ params }: { params: { profileId: st
             />
           ) : !session ? (
             <CenterNote title="正在加载..." body="第一批方向正在准备中。" pulsing />
-          ) : visibleLikes >= targetLikes ? (
+          ) : progress.waitingForFinalConfirmation ? (
             <CenterNote title="正在确认完成..." body="正在保存最后一次点亮，保存成功后会自动结束。" pulsing />
           ) : !topCard ? (
             <CenterNote
@@ -300,7 +329,7 @@ export default function DirectionSwipePage({ params }: { params: { profileId: st
         </div>
 
         {/* 操作按钮：固定底部，长卡片时仍可点 */}
-        {!completed && visibleLikes < targetLikes && topCard && (
+        {!completed && !progress.waitingForFinalConfirmation && visibleLikes < targetLikes && topCard && (
           <div className="fixed inset-x-0 bottom-0 z-20 mx-auto max-w-md px-5 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-3">
             <div className="pointer-events-none absolute inset-x-0 bottom-0 h-28 bg-gradient-to-t from-[#09090b] via-[#09090b]/95 to-transparent" />
             <div className="relative flex items-center justify-center gap-6">

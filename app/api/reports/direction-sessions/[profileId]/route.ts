@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import {
   createDirectionSession,
+  finalizeDirectionSessionIfNeeded,
   generateNextBatchIfNeeded,
   sessionClientView,
 } from "@/lib/reports/directionSession";
@@ -28,6 +29,11 @@ export async function GET(req: Request, { params }: { params: { profileId: strin
   if (!profile.direction_session) {
     profile.direction_session = createDirectionSession();
     profile.updated_at = new Date().toISOString();
+    await store.saveAssessmentProfile(profile);
+  }
+
+  if (finalizeDirectionSessionIfNeeded(profile.direction_session)) {
+    profile.updated_at = profile.direction_session.updated_at;
     await store.saveAssessmentProfile(profile);
   }
 

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import {
   DIRECTION_PREFETCH_THRESHOLD,
+  finalizeDirectionSessionIfNeeded,
   generateNextBatchIfNeeded,
   mergeDirectionSessions,
   recordSwipe,
@@ -40,7 +41,11 @@ export async function POST(req: Request, { params }: { params: { profileId: stri
     return NextResponse.json({ error: "not_found", message: "测评暂未开放。" }, { status: 404 });
   }
   const session = profile.direction_session;
-  if (session.status === "completed") {
+  if (session.status === "completed" || finalizeDirectionSessionIfNeeded(session)) {
+    if (session.status === "completed") {
+      profile.updated_at = session.updated_at;
+      await store.saveAssessmentProfile(profile);
+    }
     return NextResponse.json({ session: sessionClientView(session) });
   }
 
