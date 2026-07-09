@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion, useMotionValue, useTransform } from "framer-motion";
 import {
   getDirectionSwipeProgress,
+  reconcileDirectionCardQueue,
   shouldIgnoreStaleServerSession,
   shouldRestoreFailedSwipe,
 } from "@/lib/reports/directionSwipeClient";
@@ -38,6 +39,10 @@ interface ApplySessionOptions {
   trustServer?: boolean;
 }
 
+interface MergeCardsOptions {
+  replace?: boolean;
+}
+
 async function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit = {}, timeoutMs = SESSION_FETCH_TIMEOUT_MS) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -67,15 +72,12 @@ export default function DirectionSwipePage({ params }: { params: { profileId: st
   const swipePostQueue = useRef(Promise.resolve());
   const serverProgress = useRef({ likes: 0, swipedCount: 0, updatedAt: "" });
 
-  const mergeServerCards = useCallback((cards: DirectionCard[]) => {
-    if (cards.length === 0) return;
-    const now = Date.now();
+  const clearStalePendingSwipes = useCallback((now = Date.now()) => {
     const stalePendingIds: string[] = [];
-    for (const card of cards) {
-      const startedAt = pendingCardIds.current.get(card.id);
+    for (const [cardId, startedAt] of pendingCardIds.current.entries()) {
       if (startedAt && now - startedAt > PENDING_SWIPE_STALE_MS) {
-        pendingCardIds.current.delete(card.id);
-        stalePendingIds.push(card.id);
+        pendingCardIds.current.delete(cardId);
+        stalePendingIds.push(cardId);
       }
     }
     if (stalePendingIds.length > 0) {
@@ -91,17 +93,21 @@ export default function DirectionSwipePage({ params }: { params: { profileId: st
         return changed ? next : current;
       });
     }
-    setQueue((current) => {
-      const currentIds = new Set(current.map((card) => card.id));
-      const next = [...current];
-      for (const card of cards) {
-        if (currentIds.has(card.id) || pendingCardIds.current.has(card.id)) continue;
-        currentIds.add(card.id);
-        next.push(card);
-      }
-      return next;
-    });
   }, []);
+
+  const mergeServerCards = useCallback((cards: DirectionCard[], options: MergeCardsOptions = {}) => {
+    clearStalePendingSwipes();
+    if (cards.length === 0 && !options.replace) return;
+    setQueue((current) => {
+      return reconcileDirectionCardQueue({
+        currentQueue: current,
+        serverCards: cards,
+        pendingCardIds: new Set(pendingCardIds.current.keys()),
+        confirmedSwipedIds: confirmedSwipedIds.current,
+        replace: Boolean(options.replace),
+      });
+    });
+  }, [clearStalePendingSwipes]);
 
   const applyServerSession = useCallback((server: SessionView, options: ApplySessionOptions = {}) => {
     const current = serverProgress.current;
@@ -132,6 +138,9 @@ export default function DirectionSwipePage({ params }: { params: { profileId: st
     const confirmedIds = new Set(server.swiped_card_ids ?? []);
     confirmedSwipedIds.current = confirmedIds;
     if (confirmedIds.size > 0) {
+      for (const id of confirmedIds) {
+        pendingCardIds.current.delete(id);
+      }
       setPendingSwipes((current) => {
         let changed = false;
         const next = { ...current };
@@ -151,7 +160,8 @@ export default function DirectionSwipePage({ params }: { params: { profileId: st
       setLastSwipeError("");
       return;
     }
-    mergeServerCards(server.cards);
+    setCompleted(false);
+    mergeServerCards(server.cards, { replace: Boolean(options.trustServer) });
   }, [mergeServerCards]);
 
   const fetchSession = useCallback(async (options: ApplySessionOptions = {}) => {
@@ -196,11 +206,19 @@ export default function DirectionSwipePage({ params }: { params: { profileId: st
     };
   }, [accessQuery, fetchSession]);
 
-  // 队列见底但会话未完成时轮询等新卡
+  // 队列见底但会话未完成时持续轮询，避免一次网络超时后永久停在等待态。
   useEffect(() => {
     if (accessQuery === null || completed || queue.length > 0 || !session) return;
-    pollTimer.current = setTimeout(fetchSession, 1500);
+    let cancelled = false;
+    const poll = async () => {
+      if (cancelled) return;
+      await fetchSession({ trustServer: true });
+      if (cancelled) return;
+      pollTimer.current = setTimeout(poll, 1800);
+    };
+    pollTimer.current = setTimeout(poll, 900);
     return () => {
+      cancelled = true;
       if (pollTimer.current) clearTimeout(pollTimer.current);
     };
   }, [accessQuery, completed, queue.length, session, fetchSession]);
@@ -209,7 +227,24 @@ export default function DirectionSwipePage({ params }: { params: { profileId: st
 
   const swipe = useCallback(
     (card: DirectionCard, liked: boolean) => {
-      if (pendingCardIds.current.has(card.id)) return;
+      clearStalePendingSwipes();
+      if (pendingCardIds.current.size > 0 && !pendingCardIds.current.has(card.id)) {
+        setLastSwipeError("正在保存刚才的选择，请等一下。");
+        return;
+      }
+      const pendingStartedAt = pendingCardIds.current.get(card.id);
+      if (pendingStartedAt) {
+        if (Date.now() - pendingStartedAt <= PENDING_SWIPE_STALE_MS) {
+          setLastSwipeError("这张卡正在保存，请等一下。");
+          return;
+        }
+        pendingCardIds.current.delete(card.id);
+        setPendingSwipes((current) => {
+          const next = { ...current };
+          delete next[card.id];
+          return next;
+        });
+      }
       pendingCardIds.current.set(card.id, Date.now());
       setLastSwipeError("");
       setExitDirection(liked ? 1 : -1);
@@ -269,7 +304,7 @@ export default function DirectionSwipePage({ params }: { params: { profileId: st
           pendingCardIds.current.delete(card.id);
         });
     },
-    [accessQuery, applyServerSession, completed, fetchSession, profileId, targetLikes]
+    [accessQuery, applyServerSession, clearStalePendingSwipes, completed, fetchSession, profileId, targetLikes]
   );
 
   const progress = getDirectionSwipeProgress({
@@ -282,6 +317,7 @@ export default function DirectionSwipePage({ params }: { params: { profileId: st
   const visibleLikes = progress.visibleLikes;
   const visibleSwipedCount = progress.visibleSwipedCount;
   const topCard = queue[0];
+  const hasPendingSwipe = progress.pendingSwipeCount > 0;
 
   return (
     <main className="min-h-dvh bg-[#09090b] text-[#f4efe6]">
@@ -343,6 +379,7 @@ export default function DirectionSwipePage({ params }: { params: { profileId: st
                 <SwipeCard
                   key={topCard.id}
                   card={topCard}
+                  disabled={hasPendingSwipe}
                   exitDirection={exitDirection}
                   onSwipe={(liked) => swipe(topCard, liked)}
                 />
@@ -358,14 +395,16 @@ export default function DirectionSwipePage({ params }: { params: { profileId: st
             <div className="relative flex items-center justify-center gap-6">
               <button
                 onClick={() => swipe(topCard, false)}
-                className="flex h-14 w-14 items-center justify-center rounded-full border border-[#3a352c] bg-[#111111] text-xl transition active:scale-90"
+                disabled={hasPendingSwipe}
+                className="flex h-14 w-14 items-center justify-center rounded-full border border-[#3a352c] bg-[#111111] text-xl transition active:scale-90 disabled:cursor-not-allowed disabled:opacity-45"
                 aria-label="不感兴趣"
               >
                 ✕
               </button>
               <button
                 onClick={() => swipe(topCard, true)}
-                className="flex h-16 w-16 items-center justify-center rounded-full bg-[#b9a36b] text-2xl text-[#09090b] shadow-[0_0_40px_rgba(185,163,107,0.35)] transition active:scale-90"
+                disabled={hasPendingSwipe}
+                className="flex h-16 w-16 items-center justify-center rounded-full bg-[#b9a36b] text-2xl text-[#09090b] shadow-[0_0_40px_rgba(185,163,107,0.35)] transition active:scale-90 disabled:cursor-not-allowed disabled:opacity-55"
                 aria-label="想试试"
               >
                 ♥
@@ -380,10 +419,12 @@ export default function DirectionSwipePage({ params }: { params: { profileId: st
 
 function SwipeCard({
   card,
+  disabled,
   exitDirection,
   onSwipe,
 }: {
   card: DirectionCard;
+  disabled: boolean;
   exitDirection: 1 | -1;
   onSwipe: (liked: boolean) => void;
 }) {
@@ -405,10 +446,11 @@ function SwipeCard({
         transition: { duration: 0.32 },
       }}
       transition={{ type: "spring", stiffness: 260, damping: 24 }}
-      drag="x"
+      drag={disabled ? false : "x"}
       dragConstraints={{ left: 0, right: 0 }}
       dragElastic={0.9}
       onDragEnd={(_, info) => {
+        if (disabled) return;
         if (info.offset.x > SWIPE_THRESHOLD) onSwipe(true);
         else if (info.offset.x < -SWIPE_THRESHOLD) onSwipe(false);
       }}

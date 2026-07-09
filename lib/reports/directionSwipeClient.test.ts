@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { getDirectionSwipeProgress, shouldIgnoreStaleServerSession, shouldRestoreFailedSwipe } from "./directionSwipeClient";
+import {
+  getDirectionSwipeProgress,
+  reconcileDirectionCardQueue,
+  shouldIgnoreStaleServerSession,
+  shouldRestoreFailedSwipe,
+} from "./directionSwipeClient";
 
 describe("direction swipe client progress", () => {
   it("does not show a fake 10/10 while the final liked swipe is still pending", () => {
@@ -81,5 +86,29 @@ describe("direction swipe client progress", () => {
 
     expect(shouldIgnoreStaleServerSession({ ...base, trustServer: false })).toBe(true);
     expect(shouldIgnoreStaleServerSession({ ...base, trustServer: true })).toBe(false);
+  });
+
+  it("replaces stale local cards when syncing from a trusted server state", () => {
+    const queue = reconcileDirectionCardQueue({
+      currentQueue: [{ id: "old-local" }, { id: "already-swiped" }],
+      serverCards: [{ id: "server-1" }, { id: "server-2" }],
+      pendingCardIds: new Set(),
+      confirmedSwipedIds: new Set(["already-swiped"]),
+      replace: true,
+    });
+
+    expect(queue.map((card) => card.id)).toEqual(["server-1", "server-2"]);
+  });
+
+  it("does not show pending or confirmed cards after a server card merge", () => {
+    const queue = reconcileDirectionCardQueue({
+      currentQueue: [{ id: "current" }, { id: "pending" }],
+      serverCards: [{ id: "pending" }, { id: "confirmed" }, { id: "new" }],
+      pendingCardIds: new Set(["pending"]),
+      confirmedSwipedIds: new Set(["confirmed"]),
+      replace: false,
+    });
+
+    expect(queue.map((card) => card.id)).toEqual(["current", "new"]);
   });
 });

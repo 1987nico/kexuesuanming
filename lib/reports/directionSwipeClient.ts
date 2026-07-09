@@ -68,3 +68,28 @@ export function shouldIgnoreStaleServerSession(input: {
       input.serverSwipedCount <= input.currentSwipedCount)
   );
 }
+
+export function reconcileDirectionCardQueue<T extends { id: string }>(input: {
+  currentQueue: T[];
+  serverCards: T[];
+  pendingCardIds: Set<string>;
+  confirmedSwipedIds: Set<string>;
+  replace: boolean;
+}): T[] {
+  const next = input.replace
+    ? []
+    : input.currentQueue.filter(
+        (card) => !input.pendingCardIds.has(card.id) && !input.confirmedSwipedIds.has(card.id)
+      );
+  const knownIds = new Set(next.map((card) => card.id));
+
+  for (const card of input.serverCards) {
+    if (knownIds.has(card.id) || input.pendingCardIds.has(card.id) || input.confirmedSwipedIds.has(card.id)) {
+      continue;
+    }
+    knownIds.add(card.id);
+    next.push(card);
+  }
+
+  return next;
+}
