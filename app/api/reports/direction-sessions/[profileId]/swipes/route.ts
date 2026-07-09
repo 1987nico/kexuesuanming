@@ -43,7 +43,9 @@ export async function POST(req: Request, { params }: { params: { profileId: stri
       profile.updated_at = session.updated_at;
       await store.saveAssessmentProfile(profile);
     }
-    return NextResponse.json({ session: sessionClientView(session) });
+    const response = NextResponse.json({ session: sessionClientView(session) });
+    response.headers.set("cache-control", "no-store, max-age=0");
+    return response;
   }
 
   try {
@@ -68,5 +70,7 @@ export async function POST(req: Request, { params }: { params: { profileId: stri
     );
   }
 
-  return NextResponse.json({ session: sessionClientView(nextProfile.direction_session ?? responseSession) });
+  const response = NextResponse.json({ session: sessionClientView(nextProfile.direction_session ?? responseSession) });
+  response.headers.set("cache-control", "no-store, max-age=0");
+  return response;
 }

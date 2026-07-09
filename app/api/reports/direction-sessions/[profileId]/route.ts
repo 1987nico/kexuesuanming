@@ -37,5 +37,7 @@ export async function GET(req: Request, { params }: { params: { profileId: strin
     await store.saveAssessmentProfile(profile);
   }
 
-  return NextResponse.json({ session: sessionClientView(profile.direction_session) });
+  const response = NextResponse.json({ session: sessionClientView(profile.direction_session) });
+  response.headers.set("cache-control", "no-store, max-age=0");
+  return response;
 }

@@ -36,7 +36,9 @@ export async function POST(req: Request, { params }: { params: { profileId: stri
   if (finalizeDirectionSessionIfNeeded(profile.direction_session)) {
     profile.updated_at = profile.direction_session.updated_at;
     await store.saveAssessmentProfile(profile);
-    return NextResponse.json({ session: sessionClientView(profile.direction_session) });
+    const response = NextResponse.json({ session: sessionClientView(profile.direction_session) });
+    response.headers.set("cache-control", "no-store, max-age=0");
+    return response;
   }
 
   await generateNextBatchIfNeeded(
@@ -51,5 +53,7 @@ export async function POST(req: Request, { params }: { params: { profileId: stri
     await store.saveAssessmentProfile(latest);
   }
 
-  return NextResponse.json({ session: sessionClientView(latest.direction_session ?? profile.direction_session) });
+  const response = NextResponse.json({ session: sessionClientView(latest.direction_session ?? profile.direction_session) });
+  response.headers.set("cache-control", "no-store, max-age=0");
+  return response;
 }

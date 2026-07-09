@@ -42,7 +42,7 @@ export async function POST(req: Request) {
   }
 
   const session = profile.direction_session;
-  return NextResponse.json({
+  const response = NextResponse.json({
     survey_url: surveyPath,
     session: {
       status: session.status,
@@ -52,4 +52,6 @@ export async function POST(req: Request) {
       generating: session.generating,
     },
   });
+  response.headers.set("cache-control", "no-store, max-age=0");
+  return response;
 }
