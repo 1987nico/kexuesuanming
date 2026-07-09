@@ -43,6 +43,20 @@ export default function DirectionSwipePage({ params }: { params: { profileId: st
   const swipePostQueue = useRef(Promise.resolve());
   const serverProgress = useRef({ likes: 0, swipedCount: 0, updatedAt: "" });
 
+  const mergeServerCards = useCallback((cards: DirectionCard[]) => {
+    if (cards.length === 0) return;
+    setQueue((current) => {
+      const currentIds = new Set(current.map((card) => card.id));
+      const next = [...current];
+      for (const card of cards) {
+        if (currentIds.has(card.id) || pendingCardIds.current.has(card.id)) continue;
+        currentIds.add(card.id);
+        next.push(card);
+      }
+      return next;
+    });
+  }, []);
+
   const applyServerSession = useCallback((server: SessionView) => {
     const current = serverProgress.current;
     const serverUpdatedAt = Date.parse(server.updated_at || "");
@@ -55,7 +69,11 @@ export default function DirectionSwipePage({ params }: { params: { profileId: st
           Number.isFinite(currentUpdatedAt) &&
           serverUpdatedAt < currentUpdatedAt &&
           server.swiped_count <= current.swipedCount));
-    if (staleProgress) return;
+    if (staleProgress) {
+      // 后台生成和滑动提交可能交错返回：进度旧可以丢，但新卡不能丢。
+      mergeServerCards(server.cards);
+      return;
+    }
 
     serverProgress.current = {
       likes: server.likes,
@@ -79,23 +97,14 @@ export default function DirectionSwipePage({ params }: { params: { profileId: st
         return changed ? next : current;
       });
     }
-    if (server.status === "completed") {
+    if (server.status === "completed" || server.likes >= server.target_likes) {
       setCompleted(true);
       setQueue([]);
       setPendingSwipes({});
       return;
     }
-    setQueue((current) => {
-      const currentIds = new Set(current.map((card) => card.id));
-      const next = [...current];
-      for (const card of server.cards) {
-        if (currentIds.has(card.id) || pendingCardIds.current.has(card.id)) continue;
-        currentIds.add(card.id);
-        next.push(card);
-      }
-      return next;
-    });
-  }, []);
+    mergeServerCards(server.cards);
+  }, [mergeServerCards]);
 
   const fetchSession = useCallback(async () => {
     try {

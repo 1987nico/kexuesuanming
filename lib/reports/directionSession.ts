@@ -4,7 +4,7 @@
  * 流程：
  * - 操作员在交付后台点「深度诊断报告测评入口」→ 基于初步诊断生成第一批 10 个方向卡。
  * - 用户打开链接滑卡：右滑 = 想试试（点亮），左滑 = 不感兴趣。
- * - 每批 10 个；剩余未滑卡片 ≤ 3 时，后台按用户的左右滑反馈自适应生成下一批（用户无感知）。
+ * - 每批 10 个；剩余未滑卡片 ≤ 2 时，后台按用户的左右滑反馈自适应生成下一批（用户无感知）。
  * - 收集到 10 个「点亮」即完成；未满 10 个不能提前完成。
  */
 
@@ -15,7 +15,7 @@ import { buildLiteCustomerInput } from "./builders";
 import { archetypeZhName, traitZhName } from "./talentNames";
 
 export const DIRECTION_BATCH_SIZE = 10;
-const DIRECTION_GENERATION_CANDIDATES = 12;
+const DIRECTION_GENERATION_CANDIDATES = 16;
 export const DIRECTION_TARGET_LIKES = 10;
 export const DIRECTION_MAX_ROUNDS = 12;
 /** 剩余未滑卡片少于该值时预生成下一批：优先让下一批充分参考上一批反馈 */
@@ -588,7 +588,7 @@ async function generateBatchOnce(profile: AssessmentProfile, session: DirectionS
 
   const round = session.rounds_generated + 1;
   const fresh = dedupeDirectionCards(directions, session.cards);
-  if (fresh.length < DIRECTION_BATCH_SIZE - 2) {
+  if (fresh.length < DIRECTION_BATCH_SIZE) {
     throw new Error(`生成的方向重复或不合规过多（仅 ${fresh.length} 个可用方向）`);
   }
   return fresh.slice(0, DIRECTION_BATCH_SIZE).map((card, index) => ({
@@ -628,7 +628,7 @@ export async function generateNextBatchIfNeeded(
   if (!session || session.status !== "active") return false;
   if (sessionLikes(session) >= session.target_likes) return false;
   if (session.rounds_generated >= DIRECTION_MAX_ROUNDS) return false;
-  if (sessionUnswipedCards(session).length > DIRECTION_PREFETCH_THRESHOLD) return false;
+  if (sessionVisibleUnswipedCards(session).length > DIRECTION_PREFETCH_THRESHOLD) return false;
   if (isGenerationLocked(session)) return false;
 
   session.generating = true;
@@ -639,7 +639,7 @@ export async function generateNextBatchIfNeeded(
 
   try {
     let cards: DirectionCard[] | null = null;
-    for (let attempt = 0; attempt < 2 && !cards; attempt++) {
+    for (let attempt = 0; attempt < 3 && !cards; attempt++) {
       try {
         cards = await generateBatchOnce(workingProfile, session);
       } catch (error) {

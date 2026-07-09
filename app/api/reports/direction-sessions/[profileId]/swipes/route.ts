@@ -6,7 +6,7 @@ import {
   mergeDirectionSessions,
   recordSwipe,
   sessionClientView,
-  sessionUnswipedCards,
+  sessionVisibleUnswipedCards,
 } from "@/lib/reports/directionSession";
 import { requireSignedOrMianbaAccess } from "@/lib/auth/publicAccess";
 import { warmupDeepReportAfterDirectionComplete } from "@/lib/reports/ensureDeepReport";
@@ -69,7 +69,7 @@ export async function POST(req: Request, { params }: { params: { profileId: stri
   // 触底预生成：后台跑，不阻塞本次滑动响应
   if (
     responseSession.status === "active" &&
-    sessionUnswipedCards(responseSession).length <= DIRECTION_PREFETCH_THRESHOLD
+    sessionVisibleUnswipedCards(responseSession).length <= DIRECTION_PREFETCH_THRESHOLD
   ) {
     const prefetch = generateNextBatchIfNeeded(
       nextProfile,
