@@ -14,6 +14,7 @@ import type {
   TopicCandidate,
 } from "@/lib/growth/types";
 import { GROWTH_PERSONA_LABELS, GROWTH_PERSONAS, PERSONA_SPECIFIC_FIELDS } from "@/lib/growth/types";
+import { scanDraftCompliance } from "@/lib/growth/validation";
 
 interface WorkspaceState {
   account: GrowthAccount | null;
@@ -155,6 +156,19 @@ function toAccountForm(account: GrowthAccount): AccountForm {
 
 function splitList(value: string, sep: RegExp) {
   return value.split(sep).map((s) => s.trim()).filter(Boolean);
+}
+
+function complianceView(draft: ContentDraft) {
+  const scannedIssues = scanDraftCompliance(draft).map((issue) => issue.message);
+  const issues = draft.compliance?.issues ?? [...new Set(scannedIssues)];
+  return {
+    status: draft.compliance?.status ?? (scannedIssues.length > 0 ? "blocked" : "passed"),
+    issues,
+  } as const;
+}
+
+function draftIsBlocked(draft: ContentDraft) {
+  return complianceView(draft).status === "blocked";
 }
 
 export default function XiaohongshuNotesPage() {
@@ -344,7 +358,8 @@ export default function XiaohongshuNotesPage() {
   async function markPublishedNote(draft: ContentDraft) {
     await run("标记已发布", async () => {
       const res = await fetch(`/api/growth/drafts/${draft.id}/publish`, { method: "POST" });
-      if (!res.ok) throw new Error("标记发布失败");
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.message || data.error || "标记发布失败");
       await loadWorkspaceKeepChosen(chosenDraft ?? draft);
     }, `发布:${draft.id}`);
   }
@@ -592,14 +607,16 @@ export default function XiaohongshuNotesPage() {
                 <div className="font-medium leading-6">{draft.title}</div>
                 <pre className="mt-3 max-h-64 overflow-auto whitespace-pre-wrap rounded-xl bg-ink-50 p-3 text-xs leading-6 text-ink-700">{draft.body}</pre>
                 <div className="mt-2 text-xs text-ink-500">字数：{draft.word_count.total} / {draft.word_count.within_limit ? "≤1000 通过" : "超限"}</div>
+                <ComplianceStatus draft={draft} />
                 <div className="mt-3 flex flex-wrap gap-2">
-                  <button className="btn-primary" disabled={!!busy} onClick={() => chooseDraft(draft)}>
+                  <button className="btn-primary" disabled={!!busy || draftIsBlocked(draft)} onClick={() => chooseDraft(draft)}>
                     {busy === `选正文:${draft.id}` ? "选定中..." : "选这篇"}
                   </button>
-                  <CopyButton text={draft.title} label="复制标题" onCopied={showCopyMessage} onCopyFailed={showCopyError} />
+                  <CopyButton text={draft.title} label="复制标题" disabled={draftIsBlocked(draft)} onCopied={showCopyMessage} onCopyFailed={showCopyError} />
                   <CopyButton
                     text={`${draft.body}\n\n${draft.hashtags.join(" ")}`}
                     label="复制正文+话题"
+                    disabled={draftIsBlocked(draft)}
                     onCopied={showCopyMessage}
                     onCopyFailed={showCopyError}
                   />
@@ -625,15 +642,17 @@ export default function XiaohongshuNotesPage() {
             <div className="mb-2 text-xs text-gold-700">已选定正文（状态：{DRAFT_STATUS_LABELS[chosenDraft.status] ?? chosenDraft.status}）</div>
             <div className="font-medium leading-6">{chosenDraft.title}</div>
             <pre className="mt-3 max-h-72 overflow-auto whitespace-pre-wrap rounded-xl bg-white p-3 text-sm leading-7 text-ink-800">{chosenDraft.body}{"\n\n"}{chosenDraft.hashtags.join(" ")}</pre>
+            <ComplianceStatus draft={chosenDraft} />
             <div className="mt-3 flex flex-wrap gap-2">
-              <CopyButton text={chosenDraft.title} label="复制标题" onCopied={showCopyMessage} onCopyFailed={showCopyError} />
+              <CopyButton text={chosenDraft.title} label="复制标题" disabled={draftIsBlocked(chosenDraft)} onCopied={showCopyMessage} onCopyFailed={showCopyError} />
               <CopyButton
                 text={`${chosenDraft.body}\n\n${chosenDraft.hashtags.join(" ")}`}
                 label="复制正文+话题"
+                disabled={draftIsBlocked(chosenDraft)}
                 onCopied={showCopyMessage}
                 onCopyFailed={showCopyError}
               />
-              <CopyButton text={chosenDraft.hashtags.join(" ")} label="复制话题" onCopied={showCopyMessage} onCopyFailed={showCopyError} />
+              <CopyButton text={chosenDraft.hashtags.join(" ")} label="复制话题" disabled={draftIsBlocked(chosenDraft)} onCopied={showCopyMessage} onCopyFailed={showCopyError} />
             </div>
             {(chosenDraft.cover_text || chosenDraft.cover_suggestion) && (
               <div className="mt-4 rounded-xl bg-white/70 p-3 text-sm leading-6 text-ink-700">
@@ -642,7 +661,7 @@ export default function XiaohongshuNotesPage() {
                 {chosenDraft.cover_suggestion && <div className="mt-1 text-xs text-ink-500">画面建议：{chosenDraft.cover_suggestion}</div>}
                 {chosenDraft.cover_text && (
                   <div className="mt-2">
-                    <CopyButton text={chosenDraft.cover_text} label="复制封面句" onCopied={showCopyMessage} onCopyFailed={showCopyError} />
+                    <CopyButton text={chosenDraft.cover_text} label="复制封面句" disabled={draftIsBlocked(chosenDraft)} onCopied={showCopyMessage} onCopyFailed={showCopyError} />
                   </div>
                 )}
               </div>
@@ -850,12 +869,14 @@ function CopyButton({
   text,
   label = "一键复制",
   className = "",
+  disabled = false,
   onCopied,
   onCopyFailed,
 }: {
   text: string;
   label?: string;
   className?: string;
+  disabled?: boolean;
   onCopied?: (label: string) => void;
   onCopyFailed?: (label: string) => void;
 }) {
@@ -886,10 +907,33 @@ function CopyButton({
     <button
       type="button"
       onClick={copy}
-      className={"rounded-full bg-ink-100 px-4 py-2 text-sm font-semibold text-ink-700 transition hover:bg-ink-200 " + className}
+      disabled={disabled}
+      className={"rounded-full bg-ink-100 px-4 py-2 text-sm font-semibold text-ink-700 transition hover:bg-ink-200 disabled:cursor-not-allowed disabled:opacity-40 " + className}
     >
       {copied ? "已复制 ✓" : label}
     </button>
+  );
+}
+
+function ComplianceStatus({ draft }: { draft: ContentDraft }) {
+  const compliance = complianceView(draft);
+  if (compliance.status === "passed") {
+    return <div className="mt-2 text-xs font-medium text-emerald-700">互动合规检查通过</div>;
+  }
+  if (compliance.status === "rewritten") {
+    return (
+      <div className="mt-2 rounded-xl bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">
+        已自动移除诱导互动表达，当前复制内容已更新。
+      </div>
+    );
+  }
+  return (
+    <div className="mt-2 rounded-xl bg-red-50 px-3 py-2 text-xs leading-5 text-red-700">
+      <div className="font-semibold">互动合规未通过，已禁止选定和复制。</div>
+      {compliance.issues.slice(0, 2).map((issue) => (
+        <div key={issue}>· {issue}</div>
+      ))}
+    </div>
   );
 }
 

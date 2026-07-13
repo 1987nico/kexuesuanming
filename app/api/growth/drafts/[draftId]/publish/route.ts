@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { logActivity } from "@/lib/auth/activity";
 import { requireMianbaApiAuth } from "@/lib/auth/mianba";
 import { growthStore } from "@/lib/growth/store";
+import { enforceDraftCompliance } from "@/lib/growth/validation";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -14,9 +15,21 @@ export async function POST(_req: Request, { params }: { params: { draftId: strin
   const draft = await store.getDraft(params.draftId);
   if (!draft) return NextResponse.json({ error: "draft_not_found" }, { status: 404 });
 
+  const checkedDraft = enforceDraftCompliance(draft);
+  if (checkedDraft.compliance?.status === "blocked") {
+    return NextResponse.json(
+      {
+        error: "compliance_blocked",
+        message: "这篇正文仍包含小红书互动风险，不能标记发布。请重新生成或修改后再试。",
+        issues: checkedDraft.compliance.issues,
+      },
+      { status: 422 },
+    );
+  }
+
   const published = {
-    ...draft,
-    owner_user_id: draft.owner_user_id ?? guard.auth.user.id,
+    ...checkedDraft,
+    owner_user_id: checkedDraft.owner_user_id ?? guard.auth.user.id,
     status: "published" as const,
     updated_at: new Date().toISOString(),
   };
@@ -27,7 +40,7 @@ export async function POST(_req: Request, { params }: { params: { draftId: strin
     action: "draft_published",
     entityType: "content_draft",
     entityId: published.id,
-    metadata: { title: published.title },
+    metadata: { title: published.title, compliance_status: published.compliance?.status },
   });
 
   const run = await store.getRun(draft.run_id);

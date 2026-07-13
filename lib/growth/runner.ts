@@ -22,7 +22,7 @@ import type {
   StageReviewResult,
   TopicCandidate,
 } from "./types";
-import { countPublishChars, normalizeTags } from "./validation";
+import { countPublishChars, enforceDraftCompliance, normalizeTags } from "./validation";
 import { PERSONA_SPECIFIC_FIELDS, DEFAULT_BUSINESS_SETTINGS } from "./types";
 import type { AccountContext, ReportPrices } from "./agents";
 
@@ -412,7 +412,7 @@ export async function generateDraft(input: {
     payload?.body ||
     `如果你已经在公司里做出成绩，但离开这个位置后，客户、预算和信任还会不会跟着你走？\n\n先别急着做个人 IP，也别急着追爆款。先判断三件事：\n\n1. 你现在的价值，是岗位给的，还是市场愿意单独为你付费？\n2. 你手里有没有能被目标客户理解的具体成果？\n3. 你发出的内容，是在吸引目标客户，还是只吸引泛职场围观？\n\n这篇先验证一个变量：${topic.test_variable}。\n\n我会继续记录，一个成熟职场人怎么把经验变成市场上的资产。`;
 
-  const draft: ContentDraft = {
+  const rawDraft: ContentDraft = {
     id: id(),
     tenant_id: input.tenantId ?? input.account.tenant_id,
     account_id: input.account.id,
@@ -447,6 +447,8 @@ export async function generateDraft(input: {
     created_at: timestamp,
     updated_at: timestamp,
   };
+
+  const draft = enforceDraftCompliance(rawDraft, enforceTitleLimit(topic.title));
 
   const run: GrowthRun = {
     ...input.run,
@@ -618,7 +620,7 @@ async function generateSingleDraft(input: {
   const longFallback = `围绕「${topic.title}」，本篇先验证一个变量：${topic.test_variable}。\n\n先说一个反常识判断：很多人以为自己缺的是流量，其实缺的是“市场愿意单独为你付费的理由”。\n\n一、先自查三件事\n1. 你现在的价值，是岗位给的，还是市场愿意单独为你付费？\n2. 你手里有没有能被目标客户理解的具体成果（案例、数字、可复用方法）？\n3. 你发出的内容，是在吸引目标客户，还是只吸引泛围观？\n\n二、怎么把经验变成可被购买的表达\n把你做过的判断拆成“别人可以照着用”的清单和标准，而不是只讲故事。每一篇只讲清楚一个判断，并给出下一步动作。\n\n三、下一步\n先用一篇内容测试：目标客户看完，会不会主动来问。如果会，说明方向成立；如果只有点赞没有咨询，就换角度。\n\n我会继续记录，一个成熟职场人怎么把经验变成市场上可被信任、可被定价的资产。`;
   const body = payload?.body || (input.lengthKind === "long" ? longFallback : shortFallback);
 
-  const draft: ContentDraft = {
+  const rawDraft: ContentDraft = {
     id: id(),
     tenant_id: input.tenantId ?? input.account.tenant_id,
     account_id: input.account.id,
@@ -651,6 +653,7 @@ async function generateSingleDraft(input: {
     updated_at: timestamp,
   };
 
+  const draft = enforceDraftCompliance(rawDraft, enforceTitleLimit(topic.title));
   return { draft, usage };
 }
 

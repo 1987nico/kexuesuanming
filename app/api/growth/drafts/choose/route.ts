@@ -3,6 +3,7 @@ import { z } from "zod";
 import { requireMianbaApiAuth } from "@/lib/auth/mianba";
 import { growthStore } from "@/lib/growth/store";
 import type { ContentDraft } from "@/lib/growth/types";
+import { enforceDraftCompliance } from "@/lib/growth/validation";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -34,6 +35,15 @@ const draftSchema = z.object({
   trust_anchor: z.string(),
   review_points: z.array(z.string()),
   cover_suggestion: z.string(),
+  story_mode: z.string().optional(),
+  pictorial_rate: z.string().optional(),
+  compliance: z
+    .object({
+      status: z.enum(["passed", "rewritten", "blocked"]),
+      issues: z.array(z.string()),
+      checked_at: z.string(),
+    })
+    .optional(),
   created_at: z.string(),
   updated_at: z.string(),
 });
@@ -56,12 +66,22 @@ export async function POST(req: Request) {
 
   const timestamp = new Date().toISOString();
   const existingDraft = await store.getDraft(parsed.data.draft.id);
-  const draft: ContentDraft = {
+  const draft = enforceDraftCompliance({
     ...parsed.data.draft,
     owner_user_id: existingDraft?.owner_user_id ?? guard.auth.user.id,
     status: "ready",
     updated_at: timestamp,
-  };
+  } as ContentDraft);
+  if (draft.compliance?.status === "blocked") {
+    return NextResponse.json(
+      {
+        error: "compliance_blocked",
+        message: "正文仍包含小红书互动风险，请重新生成后再选定。",
+        issues: draft.compliance.issues,
+      },
+      { status: 422 },
+    );
+  }
   await store.saveDraft(draft);
   await store.saveRun({
     ...run,

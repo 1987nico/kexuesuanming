@@ -174,8 +174,15 @@ export interface ContentDraft {
   // 买家视角故事化专属（其它视角为空）：所用故事模式与预估画面率
   story_mode?: string;
   pictorial_rate?: string;
+  compliance?: DraftCompliance;
   created_at: string;
   updated_at: string;
+}
+
+export interface DraftCompliance {
+  status: "passed" | "rewritten" | "blocked";
+  issues: string[];
+  checked_at: string;
 }
 
 export interface GrowthReviewMetrics {
