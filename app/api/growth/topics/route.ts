@@ -4,6 +4,11 @@ import { requireMianbaApiAuth } from "@/lib/auth/mianba";
 import { generateTopicBatch } from "@/lib/growth/runner";
 import { growthStore } from "@/lib/growth/store";
 import type { GrowthRun } from "@/lib/growth/types";
+import {
+  buildLearningBrief,
+  buildWeeklyReviewResult,
+  isWeeklyReviewStale,
+} from "@/lib/growth/reviewLearning";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -14,7 +19,6 @@ const bodySchema = z.object({
   accountId: z.string().min(1),
   week: z.number().int().min(1).max(4).optional(),
   count: z.number().int().min(1).max(4).optional(),
-  recentSignals: z.string().max(2000).optional(),
 });
 
 function now() {
@@ -35,6 +39,20 @@ export async function POST(req: Request) {
   const account = await store.getAccount(parsed.data.accountId);
   if (!account) return NextResponse.json({ error: "account_not_found" }, { status: 404 });
 
+  const notes = await store.listDrafts(account.id);
+  const reviews = await store.listReviewsByAccount(account.id);
+  let weeklyReview = account.weekly_review ?? account.stage_review;
+  if (!weeklyReview || isWeeklyReviewStale(weeklyReview, reviews)) {
+    weeklyReview = buildWeeklyReviewResult({ account, notes, reviews });
+    await store.saveAccount({
+      ...account,
+      weekly_review: weeklyReview,
+      stage_review: weeklyReview,
+      updated_at: new Date().toISOString(),
+    });
+  }
+  const learningBrief = buildLearningBrief({ account, notes, reviews, weekly: weeklyReview });
+
   const runs = await store.listRuns(account.id);
   let run = runs[0] ?? null;
   // 换一批：排除历史出现过的所有标题（含上一批），保证每次点都是新的。
@@ -42,12 +60,26 @@ export async function POST(req: Request) {
     ? Array.from(new Set([...(run.seen_titles ?? []), ...run.topic_pool.map((topic) => topic.title)]))
     : [];
 
-  const { topics, usage } = await generateTopicBatch({
+  const { topics: generatedTopics, usage } = await generateTopicBatch({
     account,
     week: parsed.data.week ?? run?.week ?? 1,
     count: parsed.data.count ?? 2,
     excludeTitles: seenTitles,
-    recentSignals: parsed.data.recentSignals,
+    learningBrief,
+  });
+  const topics = generatedTopics.map((topic) => {
+    const direction = weeklyReview?.by_direction.find((item) => item.direction === topic.direction);
+    return {
+      ...topic,
+      weekly_action: direction?.action,
+      evidence: direction
+        ? `${direction.label}：近28天${direction.valid_count || 0}篇有效样本，当前建议${direction.action || "explore"}。`
+        : topic.evidence,
+      learning_trace: {
+        ...learningBrief.trace,
+        direction_action: direction?.action,
+      },
+    };
   });
 
   const timestamp = now();
@@ -63,12 +95,13 @@ export async function POST(req: Request) {
       experiment_hypothesis: "换一批看哪个方向/角度更值得写。",
       topic_pool: topics,
       seen_titles: nextSeen,
+      learning_trace: learningBrief.trace,
       created_at: timestamp,
       updated_at: timestamp,
     } satisfies GrowthRun;
   } else {
     // 用新选题替换整个列表，而不是累加。
-    run = { ...run, topic_pool: topics, seen_titles: nextSeen, updated_at: timestamp };
+    run = { ...run, topic_pool: topics, seen_titles: nextSeen, learning_trace: learningBrief.trace, updated_at: timestamp };
   }
 
   run.owner_user_id = run.owner_user_id ?? guard.auth.user.id;

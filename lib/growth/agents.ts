@@ -265,6 +265,7 @@ export function buildDraftUserPrompt(input: {
   followReason: string;
   persona?: GrowthPersona;
   variantHint?: string;
+  learningGuidance?: string;
   excludeBodies?: string[];
   context?: AccountContext;
 }) {
@@ -283,6 +284,7 @@ ${input.context?.privateDomain ? `业务承接背景（仅用于理解业务，�
 本篇验证变量：${input.testVariable}
 预期有效信号：${input.expectedSignal}
 关注理由：${input.followReason}
+${input.learningGuidance ? `复盘学习依据（必须执行，但不能在成文中提及）：\n${input.learningGuidance}` : ""}
 ${input.variantHint ? `本次写作角度：${input.variantHint}` : ""}
 ${exclude.length ? `严禁与以下已生成正文重复或近似（可换结构、开头、案例）：\n${exclude.map((b) => b.slice(0, 120)).join("\n---\n")}` : ""}
 
@@ -293,6 +295,7 @@ ${exclude.length ? `严禁与以下已生成正文重复或近似（可换结构
 - 【标题硬性规则】title 与每个 alternative_titles 都必须控制在 20 个字以内（含标点符号，按小红书规则），不要用「｜」「|」「——」外挂副标题。
 - 发布端文字（标题+正文+话题标签）不得超过 1000 字。
 - 给 5 个以内话题标签。
+- 本篇只能改变「${input.testVariable}」这一个主要实验变量。周复盘确定方向，单篇复盘决定标题、开头、结构、证据或结尾怎么写；不得同时大改多个维度。
 - 【互动合规硬规则】正文、标题、封面和 comment_prompt 都不得要求点赞、收藏、关注、评论、转发、互关或互赞；不得出现「评论区扣1」「留言关键词」「回复口令」「私信我」「加微信」等动作。
 - 【禁止利益交换】不得用资料、匿名样例、报告、清单、模板、链接、福利、抽奖、诊断或体检作为互动奖励。像「需要职业方向体检的评论区扣1，我发你匿名交付样例」这种表达一律禁止。
 - 结尾优先给出一个读者当下就能完成的自查动作或判断标准。可以提出与正文直接相关的自然问题，但不能承诺根据评论发送任何东西。
@@ -324,7 +327,8 @@ export function buildReviewUserPrompt(input: {
   metrics: Record<string, unknown>;
 }) {
   return `
-请以复盘官 V3 身份，基于真实数据做日复盘。不可见字段写不可见，不得编造。
+请以复盘官 V4 身份，基于发布24小时后的真实数据做单篇复盘。不可见字段写不可见，不得编造。
+单篇复盘只判断标题入口、正文执行和商业承接，不得凭一篇笔记决定放大或暂停整个方向。
 
 标题：${input.title}
 方向：${input.direction}
@@ -335,14 +339,21 @@ export function buildReviewUserPrompt(input: {
 输出 JSON：
 {
   "classification": "scale|retest|weak_entry|weak_conversion|wrong_audience|pause",
-  "entry_judgement": "入口判断",
-  "value_judgement": "价值判断",
-  "follow_judgement": "关注判断",
+  "title_pattern": "标题属于身份/痛点/结果/反常识/数字/提问/故事中的哪种结构，可多选",
+  "primary_audience": "标题明确写给谁",
+  "primary_keyword": "标题核心搜索词，没有则写无",
+  "entry_judgement": "标题+封面入口判断，并说明标题承诺是否被正文兑现",
+  "body_judgement": "开头速度、正文结构、信息密度、案例证据和观看/收藏/分享表现",
+  "conversion_judgement": "涨粉、有效咨询和目标客户承接判断",
+  "compliance_judgement": "标题、正文和结尾的合规判断",
+  "value_judgement": "兼容旧字段：正文价值判断",
+  "follow_judgement": "兼容旧字段：关注与咨询判断",
   "audience_judgement": "人群判断",
   "next_variable": "下一篇只改一个变量",
-  "manager_instruction": "给总经理 V3 的判断",
-  "topic_instruction": "给选题官 V3 的要求",
-  "writer_instruction": "给主笔 V3 的要求"
+  "experiment_variable": "title_cover|opening|audience_expression|body_structure|evidence|closing|length",
+  "manager_instruction": "提供给周复盘的证据，不直接做方向决策",
+  "topic_instruction": "给选题官 V4 的具体要求",
+  "writer_instruction": "给主笔 V4 的具体要求"
 }
 `.trim();
 }
@@ -353,16 +364,17 @@ export function buildStageReviewUserPrompt(input: {
   aggregate: unknown;
 }) {
   return `
-请以总经理 V3 身份，基于多篇笔记的聚合数据做「阶段复盘 / 方向决策」。不要基于单篇爆款下结论，要看方向层面的趋势。
+请以总经理 V4 身份，基于多篇笔记的聚合数据做「周复盘 / 方向决策」。不要基于单篇爆款下结论，要看近7天动量和近28天稳定性。
 
 目标用户：${input.targetUser}
 内容方向说明：${(input.directions ?? ["A 方向", "B 方向", "C 方向"]).join(" / ")}
-各方向聚合数据 JSON（note_count=发布篇数，reviewed_count=已复盘篇数，avg_save_rate=平均收藏率，avg_comment_rate=平均评论率，classifications=各结果分类计数）：
+各方向聚合数据 JSON（valid_count=近28天有效样本，recent_7d_count=近7天有效样本，所有rate均为中位数，action由服务器证据门槛决定，不得擅自改变）：
 ${JSON.stringify(input.aggregate)}
 
 判断规则：
 - 收藏率、评论率、关注反馈更能代表方向是否成立，单纯曝光/阅读不作数。
-- 数据太少（发布篇数少）时不要急着放大或暂停，标注需继续验证。
+- 服务器给出的 action 是硬约束，只负责把理由说清楚。
+- 0-2篇只探索；3-5篇只二测；6-9篇可增加优势方向；10篇以上且比较方向各至少3篇才可暂停。
 
 输出 JSON：
 {
@@ -370,7 +382,11 @@ ${JSON.stringify(input.aggregate)}
   "pause_direction": "建议暂停或降权的方向及理由（没有就写暂无）",
   "next_focus": "下一阶段主攻什么",
   "reusable_pattern": "已跑出的可复用标题/结构模板（没有就写暂无）",
-  "summary": "一段话阶段结论，给运营者看的大白话"
+  "summary": "一段话周结论，给运营者看的大白话",
+  "strategic_hypothesis": "下周只验证一个方向性假设",
+  "title_patterns_to_repeat": ["应继续复用的标题入口结构"],
+  "title_patterns_to_avoid": ["应停止的标题入口表达"],
+  "body_patterns_to_repeat": ["应继续复用的正文结构"]
 }
 `.trim();
 }

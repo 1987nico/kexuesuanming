@@ -10,7 +10,7 @@ import type {
   GrowthReview,
   GrowthReviewMetrics,
   GrowthRun,
-  StageReviewResult,
+  WeeklyReviewResult,
   TopicCandidate,
 } from "@/lib/growth/types";
 import { GROWTH_PERSONA_LABELS, GROWTH_PERSONAS, PERSONA_SPECIFIC_FIELDS } from "@/lib/growth/types";
@@ -43,16 +43,28 @@ interface AccountForm {
 }
 
 interface ReviewFormState {
+  note_status: "normal" | "limited" | "violation" | "deleted";
+  promoted: boolean;
   impressions: string;
   reads: string;
+  average_view_seconds: string;
   likes: string;
   saves: string;
   comments: string;
   shares: string;
-  profile_visits: string;
   follows: string;
-  private_messages: string;
-  comment_keywords: string;
+  qualified_inquiries: string;
+  note_url: string;
+  target_customer_quote: string;
+  search_keywords: string;
+  traffic_sources?: GrowthReviewMetrics["traffic_sources"];
+  audience?: GrowthReviewMetrics["audience"];
+  input_source: "manual" | "screenshot" | "mixed";
+}
+
+interface ScreenshotExtractionState {
+  confidence: Record<string, number>;
+  warnings: string[];
 }
 
 const DIRECTION_LABELS: Record<string, string> = {
@@ -75,25 +87,48 @@ const DRAFT_STATUS_LABELS: Record<string, string> = {
 };
 
 const CLASSIFICATION_LABELS: Record<string, string> = {
-  scale: "明确放大",
+  scale: "本篇模式可复用",
   retest: "值得二测",
   weak_entry: "入口弱",
   weak_conversion: "承接弱",
   wrong_audience: "人群跑偏",
+  pause: "本篇模式不建议复用",
+};
+
+const SAMPLE_STATUS_LABELS: Record<string, string> = {
+  valid: "有效样本",
+  low_sample: "低样本，仅观察",
+  paid: "投流样本，单独记录",
+  limited: "限流，只进入合规学习",
+  violation: "违规，只进入合规学习",
+  deleted: "已删除",
+  historical_unknown: "历史数据，口径未知",
+  not_ready: "尚未满24小时",
+};
+
+const WEEKLY_ACTION_LABELS: Record<string, string> = {
+  scale: "放大",
+  retest: "二测",
+  explore: "探索",
   pause: "暂停",
 };
 
 const emptyReviewForm: ReviewFormState = {
+  note_status: "normal",
+  promoted: false,
   impressions: "",
   reads: "",
+  average_view_seconds: "",
   likes: "",
   saves: "",
   comments: "",
   shares: "",
-  profile_visits: "",
   follows: "",
-  private_messages: "",
-  comment_keywords: "",
+  qualified_inquiries: "",
+  note_url: "",
+  target_customer_quote: "",
+  search_keywords: "",
+  input_source: "manual",
 };
 
 function num(value?: number) {
@@ -103,30 +138,97 @@ function num(value?: number) {
 function metricsToForm(metrics?: GrowthReviewMetrics): ReviewFormState {
   if (!metrics) return { ...emptyReviewForm };
   return {
+    note_status: metrics.note_status ?? "normal",
+    promoted: metrics.promoted ?? false,
     impressions: num(metrics.impressions),
     reads: num(metrics.reads),
+    average_view_seconds: num(metrics.average_view_seconds),
     likes: num(metrics.likes),
     saves: num(metrics.saves),
     comments: num(metrics.comments),
     shares: num(metrics.shares),
-    profile_visits: num(metrics.profile_visits),
     follows: num(metrics.follows),
-    private_messages: num(metrics.private_messages),
-    comment_keywords: (metrics.comment_keywords ?? []).join("，"),
+    qualified_inquiries: num(metrics.qualified_inquiries),
+    note_url: metrics.note_url ?? "",
+    target_customer_quote: metrics.target_customer_quote ?? "",
+    search_keywords: (metrics.search_keywords ?? []).join("，"),
+    traffic_sources: metrics.traffic_sources,
+    audience: metrics.audience,
+    input_source: metrics.input_source ?? "manual",
   };
 }
 
 function formToMetricsPayload(form: ReviewFormState): Record<string, unknown> {
-  const payload: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(form) as [keyof ReviewFormState, string][]) {
-    if (!value.trim()) continue;
-    if (key === "comment_keywords") {
-      payload[key] = value.split(/[,，\n]/).map((s) => s.trim()).filter(Boolean);
-    } else {
-      payload[key] = Number(value);
-    }
+  const payload: Record<string, unknown> = {
+    note_status: form.note_status,
+    promoted: form.promoted,
+    input_source: form.input_source,
+  };
+  const numericKeys = [
+    "impressions",
+    "reads",
+    "average_view_seconds",
+    "likes",
+    "saves",
+    "comments",
+    "shares",
+    "follows",
+    "qualified_inquiries",
+  ] as const;
+  for (const key of numericKeys) {
+    if (form[key].trim()) payload[key] = Number(form[key]);
   }
+  if (form.note_url.trim()) payload.note_url = form.note_url.trim();
+  if (form.target_customer_quote.trim()) payload.target_customer_quote = form.target_customer_quote.trim();
+  const keywords = form.search_keywords.split(/[,，\n]/).map((value) => value.trim()).filter(Boolean).slice(0, 5);
+  if (keywords.length) payload.search_keywords = keywords;
+  if (form.traffic_sources) payload.traffic_sources = form.traffic_sources;
+  if (form.audience) payload.audience = form.audience;
   return payload;
+}
+
+function localDateTimeValue(date = new Date()) {
+  const offset = date.getTimezoneOffset() * 60_000;
+  return new Date(date.getTime() - offset).toISOString().slice(0, 16);
+}
+
+function effectivePublishedAt(note: ContentDraft) {
+  return note.published_at || note.updated_at || note.created_at;
+}
+
+function formatRemaining(milliseconds: number) {
+  const totalMinutes = Math.max(0, Math.ceil(milliseconds / 60_000));
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  return `${hours}小时${minutes}分钟`;
+}
+
+async function compressReviewScreenshot(file: File) {
+  const source = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => (typeof reader.result === "string" ? resolve(reader.result) : reject(new Error("截图读取失败")));
+    reader.onerror = () => reject(reader.error || new Error("截图读取失败"));
+    reader.readAsDataURL(file);
+  });
+  const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+    const element = new Image();
+    element.onload = () => resolve(element);
+    element.onerror = () => reject(new Error(`${file.name} 不是可识别的图片`));
+    element.src = source;
+  });
+  let scale = Math.min(1, 1000 / image.width, 2200 / image.height);
+  const canvas = document.createElement("canvas");
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    canvas.width = Math.max(1, Math.round(image.width * scale));
+    canvas.height = Math.max(1, Math.round(image.height * scale));
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error("浏览器无法处理这张截图");
+    context.drawImage(image, 0, 0, canvas.width, canvas.height);
+    const dataUrl = canvas.toDataURL("image/jpeg", Math.max(0.5, 0.72 - attempt * 0.04));
+    if (dataUrl.length <= 600_000) return { name: file.name, dataUrl };
+    scale *= 0.82;
+  }
+  throw new Error(`${file.name} 压缩后仍过大，请先裁掉无关区域再上传`);
 }
 
 function toAccountForm(account: GrowthAccount): AccountForm {
@@ -188,7 +290,9 @@ export default function XiaohongshuNotesPage() {
   // 以笔记为单元：每篇笔记各自的复盘结果与回填表单
   const [reviews, setReviews] = useState<Record<string, GrowthReview>>({});
   const [metricsByDraft, setMetricsByDraft] = useState<Record<string, ReviewFormState>>({});
-  const [stageResult, setStageResult] = useState<StageReviewResult | null>(null);
+  const [weeklyResult, setWeeklyResult] = useState<WeeklyReviewResult | null>(null);
+  const [screenshotEnabled, setScreenshotEnabled] = useState(false);
+  const [screenshotExtractions, setScreenshotExtractions] = useState<Record<string, ScreenshotExtractionState>>({});
 
   const applyReviews = useCallback((reviewMap: Record<string, GrowthReview>, drafts: ContentDraft[]) => {
     setReviews(reviewMap);
@@ -217,7 +321,10 @@ export default function XiaohongshuNotesPage() {
       setVariants([]);
       setSelectedTopicId(run?.selected_topic?.id ?? null);
       applyReviews((data.reviews ?? {}) as Record<string, GrowthReview>, drafts);
-      setStageResult((data.stageReview ?? data.account?.stage_review ?? null) as StageReviewResult | null);
+      setWeeklyResult(
+        (data.weeklyReview ?? data.stageReview ?? data.account?.weekly_review ?? data.account?.stage_review ?? null) as WeeklyReviewResult | null,
+      );
+      setScreenshotEnabled(Boolean(data.capabilities?.reviewScreenshot));
     },
     [applyReviews]
   );
@@ -352,12 +459,21 @@ export default function XiaohongshuNotesPage() {
     setState({ account: data.account ?? null, plan: data.plan ?? null, run: run2, drafts });
     setChosenDraft(draft);
     applyReviews((data.reviews ?? {}) as Record<string, GrowthReview>, drafts);
-    setStageResult((data.stageReview ?? data.account?.stage_review ?? null) as StageReviewResult | null);
+    setWeeklyResult(
+      (data.weeklyReview ?? data.stageReview ?? data.account?.weekly_review ?? data.account?.stage_review ?? null) as WeeklyReviewResult | null,
+    );
+    setScreenshotEnabled(Boolean(data.capabilities?.reviewScreenshot));
   }
 
-  async function markPublishedNote(draft: ContentDraft) {
+  async function markPublishedNote(draft: ContentDraft, publishedAt: string) {
     await run("标记已发布", async () => {
-      const res = await fetch(`/api/growth/drafts/${draft.id}/publish`, { method: "POST" });
+      const parsedPublishedAt = new Date(publishedAt);
+      if (!Number.isFinite(parsedPublishedAt.getTime())) throw new Error("请填写正确的实际发布时间");
+      const res = await fetch(`/api/growth/drafts/${draft.id}/publish`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ published_at: parsedPublishedAt.toISOString() }),
+      });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.message || data.error || "标记发布失败");
       await loadWorkspaceKeepChosen(chosenDraft ?? draft);
@@ -375,31 +491,68 @@ export default function XiaohongshuNotesPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || data.error || "提交复盘失败");
       setReviews((prev) => ({ ...prev, [draft.id]: data.review }));
+      if (data.weeklyReview) setWeeklyResult(data.weeklyReview);
       await loadWorkspaceKeepChosen(chosenDraft ?? draft);
     }, `复盘:${draft.id}`);
   }
 
-  function setNoteMetric(draftId: string, name: keyof ReviewFormState, value: string) {
+  function updateReviewForm(draftId: string, patch: Partial<ReviewFormState>) {
     setMetricsByDraft((prev) => ({
       ...prev,
-      [draftId]: { ...(prev[draftId] ?? emptyReviewForm), [name]: value },
+      [draftId]: { ...(prev[draftId] ?? emptyReviewForm), ...patch },
     }));
   }
 
-  async function generateStageReview() {
+  async function extractReviewScreenshots(draft: ContentDraft, files: File[]) {
+    await run("识别数据截图", async () => {
+      if (files.length < 1 || files.length > 6) throw new Error("请选择1到6张截图");
+      const images = await Promise.all(files.map(compressReviewScreenshot));
+      const res = await fetch("/api/growth/reviews/extract", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ images }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || data.error || "截图识别失败");
+      const prefill = data.prefill as Partial<GrowthReviewMetrics>;
+      updateReviewForm(draft.id, {
+        impressions: num(prefill.impressions) || metricsByDraft[draft.id]?.impressions || "",
+        reads: num(prefill.reads) || metricsByDraft[draft.id]?.reads || "",
+        average_view_seconds:
+          num(prefill.average_view_seconds) || metricsByDraft[draft.id]?.average_view_seconds || "",
+        likes: num(prefill.likes) || metricsByDraft[draft.id]?.likes || "",
+        saves: num(prefill.saves) || metricsByDraft[draft.id]?.saves || "",
+        comments: num(prefill.comments) || metricsByDraft[draft.id]?.comments || "",
+        shares: num(prefill.shares) || metricsByDraft[draft.id]?.shares || "",
+        follows: num(prefill.follows) || metricsByDraft[draft.id]?.follows || "",
+        search_keywords: (prefill.search_keywords ?? []).join("，") || metricsByDraft[draft.id]?.search_keywords || "",
+        traffic_sources: prefill.traffic_sources || metricsByDraft[draft.id]?.traffic_sources,
+        audience: prefill.audience || metricsByDraft[draft.id]?.audience,
+        input_source: "mixed",
+      });
+      setScreenshotExtractions((current) => ({
+        ...current,
+        [draft.id]: { confidence: data.confidence ?? {}, warnings: data.warnings ?? [] },
+      }));
+    }, `截图:${draft.id}`);
+  }
+
+  async function generateWeeklyReview() {
     if (!account) return;
-    await run("生成阶段复盘", async () => {
-      const res = await fetch("/api/growth/stage-review", {
+    await run("生成周复盘", async () => {
+      const res = await fetch("/api/growth/weekly-review", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ accountId: account.id }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.message || data.error || "生成阶段复盘失败");
-      setStageResult(data.result);
+      if (!res.ok) throw new Error(data.message || data.error || "生成周复盘失败");
+      setWeeklyResult(data.result);
       setState((current) => ({
         ...current,
-        account: current.account ? { ...current.account, stage_review: data.result } : current.account,
+        account: current.account
+          ? { ...current.account, weekly_review: data.result, stage_review: data.result }
+          : current.account,
       }));
     });
   }
@@ -414,7 +567,7 @@ export default function XiaohongshuNotesPage() {
           <div className="mb-3 text-xs tracking-[0.35em] text-gold-700">小红书内容工厂</div>
           <h1 className="serif text-4xl leading-tight md:text-5xl">小红书笔记</h1>
           <p className="mt-3 max-w-2xl text-sm leading-6 text-ink-600">
-            账号定位卡 → 选题 → 正文 → 单篇复盘 → 阶段复盘。人工确认后复制发布，系统不自动发帖。
+            账号定位卡 → 选题 → 正文 → 24小时单篇复盘 → 周复盘。人工确认后复制发布，系统不自动发帖。
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -582,9 +735,11 @@ export default function XiaohongshuNotesPage() {
                   <span>方向 {topic.direction} · {DIRECTION_LABELS[topic.direction] ?? ""}</span>
                   <span>·</span>
                   <span>{CONTENT_TYPE_LABELS[topic.content_type] ?? topic.content_type}</span>
+                  {topic.weekly_action && <span>· {WEEKLY_ACTION_LABELS[topic.weekly_action]}</span>}
                 </div>
                 <div className="font-medium leading-6">{topic.title}</div>
                 <p className="mt-1 text-xs leading-5 text-ink-500">验证变量：{topic.test_variable}</p>
+                {topic.evidence && <p className="mt-1 text-xs leading-5 text-ink-500">生成依据：{topic.evidence}</p>}
                 <div className="mt-3 flex flex-wrap gap-2">
                   <button className="btn-primary" disabled={!!busy} onClick={() => generateVariants(topic)}>
                     {busy === `生成正文:${topic.id}` ? "生成中..." : "用这个选题写正文"}
@@ -603,7 +758,7 @@ export default function XiaohongshuNotesPage() {
           <div className="grid gap-4 md:grid-cols-2">
             {variants.map((draft, index) => (
               <div key={draft.id} className="rounded-2xl border border-ink-100 p-4">
-                <div className="mb-2 text-xs text-gold-700">方案 {index + 1} · {index === 0 ? "精简版" : "深度长文"}（{draft.word_count.total} 字）</div>
+                <div className="mb-2 text-xs text-gold-700">方案 {index + 1} · 只测试「{draft.test_variable}」（{draft.word_count.total} 字）</div>
                 <div className="font-medium leading-6">{draft.title}</div>
                 <pre className="mt-3 max-h-64 overflow-auto whitespace-pre-wrap rounded-xl bg-ink-50 p-3 text-xs leading-6 text-ink-700">{draft.body}</pre>
                 <div className="mt-2 text-xs text-ink-500">字数：{draft.word_count.total} / {draft.word_count.within_limit ? "≤1000 通过" : "超限"}</div>
@@ -674,7 +829,7 @@ export default function XiaohongshuNotesPage() {
       </StepCard>
 
       {/* Step 4 单篇复盘（以笔记为基本单元） */}
-      <StepCard step="4" title="单篇复盘" desc="每篇笔记都是一个独立单元：逐篇标记发布、回填数据、生成单篇结论。下面列出这个账号的所有笔记。">
+      <StepCard step="4" title="单篇复盘 · 分析标题与正文" desc="记录发布24小时后的固定快照，拆解标题入口、正文质量和商业承接。单篇只决定怎么写，不直接决定方向。">
         {state.drafts.length === 0 ? (
           <p className="text-sm leading-6 text-ink-600">还没有笔记。先在第 2、3 步选题并选定一篇正文，它就会作为一篇笔记出现在这里。</p>
         ) : (
@@ -686,8 +841,11 @@ export default function XiaohongshuNotesPage() {
                 review={reviews[note.id]}
                 form={metricsByDraft[note.id] ?? emptyReviewForm}
                 busyKey={busy}
-                onMetric={(name, value) => setNoteMetric(note.id, name, value)}
-                onPublish={() => markPublishedNote(note)}
+                screenshotEnabled={screenshotEnabled}
+                screenshotExtraction={screenshotExtractions[note.id]}
+                onFormChange={(patch) => updateReviewForm(note.id, patch)}
+                onPublish={(publishedAt) => markPublishedNote(note, publishedAt)}
+                onScreenshots={(files) => extractReviewScreenshots(note, files)}
                 onSubmit={() => submitReviewNote(note)}
               />
             ))}
@@ -695,28 +853,35 @@ export default function XiaohongshuNotesPage() {
         )}
       </StepCard>
 
-      {/* Step 5 阶段复盘（跨笔记做方向决策） */}
-      <StepCard step="5" title="阶段复盘" desc="把多篇笔记按方向汇总，判断哪个方向值得放大、哪个该暂停。不靠单篇爆款下结论。">
-        <button className="btn-primary" disabled={!!busy || !account} onClick={generateStageReview}>
-          {busy === "生成阶段复盘" ? "生成中..." : "生成阶段复盘 / 方向决策"}
+      {/* Step 5 周复盘（跨笔记做方向决策） */}
+      <StepCard step="5" title="周复盘 · 判断方向与下周策略" desc="近7天看变化，近28天看稳定性。周复盘决定写什么和内容占比，单篇复盘决定标题与正文怎么写。">
+        <button className="btn-primary" disabled={!!busy || !account} onClick={generateWeeklyReview}>
+          {busy === "生成周复盘" ? "生成中..." : "更新周复盘 / 方向决策"}
         </button>
-        {stageResult && (
+        {weeklyResult && (
           <div className="mt-5 space-y-4">
             <div className="text-xs text-ink-500">
-              共 {stageResult.note_total} 篇笔记，已复盘 {stageResult.reviewed_total} 篇。
+              共 {weeklyResult.note_total} 篇笔记，已复盘 {weeklyResult.reviewed_total} 篇，近28天有效样本 {weeklyResult.eligible_total ?? 0} 篇。
             </div>
             <div className="grid gap-3 md:grid-cols-3">
-              {stageResult.by_direction.map((agg) => (
+              {weeklyResult.by_direction.map((agg) => (
                 <DirectionAggregateCard key={agg.direction} agg={agg} />
               ))}
             </div>
             <div className="grid gap-3 rounded-2xl bg-gold-50/50 p-4 text-sm leading-6 text-ink-700 md:grid-cols-2">
-              <Field label="建议放大的方向" value={stageResult.decision.scale_direction} />
-              <Field label="建议暂停/降权的方向" value={stageResult.decision.pause_direction} />
-              <Field label="下一阶段主攻" value={stageResult.decision.next_focus} />
-              <Field label="可复用模板" value={stageResult.decision.reusable_pattern} />
+              <Field label="方向动作建议" value={weeklyResult.decision.scale_direction} />
+              <Field label="建议暂停/降权的方向" value={weeklyResult.decision.pause_direction} />
+              <Field label="下周主攻" value={weeklyResult.decision.next_focus} />
+              <Field label="可复用标题/正文模式" value={weeklyResult.decision.reusable_pattern} />
+              <Field label="下周唯一战略假设" value={weeklyResult.decision.strategic_hypothesis || "样本不足，先继续探索。"} />
+              <Field
+                label="下周内容比例"
+                value={(weeklyResult.decision.content_allocation ?? [])
+                  .map((item) => `${item.direction} ${item.percentage}%（${WEEKLY_ACTION_LABELS[item.action] ?? item.action}）`)
+                  .join("；") || "等待有效样本"}
+              />
               <div className="md:col-span-2">
-                <Field label="阶段结论" value={stageResult.decision.summary} />
+                <Field label="周结论" value={weeklyResult.decision.summary} />
               </div>
             </div>
           </div>
@@ -731,23 +896,44 @@ function NoteReviewCard({
   review,
   form,
   busyKey,
-  onMetric,
+  screenshotEnabled,
+  screenshotExtraction,
+  onFormChange,
   onPublish,
+  onScreenshots,
   onSubmit,
 }: {
   note: ContentDraft;
   review?: GrowthReview;
   form: ReviewFormState;
   busyKey: string;
-  onMetric: (name: keyof ReviewFormState, value: string) => void;
-  onPublish: () => void;
+  screenshotEnabled: boolean;
+  screenshotExtraction?: ScreenshotExtractionState;
+  onFormChange: (patch: Partial<ReviewFormState>) => void;
+  onPublish: (publishedAt: string) => void;
+  onScreenshots: (files: File[]) => void;
   onSubmit: () => void;
 }) {
   const [open, setOpen] = useState(false);
+  const [publishedAtInput, setPublishedAtInput] = useState(() =>
+    localDateTimeValue(
+      note.status === "published" || note.status === "reviewed" ? new Date(effectivePublishedAt(note)) : new Date(),
+    ),
+  );
+  const [clock, setClock] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => setClock(Date.now()), 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
   const published = note.status === "published" || note.status === "reviewed";
   const reviewed = note.status === "reviewed" && !!review;
   const publishing = busyKey === `发布:${note.id}`;
   const reviewing = busyKey === `复盘:${note.id}`;
+  const extracting = busyKey === `截图:${note.id}`;
+  const availableAt = Date.parse(effectivePublishedAt(note)) + 24 * 60 * 60 * 1000;
+  const reviewReady = reviewed || (published && Number.isFinite(availableAt) && clock >= availableAt);
+  const manualChange = (patch: Partial<ReviewFormState>) =>
+    onFormChange({ ...patch, input_source: form.input_source === "manual" ? "manual" : "mixed" });
 
   return (
     <div className="rounded-2xl border border-ink-100 p-4">
@@ -762,68 +948,177 @@ function NoteReviewCard({
           <div className="mt-1 text-xs text-ink-400">验证变量：{note.test_variable}</div>
         </div>
         <div className="flex flex-wrap gap-2">
+          <input
+            type="datetime-local"
+            value={publishedAtInput}
+            max={localDateTimeValue()}
+            onChange={(event) => setPublishedAtInput(event.target.value)}
+            disabled={reviewed}
+            className="rounded-xl border border-ink-100 bg-white px-3 py-2 text-sm"
+            aria-label="实际发布时间"
+          />
           <button
             className="rounded-full bg-ink-100 px-4 py-2 text-sm font-semibold text-ink-700 transition hover:bg-ink-200 disabled:opacity-40"
-            disabled={!!busyKey || published}
-            onClick={onPublish}
+            disabled={!!busyKey || reviewed}
+            onClick={() => onPublish(publishedAtInput)}
           >
-            {publishing ? "标记中..." : published ? "已发布" : "标记为已发布"}
+            {publishing ? "保存中..." : reviewed ? "发布时间已锁定" : published ? "修正发布时间" : "标记实际发布"}
           </button>
           <button
             className="rounded-full bg-ink-100 px-4 py-2 text-sm font-semibold text-ink-700 transition hover:bg-ink-200"
+            disabled={!published}
             onClick={() => setOpen((v) => !v)}
           >
-            {open ? "收起数据" : reviewed ? "查看/修改数据" : "回填数据"}
+            {open ? "收起数据" : reviewed ? "查看/修改复盘" : reviewReady ? "录入24小时数据" : "等待24小时"}
           </button>
         </div>
       </div>
 
+      {published && (
+        <div className="mt-3 border-t border-ink-100 pt-3 text-xs leading-5 text-ink-500">
+          实际发布：{new Date(effectivePublishedAt(note)).toLocaleString("zh-CN")}
+          {!reviewReady && <span className="ml-3 text-gold-700">距离正式复盘还有 {formatRemaining(availableAt - clock)}</span>}
+        </div>
+      )}
+
       {reviewed && review && (
-        <div className="mt-3 grid gap-2 rounded-xl bg-ink-50 p-3 text-xs leading-5 text-ink-700 md:grid-cols-2">
+        <div className="mt-3 grid gap-2 border-t border-ink-100 pt-3 text-xs leading-5 text-ink-700 md:grid-cols-3">
           <Field label="结果分类" value={CLASSIFICATION_LABELS[review.classification] ?? review.classification} />
+          <Field label="样本状态" value={SAMPLE_STATUS_LABELS[review.sample?.status || "historical_unknown"]} />
           <Field label="下一篇只改一个变量" value={review.next_variable} />
         </div>
       )}
 
       {open && (
-        <div className="mt-4">
-          <div className="grid gap-3 md:grid-cols-5">
-            <NoteMetricInput label="曝光" name="impressions" form={form} onMetric={onMetric} />
-            <NoteMetricInput label="阅读" name="reads" form={form} onMetric={onMetric} />
-            <NoteMetricInput label="点赞" name="likes" form={form} onMetric={onMetric} />
-            <NoteMetricInput label="收藏" name="saves" form={form} onMetric={onMetric} />
-            <NoteMetricInput label="评论" name="comments" form={form} onMetric={onMetric} />
-            <NoteMetricInput label="分享" name="shares" form={form} onMetric={onMetric} />
-            <NoteMetricInput label="主页访问" name="profile_visits" form={form} onMetric={onMetric} />
-            <NoteMetricInput label="新增关注" name="follows" form={form} onMetric={onMetric} />
-            <NoteMetricInput label="私信线索" name="private_messages" form={form} onMetric={onMetric} />
+        <div className="mt-4 border-t border-ink-100 pt-4">
+          {!reviewReady && (
+            <div className="text-sm leading-6 text-ink-600">
+              24小时数据口径还没到。到时系统会开放正式录入，避免用过早数据误判标题和方向。
+            </div>
+          )}
+          {reviewReady && screenshotEnabled && (
+            <div className="mb-4 flex flex-wrap items-center gap-3">
+              <label className="cursor-pointer rounded-full border border-gold-400 px-4 py-2 text-sm font-semibold text-gold-800">
+                {extracting ? "识别中..." : "上传数据截图预填"}
+                <input
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp"
+                  multiple
+                  className="hidden"
+                  disabled={!!busyKey}
+                  onChange={(event) => {
+                    const files = Array.from(event.target.files ?? []).slice(0, 6);
+                    if (files.length) onScreenshots(files);
+                    event.currentTarget.value = "";
+                  }}
+                />
+              </label>
+              <span className="text-xs text-ink-500">支持1–6张，识别结果只预填，确认后才保存。</span>
+            </div>
+          )}
+          {reviewReady && screenshotExtraction && (
+            <div className="mb-4 text-xs leading-5 text-ink-600">
+              已识别 {Object.values(screenshotExtraction.confidence).filter((value) => value >= 0.72).length} 个高置信字段。
+              {screenshotExtraction.warnings.length > 0 && ` 提醒：${screenshotExtraction.warnings.join("；")}`}
+            </div>
+          )}
+          {reviewReady && (
+            <>
+          <div className="mb-4 grid gap-3 md:grid-cols-3">
             <div>
-              <label className="mb-2 block text-xs font-medium text-ink-500">评论关键词</label>
+              <label className="mb-2 block text-xs font-medium text-ink-500">笔记状态</label>
+              <select
+                value={form.note_status}
+                onChange={(event) => manualChange({ note_status: event.target.value as ReviewFormState["note_status"] })}
+                className="w-full rounded-xl border border-ink-100 bg-white px-3 py-2 text-sm"
+              >
+                <option value="normal">正常</option>
+                <option value="limited">限流</option>
+                <option value="violation">违规</option>
+                <option value="deleted">已删除</option>
+              </select>
+            </div>
+            <label className="flex min-h-10 items-center gap-3 text-sm text-ink-700 md:self-end">
               <input
-                value={form.comment_keywords}
-                onChange={(e) => onMetric("comment_keywords", e.target.value)}
+                type="checkbox"
+                checked={form.promoted}
+                onChange={(event) => manualChange({ promoted: event.target.checked })}
+              />
+              这篇使用过投流
+            </label>
+          </div>
+          <div className="grid gap-3 md:grid-cols-5">
+            <NoteMetricInput label="曝光" name="impressions" form={form} onMetric={(name, value) => manualChange({ [name]: value })} />
+            <NoteMetricInput label="观看" name="reads" form={form} onMetric={(name, value) => manualChange({ [name]: value })} />
+            <NoteMetricInput label="平均观看时长（秒）" name="average_view_seconds" form={form} onMetric={(name, value) => manualChange({ [name]: value })} />
+            <NoteMetricInput label="点赞" name="likes" form={form} onMetric={(name, value) => manualChange({ [name]: value })} />
+            <NoteMetricInput label="收藏" name="saves" form={form} onMetric={(name, value) => manualChange({ [name]: value })} />
+            <NoteMetricInput label="评论" name="comments" form={form} onMetric={(name, value) => manualChange({ [name]: value })} />
+            <NoteMetricInput label="分享" name="shares" form={form} onMetric={(name, value) => manualChange({ [name]: value })} />
+            <NoteMetricInput label="新增关注" name="follows" form={form} onMetric={(name, value) => manualChange({ [name]: value })} />
+            <NoteMetricInput label="有效咨询（选填）" name="qualified_inquiries" form={form} onMetric={(name, value) => manualChange({ [name]: value })} />
+            <div>
+              <label className="mb-2 block text-xs font-medium text-ink-500">搜索词TOP5（截图选填）</label>
+              <input
+                value={form.search_keywords}
+                onChange={(event) => manualChange({ search_keywords: event.target.value })}
                 className="w-full rounded-xl border border-ink-100 bg-white px-3 py-2 text-sm"
                 placeholder="逗号分隔"
               />
             </div>
           </div>
+          <div className="mt-3 grid gap-3 md:grid-cols-2">
+            <input
+              value={form.note_url}
+              onChange={(event) => manualChange({ note_url: event.target.value })}
+              className="w-full rounded-xl border border-ink-100 bg-white px-3 py-2 text-sm"
+              placeholder="笔记链接（选填）"
+            />
+            <input
+              value={form.target_customer_quote}
+              onChange={(event) => manualChange({ target_customer_quote: event.target.value })}
+              className="w-full rounded-xl border border-ink-100 bg-white px-3 py-2 text-sm"
+              placeholder="目标客户原话或主要问题（选填）"
+            />
+          </div>
+          {(form.traffic_sources || form.audience) && (
+            <div className="mt-3 text-xs leading-5 text-ink-500">
+              {form.traffic_sources && `流量来源：${Object.entries(form.traffic_sources).map(([key, value]) => `${key} ${value}%`).join("，")}`}
+              {form.audience && <div>已确认受众截图数据，将用于判断目标人群匹配，不要求手工录入完整分布。</div>}
+            </div>
+          )}
           <button className="btn-primary mt-4" disabled={!!busyKey} onClick={onSubmit}>
             {reviewing ? "提交中..." : reviewed ? "更新复盘" : "提交复盘"}
           </button>
+            </>
+          )}
         </div>
       )}
 
       {reviewed && review && (
-        <div className="mt-4 grid gap-2 rounded-2xl bg-ink-50 p-4 text-sm leading-6 text-ink-700 md:grid-cols-2">
-          <Field label="入口判断" value={review.entry_judgement} />
-          <Field label="价值判断" value={review.value_judgement} />
-          <Field label="关注判断" value={review.follow_judgement} />
+        <div className="mt-4 grid gap-3 border-t border-ink-100 pt-4 text-sm leading-6 text-ink-700 md:grid-cols-2">
+          <Field label="标题与入口" value={review.entry_judgement} />
+          <Field label="正文质量" value={review.body_judgement || review.value_judgement} />
+          <Field label="转化与承接" value={review.conversion_judgement || review.follow_judgement} />
           <Field label="人群判断" value={review.audience_judgement} />
+          <Field label="标题结构" value={review.entry_diagnosis?.title_pattern || "历史复盘未记录"} />
+          <Field label="合规判断" value={review.compliance_judgement || "以发布前合规扫描为准"} />
         </div>
       )}
     </div>
   );
 }
+
+type NumericReviewField =
+  | "impressions"
+  | "reads"
+  | "average_view_seconds"
+  | "likes"
+  | "saves"
+  | "comments"
+  | "shares"
+  | "follows"
+  | "qualified_inquiries";
 
 function NoteMetricInput({
   label,
@@ -832,9 +1127,9 @@ function NoteMetricInput({
   onMetric,
 }: {
   label: string;
-  name: keyof ReviewFormState;
+  name: NumericReviewField;
   form: ReviewFormState;
-  onMetric: (name: keyof ReviewFormState, value: string) => void;
+  onMetric: (name: NumericReviewField, value: string) => void;
 }) {
   return (
     <div>
@@ -842,7 +1137,7 @@ function NoteMetricInput({
       <input
         value={form[name]}
         onChange={(e) => onMetric(name, e.target.value)}
-        inputMode="numeric"
+        inputMode={name === "average_view_seconds" ? "decimal" : "numeric"}
         className="w-full rounded-xl border border-ink-100 bg-white px-3 py-2 text-sm"
         placeholder="0"
       />
@@ -853,13 +1148,20 @@ function NoteMetricInput({
 function DirectionAggregateCard({ agg }: { agg: DirectionAggregate }) {
   return (
     <div className="rounded-2xl border border-ink-100 p-4 text-sm leading-6 text-ink-700">
-      <div className="mb-2 font-semibold text-ink-900">{DIRECTION_LABELS[agg.direction] ?? agg.direction}</div>
-      <div className="text-xs text-ink-500">发布 {agg.note_count} 篇 · 已复盘 {agg.reviewed_count} 篇</div>
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <div className="font-semibold text-ink-900">{agg.label || DIRECTION_LABELS[agg.direction] || agg.direction}</div>
+        <span className="text-xs font-semibold text-gold-700">{WEEKLY_ACTION_LABELS[agg.action || "explore"]}</span>
+      </div>
+      <div className="text-xs text-ink-500">
+        近7天 {agg.recent_7d_count ?? 0} 篇 · 近28天有效 {agg.valid_count ?? 0} 篇
+      </div>
       <div className="mt-2 grid grid-cols-2 gap-1 text-xs">
-        <div>收藏率：{(agg.avg_save_rate * 100).toFixed(1)}%</div>
-        <div>评论率：{(agg.avg_comment_rate * 100).toFixed(1)}%</div>
-        <div>累计收藏：{agg.total_saves}</div>
-        <div>累计关注：{agg.total_follows}</div>
+        <div>点击率中位数：{((agg.median_ctr ?? 0) * 100).toFixed(1)}%</div>
+        <div>观看时长：{(agg.median_average_view_seconds ?? 0).toFixed(1)}秒</div>
+        <div>收藏率：{((agg.median_save_rate ?? agg.avg_save_rate) * 100).toFixed(1)}%</div>
+        <div>分享率：{((agg.median_share_rate ?? 0) * 100).toFixed(1)}%</div>
+        <div>涨粉率：{((agg.median_follow_rate ?? 0) * 100).toFixed(1)}%</div>
+        <div>咨询率：{((agg.median_inquiry_rate ?? 0) * 100).toFixed(1)}%</div>
       </div>
     </div>
   );

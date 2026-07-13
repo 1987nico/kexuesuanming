@@ -4,6 +4,7 @@ import { requireMianbaApiAuth } from "@/lib/auth/mianba";
 import { generateAccountAndPlan } from "@/lib/growth/runner";
 import { growthStore } from "@/lib/growth/store";
 import { GROWTH_PERSONAS, type GrowthPersona } from "@/lib/growth/types";
+import { isVisionConfigured } from "@/lib/llm/router";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -44,7 +45,18 @@ export async function GET(req: Request) {
   for (const review of reviewList) {
     if (!reviews[review.draft_id]) reviews[review.draft_id] = review;
   }
-  return NextResponse.json({ persona, account, plan, runs, drafts, reviews, stageReview: account?.stage_review ?? null });
+  const weeklyReview = account?.weekly_review ?? account?.stage_review ?? null;
+  return NextResponse.json({
+    persona,
+    account,
+    plan,
+    runs,
+    drafts,
+    reviews,
+    weeklyReview,
+    stageReview: weeklyReview,
+    capabilities: { reviewScreenshot: isVisionConfigured() },
+  });
 }
 
 export async function POST(req: Request) {

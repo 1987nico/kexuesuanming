@@ -14,6 +14,31 @@ export type ContentType = "diagnostic" | "tool" | "story";
 
 export type ContentStatus = "draft" | "ready" | "published" | "reviewed";
 
+export type NoteDistributionStatus = "normal" | "limited" | "violation" | "deleted";
+
+export type ReviewInputSource = "manual" | "screenshot" | "mixed";
+
+export type ReviewSampleStatus =
+  | "valid"
+  | "low_sample"
+  | "paid"
+  | "limited"
+  | "violation"
+  | "deleted"
+  | "historical_unknown"
+  | "not_ready";
+
+export type GrowthExperimentVariable =
+  | "title_cover"
+  | "opening"
+  | "audience_expression"
+  | "body_structure"
+  | "evidence"
+  | "closing"
+  | "length";
+
+export type WeeklyDirectionAction = "scale" | "retest" | "explore" | "pause";
+
 export type ReviewClassification =
   | "scale"
   | "retest"
@@ -45,6 +70,8 @@ export interface GrowthAccount {
   private_domain?: string;
   // 视角专属字段：key -> value
   persona_specific?: Record<string, string>;
+  weekly_review?: WeeklyReviewResult;
+  // 旧字段兼容：历史数据仍能打开，新代码统一写入 weekly_review。
   stage_review?: StageReviewResult;
   created_at: string;
   updated_at: string;
@@ -113,6 +140,9 @@ export interface TopicCandidate {
   repeatable_angle: string;
   broad_traffic_risk: number;
   priority: "S" | "A" | "B" | "C";
+  weekly_action?: WeeklyDirectionAction;
+  evidence?: string;
+  learning_trace?: GrowthLearningTrace;
   scores: {
     positioning: number;
     pain_clarity: number;
@@ -139,6 +169,7 @@ export interface GrowthRun {
   seen_titles?: string[];
   draft?: ContentDraft;
   review?: GrowthReview;
+  learning_trace?: GrowthLearningTrace;
   created_at: string;
   updated_at: string;
 }
@@ -175,6 +206,8 @@ export interface ContentDraft {
   story_mode?: string;
   pictorial_rate?: string;
   compliance?: DraftCompliance;
+  published_at?: string;
+  learning_trace?: GrowthLearningTrace;
   created_at: string;
   updated_at: string;
 }
@@ -187,10 +220,15 @@ export interface DraftCompliance {
 
 export interface GrowthReviewMetrics {
   published_at?: string;
+  snapshot_at?: string;
   note_url?: string;
+  note_status?: NoteDistributionStatus;
+  promoted?: boolean;
+  input_source?: ReviewInputSource;
   impressions?: number;
   reads?: number;
   ctr?: number;
+  average_view_seconds?: number;
   likes?: number;
   saves?: number;
   comments?: number;
@@ -199,6 +237,53 @@ export interface GrowthReviewMetrics {
   follows?: number;
   comment_keywords?: string[];
   private_messages?: number;
+  qualified_inquiries?: number;
+  target_customer_quote?: string;
+  traffic_sources?: {
+    home?: number;
+    search?: number;
+    profile?: number;
+    other?: number;
+  };
+  search_keywords?: string[];
+  audience?: {
+    gender?: Record<string, number>;
+    age?: Record<string, number>;
+    cities?: Record<string, number>;
+    city_tiers?: Record<string, number>;
+    interests?: Record<string, number>;
+  };
+}
+
+export interface GrowthDerivedMetrics {
+  ctr: number;
+  engagement_rate: number;
+  save_rate: number;
+  comment_rate: number;
+  share_rate: number;
+  follow_rate: number;
+  inquiry_rate: number;
+}
+
+export interface GrowthReviewSample {
+  status: ReviewSampleStatus;
+  strategy_eligible: boolean;
+  reasons: string[];
+}
+
+export interface GrowthEntryDiagnosis {
+  title_pattern: string;
+  primary_audience: string;
+  primary_keyword: string;
+  performance:
+    | "strong_aligned"
+    | "strong_entry_weak_delivery"
+    | "weak_entry_strong_content"
+    | "weak_both"
+    | "insufficient";
+  benchmark_note_count: number;
+  account_ctr_median?: number;
+  direction_ctr_median?: number;
 }
 
 export interface GrowthReview {
@@ -207,8 +292,14 @@ export interface GrowthReview {
   owner_user_id?: string | null;
   draft_id: string;
   metrics: GrowthReviewMetrics;
+  derived_metrics?: GrowthDerivedMetrics;
+  sample?: GrowthReviewSample;
+  entry_diagnosis?: GrowthEntryDiagnosis;
   classification: ReviewClassification;
   entry_judgement: string;
+  body_judgement?: string;
+  conversion_judgement?: string;
+  compliance_judgement?: string;
   value_judgement: string;
   follow_judgement: string;
   audience_judgement: string;
@@ -216,20 +307,39 @@ export interface GrowthReview {
   manager_instruction: string;
   topic_instruction: string;
   writer_instruction: string;
+  experiment_variable?: GrowthExperimentVariable;
+  learning_version?: string;
   created_at: string;
+  updated_at?: string;
 }
 
 // 阶段复盘：跨笔记按方向聚合，做方向级决策
 export interface DirectionAggregate {
   direction: GrowthDirection;
+  label?: string;
   note_count: number;
   reviewed_count: number;
+  valid_count?: number;
+  recent_7d_count?: number;
+  rolling_28d_count?: number;
   total_reads: number;
   total_saves: number;
   total_comments: number;
   total_follows: number;
   avg_save_rate: number; // saves / reads
   avg_comment_rate: number; // comments / reads
+  median_impressions?: number;
+  median_reads?: number;
+  median_ctr?: number;
+  median_average_view_seconds?: number;
+  median_save_rate?: number;
+  median_share_rate?: number;
+  median_follow_rate?: number;
+  median_inquiry_rate?: number;
+  action?: WeeklyDirectionAction;
+  confidence?: "low" | "medium" | "high";
+  score?: number;
+  evidence_review_ids?: string[];
   classifications: Record<string, number>; // 各结果分类计数
 }
 
@@ -239,15 +349,52 @@ export interface StageDecision {
   next_focus: string; // 下一阶段主攻
   reusable_pattern: string; // 可复用的标题/结构模板
   summary: string; // 一段话决策说明
+  strategic_hypothesis?: string;
+  content_allocation?: Array<{
+    direction: GrowthDirection;
+    percentage: number;
+    action: WeeklyDirectionAction;
+    reason: string;
+  }>;
+  title_patterns_to_repeat?: string[];
+  title_patterns_to_avoid?: string[];
+  body_patterns_to_repeat?: string[];
 }
 
-export interface StageReviewResult {
+export interface WeeklyReviewResult {
   account_id: string;
   generated_at: string;
+  learning_version?: string;
+  period_start?: string;
+  period_end?: string;
+  rolling_window_start?: string;
   note_total: number;
   reviewed_total: number;
+  eligible_total?: number;
+  stale?: boolean;
+  source_review_ids?: string[];
   by_direction: DirectionAggregate[];
   decision: StageDecision;
+}
+
+export type StageReviewResult = WeeklyReviewResult;
+
+export interface GrowthLearningTrace {
+  version: string;
+  generated_at: string;
+  weekly_review_generated_at?: string;
+  source_review_ids: string[];
+  direction_action?: WeeklyDirectionAction;
+  basis: string[];
+}
+
+export interface GrowthLearningBrief {
+  trace: GrowthLearningTrace;
+  weekly_strategy: string;
+  topic_guidance: string[];
+  title_guidance: string[];
+  body_guidance: string[];
+  experiment_variable: GrowthExperimentVariable;
 }
 
 // 业务设置：面霸君可在界面里编辑的业务事实（当前只有两个报告价格，后续可扩展）

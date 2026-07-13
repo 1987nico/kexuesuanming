@@ -34,6 +34,7 @@ export async function POST(req: Request) {
   const updatedAt = new Date().toISOString();
   await store.saveAccount({
     ...account,
+    weekly_review: result,
     stage_review: result,
     updated_at: updatedAt,
   });
@@ -44,7 +45,7 @@ export async function POST(req: Request) {
       user_id: guard.auth.user.id,
       feature: "growth_text",
       ...usage,
-      metadata: { action: "stage_review", accountId: account.id },
+      metadata: { action: "weekly_review", accountId: account.id, learningVersion: result.learning_version },
     });
   }
 

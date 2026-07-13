@@ -29,6 +29,10 @@ export interface LLMResponse {
   usage?: { inputTokens?: number; outputTokens?: number };
 }
 
+export interface LLMVisionRequest extends LLMRequest {
+  images: string[];
+}
+
 // 火山方舟（豆包）默认接入点：OpenAI 兼容协议
 const ARK_BASE_URL = process.env.ARK_BASE_URL || "https://ark.cn-beijing.volces.com/api/v3";
 
@@ -148,6 +152,93 @@ export async function llmJSON<T = unknown>(req: LLMRequest): Promise<{ data: T; 
     const parsed = safeParseJSON<T>(raw.text);
     if (parsed !== null) return { data: parsed, raw };
     lastError = new Error("LLM 返回非合法 JSON: " + raw.text.slice(0, 200));
+  }
+  throw lastError;
+}
+
+function visionRoute(): { provider: "doubao" | "openai"; model: string } | null {
+  const requested = process.env.LLM_VISION_PROVIDER as Provider | undefined;
+  const requestedModel = process.env.LLM_VISION_MODEL;
+  if (requested === "doubao" && process.env.ARK_API_KEY && requestedModel) {
+    return { provider: "doubao", model: requestedModel };
+  }
+  if (requested === "openai" && process.env.OPENAI_API_KEY) {
+    return { provider: "openai", model: requestedModel || "gpt-4o-mini" };
+  }
+  if (PRIMARY_PROVIDER === "doubao" && process.env.ARK_API_KEY) {
+    return { provider: "doubao", model: requestedModel || PRIMARY_MODEL };
+  }
+  if (PRIMARY_PROVIDER === "openai" && process.env.OPENAI_API_KEY) {
+    return { provider: "openai", model: requestedModel || PRIMARY_MODEL };
+  }
+  if (process.env.ARK_API_KEY && requestedModel) {
+    return { provider: "doubao", model: requestedModel };
+  }
+  if (process.env.OPENAI_API_KEY) {
+    return { provider: "openai", model: requestedModel || "gpt-4o-mini" };
+  }
+  return null;
+}
+
+export function isVisionConfigured() {
+  return visionRoute() !== null;
+}
+
+async function callVisionOpenAICompat(
+  req: LLMVisionRequest,
+  provider: "doubao" | "openai",
+  model: string,
+): Promise<LLMResponse> {
+  const { apiKey, baseURL } = openAICompatConfig(provider);
+  const client = new OpenAI({ apiKey, baseURL });
+  const content = [
+    { type: "text", text: req.user },
+    ...req.images.map((url) => ({ type: "image_url", image_url: { url } })),
+  ];
+  const doubaoThinking =
+    provider === "doubao"
+      ? { thinking: { type: (process.env.ARK_THINKING || "disabled") as "disabled" | "enabled" | "auto" } }
+      : {};
+  const response: any = await client.chat.completions.create({
+    model,
+    temperature: req.temperature ?? 0.1,
+    max_tokens: req.maxTokens ?? 2000,
+    messages: [
+      { role: "system", content: req.system },
+      { role: "user", content },
+    ],
+    response_format: { type: "json_object" },
+    ...doubaoThinking,
+  } as any);
+  return {
+    text: response.choices?.[0]?.message?.content ?? "",
+    provider,
+    model,
+    usage: {
+      inputTokens: response.usage?.prompt_tokens,
+      outputTokens: response.usage?.completion_tokens,
+    },
+  };
+}
+
+export async function llmVisionJSON<T = unknown>(
+  req: LLMVisionRequest,
+): Promise<{ data: T; raw: LLMResponse }> {
+  const route = visionRoute();
+  if (!route) throw new Error("未配置可识别截图的视觉模型");
+  if (!req.images.length) throw new Error("至少需要一张截图");
+  const { safeParseJSON } = await import("@/lib/utils");
+  const finalReq: LLMVisionRequest = {
+    ...req,
+    json: true,
+    system: `${req.system}\n\n严格要求：仅输出合法 JSON，不要任何额外文字、解释、Markdown 代码块。`,
+  };
+  let lastError: unknown = null;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const raw = await callVisionOpenAICompat(finalReq, route.provider, route.model);
+    const parsed = safeParseJSON<T>(raw.text);
+    if (parsed !== null) return { data: parsed, raw };
+    lastError = new Error(`视觉模型返回非合法 JSON: ${raw.text.slice(0, 200)}`);
   }
   throw lastError;
 }

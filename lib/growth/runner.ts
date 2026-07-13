@@ -9,22 +9,31 @@ import {
 } from "./agents";
 import type {
   ContentDraft,
-  DirectionAggregate,
   GrowthAccount,
   GrowthDirection,
+  GrowthLearningBrief,
   GrowthPersona,
   GrowthPlan,
   GrowthPlanWeek,
   GrowthReview,
   GrowthReviewMetrics,
   GrowthRun,
-  StageDecision,
-  StageReviewResult,
+  WeeklyReviewResult,
   TopicCandidate,
 } from "./types";
 import { countPublishChars, enforceDraftCompliance, normalizeTags } from "./validation";
 import { PERSONA_SPECIFIC_FIELDS, DEFAULT_BUSINESS_SETTINGS } from "./types";
 import type { AccountContext, ReportPrices } from "./agents";
+import {
+  buildReviewBenchmarks,
+  buildWeeklyReviewResult,
+  computeDerivedMetrics,
+  diagnoseEntry,
+  evaluateReviewSample,
+  formatLearningBrief,
+  normalizeExperimentVariable,
+  resolvePublishedAt,
+} from "./reviewLearning";
 
 const DEFAULT_TENANT_ID = "mianbajun";
 
@@ -311,6 +320,7 @@ export async function generateTopicPool(input: {
   planId?: string;
   week?: number;
   recentSignals?: string;
+  learningBrief?: GrowthLearningBrief;
 }): Promise<{ run: GrowthRun; usage?: Record<string, unknown> }> {
   const tenantId = input.tenantId ?? input.account.tenant_id;
   const week = Math.max(1, Math.min(4, input.week ?? 1));
@@ -326,7 +336,7 @@ export async function generateTopicPool(input: {
         persona: input.account.persona,
         targetUser: input.account.target_user,
         coreProblem: input.account.core_problem,
-        recentSignals: input.recentSignals,
+        recentSignals: input.learningBrief ? formatLearningBrief(input.learningBrief) : input.recentSignals,
         context: accountContext(input.account),
       }),
       maxTokens: 5000,
@@ -355,6 +365,7 @@ export async function generateTopicPool(input: {
     experiment_hypothesis:
       payload?.experiment_hypothesis || "方向 A 的诊断型内容更容易带来精准评论和主页访问。",
     topic_pool: topics.length ? topics : fallbackTopics(input.account),
+    learning_trace: input.learningBrief?.trace,
     created_at: timestamp,
     updated_at: timestamp,
   };
@@ -366,6 +377,7 @@ export async function generateDraft(input: {
   account: GrowthAccount;
   run: GrowthRun;
   selectedTopicId?: string;
+  learningBrief?: GrowthLearningBrief;
 }): Promise<{ run: GrowthRun; draft: ContentDraft; usage?: Record<string, unknown> }> {
   const topic =
     input.run.topic_pool.find((candidate) => candidate.id === input.selectedTopicId) ||
@@ -391,6 +403,7 @@ export async function generateDraft(input: {
         testVariable: topic.test_variable,
         expectedSignal: topic.expected_signal,
         followReason: topic.follow_reason,
+        learningGuidance: input.learningBrief ? formatLearningBrief(input.learningBrief) : undefined,
       }),
       maxTokens: 3500,
       temperature: 0.65,
@@ -444,6 +457,7 @@ export async function generateDraft(input: {
       "真实办公桌面，手写目标客户判断表，画面克制，有真实过程感。",
     story_mode: asText(payload?.story_mode) || undefined,
     pictorial_rate: asText(payload?.pictorial_rate) || undefined,
+    learning_trace: input.learningBrief?.trace,
     created_at: timestamp,
     updated_at: timestamp,
   };
@@ -455,6 +469,7 @@ export async function generateDraft(input: {
     status: "ready",
     selected_topic: topic,
     draft,
+    learning_trace: input.learningBrief?.trace,
     updated_at: timestamp,
   };
 
@@ -470,6 +485,7 @@ export async function generateTopicBatch(input: {
   count?: number;
   excludeTitles?: string[];
   recentSignals?: string;
+  learningBrief?: GrowthLearningBrief;
 }): Promise<{ topics: TopicCandidate[]; usage?: Record<string, unknown> }> {
   const week = Math.max(1, Math.min(4, input.week ?? 1));
   const count = input.count ?? 2;
@@ -485,7 +501,7 @@ export async function generateTopicBatch(input: {
         persona: input.account.persona,
         targetUser: input.account.target_user,
         coreProblem: input.account.core_problem,
-        recentSignals: input.recentSignals,
+        recentSignals: input.learningBrief ? formatLearningBrief(input.learningBrief) : input.recentSignals,
         count,
         excludeTitles,
         context: accountContext(input.account),
@@ -514,6 +530,15 @@ export async function generateTopicBatch(input: {
     topics = [...topics, ...backup];
   }
 
+  if (input.learningBrief) {
+    topics = topics.map((topic) => ({
+      ...topic,
+      weekly_action: input.learningBrief?.trace.direction_action,
+      evidence: input.learningBrief?.trace.basis.join("；"),
+      learning_trace: input.learningBrief?.trace,
+    }));
+  }
+
   return { topics: topics.slice(0, count), usage };
 }
 
@@ -527,41 +552,77 @@ export async function generateDraftVariants(input: {
   topic: TopicCandidate;
   count?: number;
   excludeBodies?: string[];
+  learningBrief?: GrowthLearningBrief;
 }): Promise<{ drafts: ContentDraft[]; usage?: Record<string, unknown> }> {
   const count = input.count ?? 2;
-  // 一短一长：方案 1 精简版，方案 2 深度长文。
-  const variantSpecs = [
-    {
-      hint: "开头用一句反常识判断切入，正文用 3 个诊断信号，克制精炼。",
-      lengthHint: "精简版：正文控制在 150-300 字，只保留最锋利的判断和 3 个信号，适合快速阅读。",
-    },
-    {
-      hint: "开头用真实场景/过程切入，正文展开清单或步骤 + 案例 + 关注理由。",
-      lengthHint: "深度长文：正文写到 600-900 字（发布端合计仍需 ≤1000 字），把判断讲透、给可执行细节。",
-    },
-    {
-      hint: "开头用第一人称复盘切入，中等篇幅，故事服务判断。",
-      lengthHint: "中等篇幅：正文 400-600 字。",
-    },
-  ];
+  const experiment = input.learningBrief?.experiment_variable || normalizeExperimentVariable(input.topic.test_variable);
+  const experimentHints: Record<Exclude<typeof experiment, "title_cover">, string[]> = {
+    opening: ["只改变开头：用具体场景切入。", "只改变开头：用反常识判断切入。"],
+    audience_expression: ["只改变目标人群称呼：用身份筛选。", "只改变目标人群称呼：用处境筛选。"],
+    body_structure: ["只改变正文结构：采用诊断信号结构。", "只改变正文结构：采用问题-证据-行动结构。"],
+    evidence: ["只改变案例证据：使用具体场景和数字。", "只改变案例证据：使用对照和反例。"],
+    closing: ["只改变结尾：给读者一个自查动作。", "只改变结尾：给读者一个判断标准。"],
+    length: ["只改变篇幅，写150-300字精简版。", "只改变篇幅，写600-900字深度版。"],
+  };
   const drafts: ContentDraft[] = [];
   const usedBodies = [...(input.excludeBodies ?? [])];
   let usage: Record<string, unknown> | undefined;
 
-  for (let i = 0; i < count; i++) {
-    const spec = variantSpecs[i % variantSpecs.length];
+  if (experiment === "title_cover") {
     const single = await generateSingleDraft({
       tenantId: input.tenantId,
       account: input.account,
       run: input.run,
       topic: input.topic,
-      variantHint: spec.hint,
-      lengthHint: spec.lengthHint,
-      lengthKind: i === 0 ? "short" : "long",
+      variantHint: "本轮只测试标题入口。正文、开头、结构、案例、结尾和篇幅必须固定。",
+      lengthHint: "正文采用中等篇幅，不要为了制造版本差异改变正文。",
       excludeBodies: usedBodies,
+      learningBrief: input.learningBrief,
     });
-    drafts.push(single.draft);
-    usedBodies.push(single.draft.body);
+    const candidateTitles = [...new Set([single.draft.title, ...single.draft.alternative_titles, input.topic.title])]
+      .map(enforceTitleLimit)
+      .filter(Boolean);
+    for (let index = 0; index < count; index++) {
+      const title = candidateTitles[index] || enforceTitleLimit(`${input.topic.title}${index + 1}`);
+      drafts.push({
+        ...single.draft,
+        id: index === 0 ? single.draft.id : id(),
+        title,
+        word_count: countPublishChars(title, single.draft.body, single.draft.hashtags),
+        learning_trace: input.learningBrief?.trace,
+        created_at: index === 0 ? single.draft.created_at : now(),
+        updated_at: now(),
+      });
+    }
+    return { drafts, usage: single.usage };
+  }
+
+  const hints = experimentHints[experiment];
+
+  for (let i = 0; i < count; i++) {
+    const single = await generateSingleDraft({
+      tenantId: input.tenantId,
+      account: input.account,
+      run: input.run,
+      topic: input.topic,
+      variantHint: `${hints[i % hints.length]} 其它变量必须与另一方案保持一致。`,
+      lengthHint: experiment === "length" ? hints[i % hints.length] : "正文统一控制在400-600字。",
+      lengthKind: experiment === "length" && i > 0 ? "long" : undefined,
+      excludeBodies: usedBodies,
+      learningBrief: input.learningBrief,
+    });
+    const draft = drafts[0]
+      ? {
+          ...single.draft,
+          title: drafts[0].title,
+          cover_text: drafts[0].cover_text,
+          target_user: drafts[0].target_user,
+          hashtags: drafts[0].hashtags,
+          word_count: countPublishChars(drafts[0].title, single.draft.body, drafts[0].hashtags),
+        }
+      : single.draft;
+    drafts.push(draft);
+    usedBodies.push(draft.body);
     if (single.usage) usage = single.usage;
   }
 
@@ -577,6 +638,7 @@ async function generateSingleDraft(input: {
   lengthHint?: string;
   lengthKind?: "short" | "long";
   excludeBodies?: string[];
+  learningBrief?: GrowthLearningBrief;
 }): Promise<{ draft: ContentDraft; usage?: Record<string, unknown> }> {
   const topic = input.topic;
   const timestamp = now();
@@ -597,6 +659,7 @@ async function generateSingleDraft(input: {
         expectedSignal: topic.expected_signal,
         followReason: topic.follow_reason,
         variantHint: [input.variantHint, input.lengthHint].filter(Boolean).join(" "),
+        learningGuidance: input.learningBrief ? formatLearningBrief(input.learningBrief) : undefined,
         excludeBodies: input.excludeBodies,
         context: accountContext(input.account),
       }),
@@ -649,6 +712,7 @@ async function generateSingleDraft(input: {
     cover_suggestion: payload?.cover_suggestion || "真实办公桌面，手写目标客户判断表，画面克制。",
     story_mode: asText(payload?.story_mode) || undefined,
     pictorial_rate: asText(payload?.pictorial_rate) || undefined,
+    learning_trace: input.learningBrief?.trace,
     created_at: timestamp,
     updated_at: timestamp,
   };
@@ -661,8 +725,22 @@ export async function reviewDraft(input: {
   tenantId?: string;
   draft: ContentDraft;
   metrics: GrowthReviewMetrics;
+  existingReview?: GrowthReview | null;
+  notes?: ContentDraft[];
+  reviews?: GrowthReview[];
 }): Promise<{ review: GrowthReview; usage?: Record<string, unknown> }> {
   const timestamp = now();
+  const publishedAt = resolvePublishedAt(input.draft, input.metrics);
+  const metrics: GrowthReviewMetrics = {
+    ...input.metrics,
+    published_at: publishedAt,
+    snapshot_at: input.metrics.snapshot_at || timestamp,
+  };
+  const derived = computeDerivedMetrics(metrics);
+  metrics.ctr = derived.ctr;
+  const sample = evaluateReviewSample(metrics, publishedAt, new Date(timestamp));
+  const benchmarks = buildReviewBenchmarks(input.draft, input.notes || [input.draft], input.reviews || []);
+  const preliminaryEntry = diagnoseEntry(metrics, benchmarks);
   let payload: any = null;
   let usage: Record<string, unknown> | undefined;
 
@@ -674,7 +752,7 @@ export async function reviewDraft(input: {
         direction: input.draft.direction,
         contentType: input.draft.content_type,
         testVariable: input.draft.test_variable,
-        metrics: input.metrics as Record<string, unknown>,
+        metrics: { metrics, derived, sample, benchmarks, preliminary_entry: preliminaryEntry },
       }),
       maxTokens: 2000,
       temperature: 0.35,
@@ -690,87 +768,87 @@ export async function reviewDraft(input: {
     console.warn("[growth] review fallback:", (error as Error).message);
   }
 
-  const reads = input.metrics.reads || 0;
-  const saves = input.metrics.saves || 0;
-  const comments = input.metrics.comments || 0;
-  const follows = input.metrics.follows || 0;
-  const classification =
-    payload?.classification ||
-    (reads > 0 && (saves + comments + follows) / reads > 0.05 ? "retest" : "weak_entry");
+  const allowedClassifications = new Set([
+    "scale",
+    "retest",
+    "weak_entry",
+    "weak_conversion",
+    "wrong_audience",
+    "pause",
+  ]);
+  const fallbackClassification =
+    preliminaryEntry.performance === "strong_aligned"
+      ? "scale"
+      : preliminaryEntry.performance === "strong_entry_weak_delivery"
+        ? "weak_conversion"
+        : preliminaryEntry.performance === "weak_entry_strong_content"
+          ? "weak_entry"
+          : "retest";
+  const classification = allowedClassifications.has(payload?.classification)
+    ? payload.classification
+    : fallbackClassification;
+  const entryDiagnosis = diagnoseEntry(
+    metrics,
+    benchmarks,
+    asText(payload?.title_pattern) || "待继续验证的标题结构",
+    asText(payload?.primary_audience) || input.draft.target_user,
+    asText(payload?.primary_keyword) || "无",
+  );
+  const nextVariable = asText(payload?.next_variable) || "下一篇优先只改标题/封面入口。";
 
   const review: GrowthReview = {
-    id: id(),
+    id: input.existingReview?.id || input.draft.id,
     tenant_id: input.tenantId ?? input.draft.tenant_id,
     draft_id: input.draft.id,
-    metrics: input.metrics,
+    metrics,
+    derived_metrics: derived,
+    sample,
+    entry_diagnosis: entryDiagnosis,
     classification,
-    entry_judgement: payload?.entry_judgement || "数据不足，先标记为入口待观察。",
-    value_judgement: payload?.value_judgement || "看收藏、评论和分享是否出现有用信号。",
-    follow_judgement: payload?.follow_judgement || "看主页访问和新增关注是否可见。",
+    entry_judgement:
+      asText(payload?.entry_judgement) ||
+      (entryDiagnosis.performance === "insufficient"
+        ? "可比较样本不足，先记录标题结构，不急着下结论。"
+        : "已按点击率与内容兑现情况完成入口判断。"),
+    body_judgement: asText(payload?.body_judgement) || "继续结合观看时长、收藏和分享判断正文是否接住标题。",
+    conversion_judgement: asText(payload?.conversion_judgement) || "继续观察新增关注和有效咨询。",
+    compliance_judgement: asText(payload?.compliance_judgement) || "未发现新增合规结论，仍以发布前扫描结果为准。",
+    value_judgement:
+      asText(payload?.value_judgement) || asText(payload?.body_judgement) || "看收藏和分享是否出现价值信号。",
+    follow_judgement:
+      asText(payload?.follow_judgement) || asText(payload?.conversion_judgement) || "看新增关注和有效咨询是否出现。",
     audience_judgement: payload?.audience_judgement || "需要继续观察评论里是否出现目标用户信号。",
-    next_variable: payload?.next_variable || "下一篇优先只改标题/封面入口。",
+    next_variable: nextVariable,
     manager_instruction: payload?.manager_instruction || "保留二测，不要直接放大。",
     topic_instruction: payload?.topic_instruction || "继续围绕同一目标用户补 2 个不同入口。",
     writer_instruction: payload?.writer_instruction || "强化开头筛选词和结尾关注理由。",
-    created_at: timestamp,
+    experiment_variable: normalizeExperimentVariable(asText(payload?.experiment_variable) || nextVariable),
+    learning_version: `single-${timestamp}`,
+    created_at: input.existingReview?.created_at || timestamp,
+    updated_at: timestamp,
   };
 
   return { review, usage };
 }
 
 /**
- * 阶段复盘：以笔记为单元，跨笔记按方向聚合，给方向级决策。
+ * 周复盘：单篇复盘是证据层，本函数只在方向层做策略判断。
  */
 export async function stageReview(input: {
   account: GrowthAccount;
   notes: ContentDraft[];
   reviews: GrowthReview[];
-}): Promise<{ result: StageReviewResult; usage?: Record<string, unknown> }> {
-  const reviewByDraft = new Map(input.reviews.map((r) => [r.draft_id, r]));
-  const directions: GrowthDirection[] = ["A", "B", "C"];
-
-  const by_direction: DirectionAggregate[] = directions.map((direction) => {
-    const notes = input.notes.filter((n) => n.direction === direction);
-    const reviewed = notes
-      .map((n) => reviewByDraft.get(n.id))
-      .filter((r): r is GrowthReview => Boolean(r));
-    let reads = 0;
-    let saves = 0;
-    let comments = 0;
-    let follows = 0;
-    const classifications: Record<string, number> = {};
-    for (const rv of reviewed) {
-      reads += rv.metrics.reads || 0;
-      saves += rv.metrics.saves || 0;
-      comments += rv.metrics.comments || 0;
-      follows += rv.metrics.follows || 0;
-      classifications[rv.classification] = (classifications[rv.classification] || 0) + 1;
-    }
-    return {
-      direction,
-      note_count: notes.length,
-      reviewed_count: reviewed.length,
-      total_reads: reads,
-      total_saves: saves,
-      total_comments: comments,
-      total_follows: follows,
-      avg_save_rate: reads > 0 ? Number((saves / reads).toFixed(4)) : 0,
-      avg_comment_rate: reads > 0 ? Number((comments / reads).toFixed(4)) : 0,
-      classifications,
-    } satisfies DirectionAggregate;
-  });
-
-  const reviewed_total = by_direction.reduce((sum, d) => sum + d.reviewed_count, 0);
-
-  let decision: Partial<StageDecision> | null = null;
+}): Promise<{ result: WeeklyReviewResult; usage?: Record<string, unknown> }> {
+  const deterministic = buildWeeklyReviewResult(input);
+  let decision: Record<string, unknown> | null = null;
   let usage: Record<string, unknown> | undefined;
   try {
-    const result = await llmJSON<StageDecision>({
+    const result = await llmJSON<Record<string, unknown>>({
       system: GROWTH_SYSTEM_PROMPT,
       user: buildStageReviewUserPrompt({
         targetUser: input.account.target_user,
         directions: input.account.content_directions,
-        aggregate: by_direction,
+        aggregate: deterministic.by_direction,
       }),
       maxTokens: 1200,
       temperature: 0.4,
@@ -786,59 +864,33 @@ export async function stageReview(input: {
     console.warn("[growth] stage review fallback:", (error as Error).message);
   }
 
-  const fallback = deterministicStageDecision(by_direction, reviewed_total);
-  const finalDecision: StageDecision = {
-    scale_direction: decision?.scale_direction || fallback.scale_direction,
-    pause_direction: decision?.pause_direction || fallback.pause_direction,
-    next_focus: decision?.next_focus || fallback.next_focus,
-    reusable_pattern: decision?.reusable_pattern || fallback.reusable_pattern,
-    summary: decision?.summary || fallback.summary,
-  };
-
-  const result: StageReviewResult = {
-    account_id: input.account.id,
-    generated_at: now(),
-    note_total: input.notes.length,
-    reviewed_total,
-    by_direction,
-    decision: finalDecision,
+  const result: WeeklyReviewResult = {
+    ...deterministic,
+    decision: {
+      ...deterministic.decision,
+      // 方向动作由服务器证据门槛决定，模型只负责解释和提炼表达模式。
+      scale_direction: deterministic.decision.scale_direction,
+      pause_direction: deterministic.decision.pause_direction,
+      next_focus: deterministic.decision.next_focus,
+      reusable_pattern: asText(decision?.reusable_pattern) || deterministic.decision.reusable_pattern,
+      summary: asText(decision?.summary) || deterministic.decision.summary,
+      strategic_hypothesis:
+        asText(decision?.strategic_hypothesis) || deterministic.decision.strategic_hypothesis,
+      title_patterns_to_repeat:
+        Array.isArray(decision?.title_patterns_to_repeat) && decision.title_patterns_to_repeat.length
+          ? decision.title_patterns_to_repeat.map(String).slice(0, 6)
+          : deterministic.decision.title_patterns_to_repeat,
+      title_patterns_to_avoid:
+        Array.isArray(decision?.title_patterns_to_avoid) && decision.title_patterns_to_avoid.length
+          ? decision.title_patterns_to_avoid.map(String).slice(0, 6)
+          : deterministic.decision.title_patterns_to_avoid,
+      body_patterns_to_repeat:
+        Array.isArray(decision?.body_patterns_to_repeat) && decision.body_patterns_to_repeat.length
+          ? decision.body_patterns_to_repeat.map(String).slice(0, 6)
+          : deterministic.decision.body_patterns_to_repeat,
+    },
   };
   return { result, usage };
-}
-
-function deterministicStageDecision(
-  by_direction: DirectionAggregate[],
-  reviewed_total: number
-): StageDecision {
-  if (reviewed_total === 0) {
-    return {
-      scale_direction: "数据不足，需先积累已复盘笔记再判断。",
-      pause_direction: "暂无",
-      next_focus: "三个方向各发几篇并回填数据，先把样本攒起来。",
-      reusable_pattern: "暂无",
-      summary: "还没有已复盘的笔记，无法做方向决策。先按计划发布并逐篇回填数据。",
-    };
-  }
-  const scored = by_direction
-    .filter((d) => d.reviewed_count > 0)
-    .map((d) => ({ d, score: d.avg_save_rate + d.avg_comment_rate + d.total_follows / 1000 }))
-    .sort((a, b) => b.score - a.score);
-  const best = scored[0]?.d;
-  const worst = scored.length > 1 ? scored[scored.length - 1].d : undefined;
-  return {
-    scale_direction: best
-      ? `方向 ${best.direction}：收藏率 ${(best.avg_save_rate * 100).toFixed(1)}%、评论率 ${(best.avg_comment_rate * 100).toFixed(1)}%、累计新增关注 ${best.total_follows}，暂时表现最好。`
-      : "数据不足，需继续验证。",
-    pause_direction:
-      worst && worst.direction !== best?.direction
-        ? `方向 ${worst.direction}：反馈相对最弱，可降低占比继续观察。`
-        : "暂无",
-    next_focus: best ? `围绕方向 ${best.direction} 补 2-3 篇，只改一个变量做二测。` : "继续补样本。",
-    reusable_pattern: "暂无（样本较少，尚未跑出稳定模板）",
-    summary: `已复盘 ${reviewed_total} 篇。${
-      best ? `方向 ${best.direction} 暂时反馈最好，建议下一阶段主攻并二测；` : ""
-    }不要基于单篇爆款下结论，继续以笔记为单元积累数据。`,
-  };
 }
 
 function normalizeTopics(topics: any): TopicCandidate[] {

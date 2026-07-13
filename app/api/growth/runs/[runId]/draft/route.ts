@@ -3,6 +3,11 @@ import { z } from "zod";
 import { requireMianbaApiAuth } from "@/lib/auth/mianba";
 import { generateDraft } from "@/lib/growth/runner";
 import { growthStore } from "@/lib/growth/store";
+import {
+  buildLearningBrief,
+  buildWeeklyReviewResult,
+  isWeeklyReviewStale,
+} from "@/lib/growth/reviewLearning";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -28,12 +33,34 @@ export async function POST(req: Request, { params }: { params: { runId: string }
   if (!run) return NextResponse.json({ error: "run_not_found" }, { status: 404 });
   const account = await store.getAccount(run.account_id);
   if (!account) return NextResponse.json({ error: "account_not_found" }, { status: 404 });
+  const notes = await store.listDrafts(account.id);
+  const reviews = await store.listReviewsByAccount(account.id);
+  let weeklyReview = account.weekly_review ?? account.stage_review;
+  if (!weeklyReview || isWeeklyReviewStale(weeklyReview, reviews)) {
+    weeklyReview = buildWeeklyReviewResult({ account, notes, reviews });
+    await store.saveAccount({
+      ...account,
+      weekly_review: weeklyReview,
+      stage_review: weeklyReview,
+      updated_at: new Date().toISOString(),
+    });
+  }
+  const selectedTopic =
+    run.topic_pool.find((topic) => topic.id === parsed.data.selectedTopicId) || run.selected_topic || run.topic_pool[0];
+  const learningBrief = buildLearningBrief({
+    account,
+    notes,
+    reviews,
+    weekly: weeklyReview,
+    direction: selectedTopic?.direction,
+  });
 
   const result = await generateDraft({
     tenantId: DEFAULT_TENANT_ID,
     account,
     run,
     selectedTopicId: parsed.data.selectedTopicId,
+    learningBrief,
   });
 
   result.draft.owner_user_id = result.draft.owner_user_id ?? guard.auth.user.id;

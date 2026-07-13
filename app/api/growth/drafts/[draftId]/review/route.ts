@@ -3,6 +3,11 @@ import { z } from "zod";
 import { requireMianbaApiAuth } from "@/lib/auth/mianba";
 import { reviewDraft } from "@/lib/growth/runner";
 import { growthStore } from "@/lib/growth/store";
+import {
+  buildWeeklyReviewResult,
+  getReviewAvailability,
+  resolvePublishedAt,
+} from "@/lib/growth/reviewLearning";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -11,18 +16,41 @@ const DEFAULT_TENANT_ID = "mianbajun";
 
 const metricsSchema = z.object({
   published_at: z.string().optional(),
-  note_url: z.string().optional(),
-  impressions: z.number().int().nonnegative().optional(),
-  reads: z.number().int().nonnegative().optional(),
-  ctr: z.number().nonnegative().optional(),
-  likes: z.number().int().nonnegative().optional(),
-  saves: z.number().int().nonnegative().optional(),
-  comments: z.number().int().nonnegative().optional(),
-  shares: z.number().int().nonnegative().optional(),
+  note_url: z.string().url().max(500).optional(),
+  note_status: z.enum(["normal", "limited", "violation", "deleted"]).default("normal"),
+  promoted: z.boolean().default(false),
+  input_source: z.enum(["manual", "screenshot", "mixed"]).default("manual"),
+  impressions: z.number().int().nonnegative(),
+  reads: z.number().int().nonnegative(),
+  average_view_seconds: z.number().nonnegative(),
+  likes: z.number().int().nonnegative(),
+  saves: z.number().int().nonnegative(),
+  comments: z.number().int().nonnegative(),
+  shares: z.number().int().nonnegative(),
   profile_visits: z.number().int().nonnegative().optional(),
-  follows: z.number().int().nonnegative().optional(),
+  follows: z.number().int().nonnegative(),
   comment_keywords: z.array(z.string()).optional(),
   private_messages: z.number().int().nonnegative().optional(),
+  qualified_inquiries: z.number().int().nonnegative().optional(),
+  target_customer_quote: z.string().max(1000).optional(),
+  traffic_sources: z
+    .object({
+      home: z.number().min(0).max(100).optional(),
+      search: z.number().min(0).max(100).optional(),
+      profile: z.number().min(0).max(100).optional(),
+      other: z.number().min(0).max(100).optional(),
+    })
+    .optional(),
+  search_keywords: z.array(z.string().max(80)).max(5).optional(),
+  audience: z
+    .object({
+      gender: z.record(z.number().min(0).max(100)).optional(),
+      age: z.record(z.number().min(0).max(100)).optional(),
+      cities: z.record(z.number().min(0).max(100)).optional(),
+      city_tiers: z.record(z.number().min(0).max(100)).optional(),
+      interests: z.record(z.number().min(0).max(100)).optional(),
+    })
+    .optional(),
 });
 
 export async function POST(req: Request, { params }: { params: { draftId: string } }) {
@@ -38,11 +66,35 @@ export async function POST(req: Request, { params }: { params: { draftId: string
   const store = growthStore();
   const draft = await store.getDraft(params.draftId);
   if (!draft) return NextResponse.json({ error: "draft_not_found" }, { status: 404 });
+  if (draft.status !== "published" && draft.status !== "reviewed") {
+    return NextResponse.json({ error: "draft_not_published", message: "请先标记实际发布时间。" }, { status: 409 });
+  }
+
+  const publishedAt = resolvePublishedAt(draft, parsed.data);
+  const availability = getReviewAvailability(publishedAt);
+  if (!availability.ready) {
+    return NextResponse.json(
+      {
+        error: "review_not_ready",
+        message: "发布满24小时后才能提交正式复盘。",
+        availableAt: availability.available_at,
+        remainingSeconds: Math.ceil(availability.remaining_ms / 1000),
+      },
+      { status: 409 },
+    );
+  }
+
+  const notes = await store.listDrafts(draft.account_id);
+  const existingReviews = await store.listReviewsByAccount(draft.account_id);
+  const existingReview = await store.getReviewByDraft(draft.id);
 
   const { review, usage } = await reviewDraft({
     tenantId: DEFAULT_TENANT_ID,
     draft,
-    metrics: parsed.data,
+    metrics: { ...parsed.data, published_at: publishedAt, snapshot_at: new Date().toISOString() },
+    existingReview,
+    notes,
+    reviews: existingReviews,
   });
   review.owner_user_id = review.owner_user_id ?? guard.auth.user.id;
   await store.saveReview(review);
@@ -64,6 +116,19 @@ export async function POST(req: Request, { params }: { params: { draftId: string
     });
   }
 
+  const account = await store.getAccount(draft.account_id);
+  let weeklyReview = account?.weekly_review ?? account?.stage_review ?? null;
+  if (account) {
+    const currentReviews = await store.listReviewsByAccount(account.id);
+    weeklyReview = buildWeeklyReviewResult({ account, notes, reviews: currentReviews });
+    await store.saveAccount({
+      ...account,
+      weekly_review: weeklyReview,
+      stage_review: weeklyReview,
+      updated_at: new Date().toISOString(),
+    });
+  }
+
   if (usage) {
     await store.saveUsage({
       tenant_id: DEFAULT_TENANT_ID,
@@ -74,5 +139,5 @@ export async function POST(req: Request, { params }: { params: { draftId: string
     });
   }
 
-  return NextResponse.json({ draft: reviewedDraft, review });
+  return NextResponse.json({ draft: reviewedDraft, review, weeklyReview });
 }

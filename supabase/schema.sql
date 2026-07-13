@@ -452,6 +452,14 @@ create index if not exists idx_growth_plans_account on growth_plans(account_id, 
 create index if not exists idx_growth_runs_account on growth_runs(account_id, created_at desc);
 create index if not exists idx_content_drafts_account on content_drafts(account_id, created_at desc);
 create index if not exists idx_growth_reviews_draft on growth_reviews(draft_id, created_at desc);
+-- 单篇笔记只保留一份正式24小时复盘；历史重复记录保留最新一条。
+with ranked_growth_reviews as (
+  select id, row_number() over (partition by draft_id order by created_at desc, id desc) as row_number
+  from growth_reviews
+)
+delete from growth_reviews
+where id in (select id from ranked_growth_reviews where row_number > 1);
+create unique index if not exists idx_growth_reviews_one_per_draft on growth_reviews(draft_id);
 create index if not exists idx_assessment_profiles_tenant on assessment_profiles(tenant_id, created_at desc);
 create index if not exists idx_usage_events_tenant on usage_events(tenant_id, created_at desc);
 

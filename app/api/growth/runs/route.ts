@@ -3,6 +3,11 @@ import { z } from "zod";
 import { requireMianbaApiAuth } from "@/lib/auth/mianba";
 import { generateTopicPool } from "@/lib/growth/runner";
 import { growthStore } from "@/lib/growth/store";
+import {
+  buildLearningBrief,
+  buildWeeklyReviewResult,
+  isWeeklyReviewStale,
+} from "@/lib/growth/reviewLearning";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -13,7 +18,6 @@ const bodySchema = z.object({
   accountId: z.string().uuid().optional(),
   planId: z.string().uuid().optional(),
   week: z.number().int().min(1).max(4).optional(),
-  recentSignals: z.string().max(2000).optional(),
 });
 
 export async function GET() {
@@ -54,12 +58,25 @@ export async function POST(req: Request) {
   }
 
   const plan = parsed.data.planId ? await store.getPlan(parsed.data.planId) : await store.getLatestPlan(account.id);
+  const notes = await store.listDrafts(account.id);
+  const reviews = await store.listReviewsByAccount(account.id);
+  let weeklyReview = account.weekly_review ?? account.stage_review;
+  if (!weeklyReview || isWeeklyReviewStale(weeklyReview, reviews)) {
+    weeklyReview = buildWeeklyReviewResult({ account, notes, reviews });
+    await store.saveAccount({
+      ...account,
+      weekly_review: weeklyReview,
+      stage_review: weeklyReview,
+      updated_at: new Date().toISOString(),
+    });
+  }
+  const learningBrief = buildLearningBrief({ account, notes, reviews, weekly: weeklyReview });
   const { run, usage } = await generateTopicPool({
     tenantId: DEFAULT_TENANT_ID,
     account,
     planId: plan?.id,
     week: parsed.data.week,
-    recentSignals: parsed.data.recentSignals,
+    learningBrief,
   });
 
   run.owner_user_id = run.owner_user_id ?? guard.auth.user.id;

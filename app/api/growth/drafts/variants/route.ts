@@ -3,6 +3,11 @@ import { z } from "zod";
 import { requireMianbaApiAuth } from "@/lib/auth/mianba";
 import { generateDraftVariants } from "@/lib/growth/runner";
 import { growthStore } from "@/lib/growth/store";
+import {
+  buildLearningBrief,
+  buildWeeklyReviewResult,
+  isWeeklyReviewStale,
+} from "@/lib/growth/reviewLearning";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -34,6 +39,26 @@ export async function POST(req: Request) {
   const topic = run.topic_pool.find((candidate) => candidate.id === parsed.data.topicId);
   if (!topic) return NextResponse.json({ error: "topic_not_found" }, { status: 404 });
 
+  const notes = await store.listDrafts(account.id);
+  const reviews = await store.listReviewsByAccount(account.id);
+  let weeklyReview = account.weekly_review ?? account.stage_review;
+  if (!weeklyReview || isWeeklyReviewStale(weeklyReview, reviews)) {
+    weeklyReview = buildWeeklyReviewResult({ account, notes, reviews });
+    await store.saveAccount({
+      ...account,
+      weekly_review: weeklyReview,
+      stage_review: weeklyReview,
+      updated_at: new Date().toISOString(),
+    });
+  }
+  const learningBrief = buildLearningBrief({
+    account,
+    notes,
+    reviews,
+    weekly: weeklyReview,
+    direction: topic.direction,
+  });
+
   const { drafts, usage } = await generateDraftVariants({
     tenantId: DEFAULT_TENANT_ID,
     account,
@@ -41,6 +66,7 @@ export async function POST(req: Request) {
     topic,
     count: parsed.data.count ?? 2,
     excludeBodies: parsed.data.excludeBodies,
+    learningBrief,
   });
 
   if (usage) {
@@ -53,5 +79,5 @@ export async function POST(req: Request) {
     });
   }
 
-  return NextResponse.json({ drafts, topic });
+  return NextResponse.json({ drafts, topic, learningTrace: learningBrief.trace });
 }

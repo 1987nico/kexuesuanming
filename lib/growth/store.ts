@@ -60,6 +60,23 @@ function defaultBusinessSettings(tenantId: string): BusinessSettings {
   };
 }
 
+function canonicalReviews(reviews: GrowthReview[]) {
+  const byDraft = new Map<string, GrowthReview>();
+  for (const review of reviews) {
+    const existing = byDraft.get(review.draft_id);
+    const timestamp = review.updated_at || review.metrics.snapshot_at || review.created_at;
+    const existingTimestamp = existing
+      ? existing.updated_at || existing.metrics.snapshot_at || existing.created_at
+      : "";
+    if (!existing || timestamp.localeCompare(existingTimestamp) > 0) byDraft.set(review.draft_id, review);
+  }
+  return [...byDraft.values()].sort((a, b) =>
+    (b.updated_at || b.metrics.snapshot_at || b.created_at).localeCompare(
+      a.updated_at || a.metrics.snapshot_at || a.created_at,
+    ),
+  );
+}
+
 class MemoryGrowthStore implements GrowthStore {
   private accounts = new Map<string, GrowthAccount>();
   private plans = new Map<string, GrowthPlan>();
@@ -142,6 +159,9 @@ class MemoryGrowthStore implements GrowthStore {
   }
 
   async saveReview(review: GrowthReview) {
+    for (const [reviewId, existing] of this.reviews) {
+      if (existing.draft_id === review.draft_id && reviewId !== review.id) this.reviews.delete(reviewId);
+    }
     this.reviews.set(review.id, review);
   }
 
@@ -157,9 +177,7 @@ class MemoryGrowthStore implements GrowthStore {
     const draftIds = new Set(
       [...this.drafts.values()].filter((d) => d.account_id === accountId).map((d) => d.id)
     );
-    return [...this.reviews.values()]
-      .filter((review) => draftIds.has(review.draft_id))
-      .sort((a, b) => b.created_at.localeCompare(a.created_at));
+    return canonicalReviews([...this.reviews.values()].filter((review) => draftIds.has(review.draft_id)));
   }
 
   async saveUsage(event: Omit<UsageEvent, "id" | "created_at">) {
@@ -332,6 +350,12 @@ class SupabaseGrowthStore implements GrowthStore {
   }
 
   async saveReview(review: GrowthReview) {
+    const { error: cleanupError } = await this.db
+      .from("growth_reviews")
+      .delete()
+      .eq("draft_id", review.draft_id)
+      .neq("id", review.id);
+    if (cleanupError) throw cleanupError;
     const { error } = await this.db.from("growth_reviews").upsert({
       id: review.id,
       tenant_id: review.tenant_id,
@@ -365,7 +389,7 @@ class SupabaseGrowthStore implements GrowthStore {
       .in("draft_id", draftIds)
       .order("created_at", { ascending: false });
     if (error) throw error;
-    return (data ?? []).map((row) => row.payload as GrowthReview);
+    return canonicalReviews((data ?? []).map((row) => row.payload as GrowthReview));
   }
 
   async saveUsage(event: Omit<UsageEvent, "id" | "created_at">) {

@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { z } from "zod";
 import { logActivity } from "@/lib/auth/activity";
 import { requireMianbaApiAuth } from "@/lib/auth/mianba";
 import { growthStore } from "@/lib/growth/store";
@@ -7,13 +8,33 @@ import { enforceDraftCompliance } from "@/lib/growth/validation";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export async function POST(_req: Request, { params }: { params: { draftId: string } }) {
+const bodySchema = z.object({
+  published_at: z.string().datetime().optional(),
+});
+
+export async function POST(req: Request, { params }: { params: { draftId: string } }) {
   const guard = await requireMianbaApiAuth();
   if ("response" in guard) return guard.response;
 
   const store = growthStore();
   const draft = await store.getDraft(params.draftId);
   if (!draft) return NextResponse.json({ error: "draft_not_found" }, { status: 404 });
+  if (draft.status === "reviewed") {
+    return NextResponse.json(
+      { error: "published_at_locked", message: "正式24小时复盘已生成，发布时间已锁定。" },
+      { status: 409 },
+    );
+  }
+
+  const body = await req.json().catch(() => ({}));
+  const parsed = bodySchema.safeParse(body);
+  if (!parsed.success) {
+    return NextResponse.json({ error: "validation", issues: parsed.error.flatten() }, { status: 400 });
+  }
+  const publishedAt = parsed.data.published_at || new Date().toISOString();
+  if (Date.parse(publishedAt) > Date.now() + 5 * 60 * 1000) {
+    return NextResponse.json({ error: "published_at_in_future", message: "实际发布时间不能晚于当前时间。" }, { status: 400 });
+  }
 
   const checkedDraft = enforceDraftCompliance(draft);
   if (checkedDraft.compliance?.status === "blocked") {
@@ -31,6 +52,7 @@ export async function POST(_req: Request, { params }: { params: { draftId: strin
     ...checkedDraft,
     owner_user_id: checkedDraft.owner_user_id ?? guard.auth.user.id,
     status: "published" as const,
+    published_at: publishedAt,
     updated_at: new Date().toISOString(),
   };
   await store.saveDraft(published);
@@ -40,7 +62,7 @@ export async function POST(_req: Request, { params }: { params: { draftId: strin
     action: "draft_published",
     entityType: "content_draft",
     entityId: published.id,
-    metadata: { title: published.title, compliance_status: published.compliance?.status },
+    metadata: { title: published.title, compliance_status: published.compliance?.status, published_at: publishedAt },
   });
 
   const run = await store.getRun(draft.run_id);
