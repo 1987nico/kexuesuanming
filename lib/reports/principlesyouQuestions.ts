@@ -1,5 +1,5 @@
-import data from "@/zhichang-canmou/src/lib/principlesyou/data.json";
-import zh from "@/zhichang-canmou/src/lib/principlesyou/zh.json";
+import data from "@/lib/reports/principlesyou-data/data.json";
+import zh from "@/lib/reports/principlesyou-data/zh.json";
 
 const DATA = data as any;
 const ZH = zh as any;
