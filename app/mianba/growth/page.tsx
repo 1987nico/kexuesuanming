@@ -67,6 +67,14 @@ interface ScreenshotExtractionState {
   warnings: string[];
 }
 
+interface ImportPublishedFormState {
+  title: string;
+  body: string;
+  direction: "A" | "B" | "C";
+  contentType: "diagnostic" | "tool" | "story";
+  publishedAt: string;
+}
+
 const DIRECTION_LABELS: Record<string, string> = {
   A: "痛点诊断",
   B: "工具清单",
@@ -192,6 +200,16 @@ function localDateTimeValue(date = new Date()) {
   return new Date(date.getTime() - offset).toISOString().slice(0, 16);
 }
 
+function newImportPublishedForm(): ImportPublishedFormState {
+  return {
+    title: "",
+    body: "",
+    direction: "C",
+    contentType: "story",
+    publishedAt: localDateTimeValue(),
+  };
+}
+
 function effectivePublishedAt(note: ContentDraft) {
   return note.published_at || note.updated_at || note.created_at;
 }
@@ -293,6 +311,8 @@ export default function XiaohongshuNotesPage() {
   const [weeklyResult, setWeeklyResult] = useState<WeeklyReviewResult | null>(null);
   const [screenshotEnabled, setScreenshotEnabled] = useState(false);
   const [screenshotExtractions, setScreenshotExtractions] = useState<Record<string, ScreenshotExtractionState>>({});
+  const [importPublishedOpen, setImportPublishedOpen] = useState(false);
+  const [importPublishedForm, setImportPublishedForm] = useState<ImportPublishedFormState>(() => newImportPublishedForm());
 
   const applyReviews = useCallback((reviewMap: Record<string, GrowthReview>, drafts: ContentDraft[]) => {
     setReviews(reviewMap);
@@ -478,6 +498,32 @@ export default function XiaohongshuNotesPage() {
       if (!res.ok) throw new Error(data.message || data.error || "标记发布失败");
       await loadWorkspaceKeepChosen(chosenDraft ?? draft);
     }, `发布:${draft.id}`);
+  }
+
+  async function importPublishedNote() {
+    if (!state.account || !state.run) return;
+    await run("补录已发布笔记", async () => {
+      const parsedPublishedAt = new Date(importPublishedForm.publishedAt);
+      if (!Number.isFinite(parsedPublishedAt.getTime())) throw new Error("请填写正确的实际发布时间");
+      const res = await fetch("/api/growth/drafts/import-published", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          accountId: state.account!.id,
+          runId: state.run!.id,
+          title: importPublishedForm.title,
+          body: importPublishedForm.body,
+          direction: importPublishedForm.direction,
+          contentType: importPublishedForm.contentType,
+          published_at: parsedPublishedAt.toISOString(),
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.message || data.error || "补录失败");
+      setImportPublishedOpen(false);
+      setImportPublishedForm(newImportPublishedForm());
+      await loadWorkspaceKeepChosen(data.draft);
+    });
   }
 
   async function submitReviewNote(draft: ContentDraft) {
@@ -767,14 +813,7 @@ export default function XiaohongshuNotesPage() {
                   <button className="btn-primary" disabled={!!busy || draftIsBlocked(draft)} onClick={() => chooseDraft(draft)}>
                     {busy === `选正文:${draft.id}` ? "选定中..." : "选这篇"}
                   </button>
-                  <CopyButton text={draft.title} label="复制标题" disabled={draftIsBlocked(draft)} onCopied={showCopyMessage} onCopyFailed={showCopyError} />
-                  <CopyButton
-                    text={`${draft.body}\n\n${draft.hashtags.join(" ")}`}
-                    label="复制正文+话题"
-                    disabled={draftIsBlocked(draft)}
-                    onCopied={showCopyMessage}
-                    onCopyFailed={showCopyError}
-                  />
+                  <span className="self-center text-xs leading-5 text-ink-500">先选定入库，随后才能复制发布并进入复盘。</span>
                 </div>
               </div>
             ))}
@@ -830,6 +869,72 @@ export default function XiaohongshuNotesPage() {
 
       {/* Step 4 单篇复盘（以笔记为基本单元） */}
       <StepCard step="4" title="单篇复盘 · 分析标题与正文" desc="记录发布24小时后的固定快照，拆解标题入口、正文质量和商业承接。单篇只决定怎么写，不直接决定方向。">
+        <div className="mb-4">
+          <button
+            className="rounded-full border border-gold-400 px-4 py-2 text-sm font-semibold text-gold-800 disabled:opacity-40"
+            disabled={!!busy || !state.account || !state.run}
+            onClick={() => setImportPublishedOpen((value) => !value)}
+          >
+            {importPublishedOpen ? "取消补录" : "补录已发布笔记"}
+          </button>
+          <span className="ml-3 text-xs leading-5 text-ink-500">用于已经复制发布、但没有出现在复盘清单里的笔记。</span>
+        </div>
+        {importPublishedOpen && (
+          <div className="mb-5 rounded-2xl border border-gold-200 bg-gold-50/40 p-4">
+            <div className="mb-3 text-sm font-semibold text-ink-800">恢复一篇已发布笔记</div>
+            <div className="grid gap-3 md:grid-cols-2">
+              <input
+                value={importPublishedForm.title}
+                onChange={(event) => setImportPublishedForm((current) => ({ ...current, title: event.target.value }))}
+                className="w-full rounded-xl border border-ink-100 bg-white px-3 py-2 text-sm md:col-span-2"
+                placeholder="笔记标题"
+              />
+              <textarea
+                value={importPublishedForm.body}
+                onChange={(event) => setImportPublishedForm((current) => ({ ...current, body: event.target.value }))}
+                className="min-h-40 w-full rounded-xl border border-ink-100 bg-white px-3 py-2 text-sm leading-6 md:col-span-2"
+                placeholder="粘贴已发布的完整正文，后续才能准确判断正文质量"
+              />
+              <select
+                value={importPublishedForm.direction}
+                onChange={(event) => setImportPublishedForm((current) => ({ ...current, direction: event.target.value as ImportPublishedFormState["direction"] }))}
+                className="w-full rounded-xl border border-ink-100 bg-white px-3 py-2 text-sm"
+                aria-label="内容方向"
+              >
+                <option value="A">方向 A · 痛点诊断</option>
+                <option value="B">方向 B · 工具清单</option>
+                <option value="C">方向 C · 故事过程</option>
+              </select>
+              <select
+                value={importPublishedForm.contentType}
+                onChange={(event) => setImportPublishedForm((current) => ({ ...current, contentType: event.target.value as ImportPublishedFormState["contentType"] }))}
+                className="w-full rounded-xl border border-ink-100 bg-white px-3 py-2 text-sm"
+                aria-label="内容类型"
+              >
+                <option value="diagnostic">诊断型</option>
+                <option value="tool">工具型</option>
+                <option value="story">故事型</option>
+              </select>
+              <label className="text-xs font-medium text-ink-500 md:col-span-2">
+                实际发布时间
+                <input
+                  type="datetime-local"
+                  value={importPublishedForm.publishedAt}
+                  max={localDateTimeValue()}
+                  onChange={(event) => setImportPublishedForm((current) => ({ ...current, publishedAt: event.target.value }))}
+                  className="mt-2 block w-full rounded-xl border border-ink-100 bg-white px-3 py-2 text-sm text-ink-800 md:w-auto"
+                />
+              </label>
+            </div>
+            <button
+              className="btn-primary mt-4"
+              disabled={!!busy || !importPublishedForm.title.trim() || importPublishedForm.body.trim().length < 20}
+              onClick={importPublishedNote}
+            >
+              {busy === "补录已发布笔记" ? "补录中..." : "确认补录并进入复盘清单"}
+            </button>
+          </div>
+        )}
         {state.drafts.length === 0 ? (
           <p className="text-sm leading-6 text-ink-600">还没有笔记。先在第 2、3 步选题并选定一篇正文，它就会作为一篇笔记出现在这里。</p>
         ) : (
