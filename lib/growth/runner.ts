@@ -50,6 +50,19 @@ function accountContext(account: GrowthAccount): AccountContext {
   };
 }
 
+function formatDraftLearningBrief(brief: GrowthLearningBrief) {
+  const experimentGuidance =
+    brief.experiment_variable === "title_cover"
+      ? "标题/封面建议已经在选题阶段执行；正文阶段必须锁定用户选中的标题。"
+      : `正文复盘建议变量：${brief.experiment_variable}`;
+  return [
+    `周策略：${brief.weekly_strategy}`,
+    `正文经验：${brief.body_guidance.join("；") || "暂无，继续积累样本"}`,
+    experimentGuidance,
+    `证据版本：${brief.trace.version}`,
+  ].join("\n");
+}
+
 // 模型有时把本应是字符串的字段返回成数组，这里统一安全转成字符串（数组用换行拼接）
 function asText(value: unknown): string {
   if (typeof value === "string") return value.trim();
@@ -555,72 +568,45 @@ export async function generateDraftVariants(input: {
   learningBrief?: GrowthLearningBrief;
 }): Promise<{ drafts: ContentDraft[]; usage?: Record<string, unknown> }> {
   const count = input.count ?? 2;
-  const experiment = input.learningBrief?.experiment_variable || normalizeExperimentVariable(input.topic.test_variable);
-  const experimentHints: Record<Exclude<typeof experiment, "title_cover">, string[]> = {
-    opening: ["只改变开头：用具体场景切入。", "只改变开头：用反常识判断切入。"],
-    audience_expression: ["只改变目标人群称呼：用身份筛选。", "只改变目标人群称呼：用处境筛选。"],
-    body_structure: ["只改变正文结构：采用诊断信号结构。", "只改变正文结构：采用问题-证据-行动结构。"],
-    evidence: ["只改变案例证据：使用具体场景和数字。", "只改变案例证据：使用对照和反例。"],
-    closing: ["只改变结尾：给读者一个自查动作。", "只改变结尾：给读者一个判断标准。"],
-    length: ["只改变篇幅，写150-300字精简版。", "只改变篇幅，写600-900字深度版。"],
-  };
+  // 用户已在选题阶段选定标题。正文阶段恢复为两个编辑候选稿，
+  // 不再把同一篇正文复制后重新做标题二选一。
+  const variantSpecs = [
+    {
+      hint: "精简版：开头用一句反常识判断或一个快速场景切入，正文聚焦 3 个最关键的信号，克制精炼。",
+      lengthHint: "正文控制在 150-300 字，只保留最锋利的判断和 3 个信号，适合快速阅读。",
+      lengthKind: "short" as const,
+    },
+    {
+      hint: "深度版：开头用真实场景或过程切入，正文展开步骤、案例和判断依据，把选题讲透。",
+      lengthHint: "正文写到 600-900 字（发布端合计仍需不超过 1000 字），给出可执行细节。",
+      lengthKind: "long" as const,
+    },
+  ];
   const drafts: ContentDraft[] = [];
   const usedBodies = [...(input.excludeBodies ?? [])];
   let usage: Record<string, unknown> | undefined;
-
-  if (experiment === "title_cover") {
-    const single = await generateSingleDraft({
-      tenantId: input.tenantId,
-      account: input.account,
-      run: input.run,
-      topic: input.topic,
-      variantHint: "本轮只测试标题入口。正文、开头、结构、案例、结尾和篇幅必须固定。",
-      lengthHint: "正文采用中等篇幅，不要为了制造版本差异改变正文。",
-      excludeBodies: usedBodies,
-      learningBrief: input.learningBrief,
-    });
-    const candidateTitles = [...new Set([single.draft.title, ...single.draft.alternative_titles, input.topic.title])]
-      .map(enforceTitleLimit)
-      .filter(Boolean);
-    for (let index = 0; index < count; index++) {
-      const title = candidateTitles[index] || enforceTitleLimit(`${input.topic.title}${index + 1}`);
-      drafts.push({
-        ...single.draft,
-        id: index === 0 ? single.draft.id : id(),
-        title,
-        word_count: countPublishChars(title, single.draft.body, single.draft.hashtags),
-        learning_trace: input.learningBrief?.trace,
-        created_at: index === 0 ? single.draft.created_at : now(),
-        updated_at: now(),
-      });
-    }
-    return { drafts, usage: single.usage };
-  }
-
-  const hints = experimentHints[experiment];
+  const lockedTitle = enforceTitleLimit(input.topic.title);
 
   for (let i = 0; i < count; i++) {
+    const spec = variantSpecs[i % variantSpecs.length];
     const single = await generateSingleDraft({
       tenantId: input.tenantId,
       account: input.account,
       run: input.run,
       topic: input.topic,
-      variantHint: `${hints[i % hints.length]} 其它变量必须与另一方案保持一致。`,
-      lengthHint: experiment === "length" ? hints[i % hints.length] : "正文统一控制在400-600字。",
-      lengthKind: experiment === "length" && i > 0 ? "long" : undefined,
+      variantHint: `${spec.hint} 标题已经由用户选定，禁止改写或替换标题。`,
+      lengthHint: spec.lengthHint,
+      lengthKind: spec.lengthKind,
       excludeBodies: usedBodies,
       learningBrief: input.learningBrief,
     });
-    const draft = drafts[0]
-      ? {
-          ...single.draft,
-          title: drafts[0].title,
-          cover_text: drafts[0].cover_text,
-          target_user: drafts[0].target_user,
-          hashtags: drafts[0].hashtags,
-          word_count: countPublishChars(drafts[0].title, single.draft.body, drafts[0].hashtags),
-        }
-      : single.draft;
+    const draft = {
+      ...single.draft,
+      title: lockedTitle,
+      alternative_titles: [lockedTitle],
+      word_count: countPublishChars(lockedTitle, single.draft.body, single.draft.hashtags),
+      learning_trace: input.learningBrief?.trace,
+    };
     drafts.push(draft);
     usedBodies.push(draft.body);
     if (single.usage) usage = single.usage;
@@ -655,11 +641,13 @@ async function generateSingleDraft(input: {
         direction: topic.direction,
         contentType: topic.content_type,
         title: topic.title,
-        testVariable: topic.test_variable,
+        // 两篇是供人工选稿的正文候选，不是在正文阶段重新测试标题。
+        // 对外入库时仍保留 topic.test_variable，供发布后的复盘使用。
+        testVariable: "正文呈现方式（标题已锁定）",
         expectedSignal: topic.expected_signal,
         followReason: topic.follow_reason,
         variantHint: [input.variantHint, input.lengthHint].filter(Boolean).join(" "),
-        learningGuidance: input.learningBrief ? formatLearningBrief(input.learningBrief) : undefined,
+        learningGuidance: input.learningBrief ? formatDraftLearningBrief(input.learningBrief) : undefined,
         excludeBodies: input.excludeBodies,
         context: accountContext(input.account),
       }),

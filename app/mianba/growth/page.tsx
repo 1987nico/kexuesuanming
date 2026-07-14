@@ -81,6 +81,17 @@ const DIRECTION_LABELS: Record<string, string> = {
   C: "故事过程",
 };
 
+const BUYER_DIRECTION_LABELS: Record<string, string> = {
+  A: "求助/情绪",
+  B: "成长/复盘",
+  C: "转折/桥接",
+};
+
+function directionLabel(persona: GrowthPersona, direction: string) {
+  const labels = persona === "buyer" ? BUYER_DIRECTION_LABELS : DIRECTION_LABELS;
+  return labels[direction] ?? "";
+}
+
 const CONTENT_TYPE_LABELS: Record<string, string> = {
   diagnostic: "诊断型",
   tool: "工具型",
@@ -778,7 +789,7 @@ export default function XiaohongshuNotesPage() {
                 }
               >
                 <div className="mb-2 flex items-center gap-2 text-xs text-ink-500">
-                  <span>方向 {topic.direction} · {DIRECTION_LABELS[topic.direction] ?? ""}</span>
+                  <span>方向 {topic.direction} · {directionLabel(persona, topic.direction)}</span>
                   <span>·</span>
                   <span>{CONTENT_TYPE_LABELS[topic.content_type] ?? topic.content_type}</span>
                   {topic.weekly_action && <span>· {WEEKLY_ACTION_LABELS[topic.weekly_action]}</span>}
@@ -804,7 +815,9 @@ export default function XiaohongshuNotesPage() {
           <div className="grid gap-4 md:grid-cols-2">
             {variants.map((draft, index) => (
               <div key={draft.id} className="rounded-2xl border border-ink-100 p-4">
-                <div className="mb-2 text-xs text-gold-700">方案 {index + 1} · 只测试「{draft.test_variable}」（{draft.word_count.total} 字）</div>
+                <div className="mb-2 text-xs text-gold-700">
+                  方案 {index + 1} · {index % 2 === 0 ? "精简版" : "深度版"}（{draft.word_count.total} 字）
+                </div>
                 <div className="font-medium leading-6">{draft.title}</div>
                 <pre className="mt-3 max-h-64 overflow-auto whitespace-pre-wrap rounded-xl bg-ink-50 p-3 text-xs leading-6 text-ink-700">{draft.body}</pre>
                 <div className="mt-2 text-xs text-ink-500">字数：{draft.word_count.total} / {draft.word_count.within_limit ? "≤1000 通过" : "超限"}</div>
