@@ -3,6 +3,7 @@ import { z } from "zod";
 import { requireMianbaApiAuth } from "@/lib/auth/mianba";
 import { generateDraftVariants } from "@/lib/growth/runner";
 import { growthStore } from "@/lib/growth/store";
+import { buyerCNeedsMaterial } from "@/lib/growth/buyerCStrategy";
 import {
   buildLearningBrief,
   buildWeeklyReviewResult,
@@ -38,6 +39,15 @@ export async function POST(req: Request) {
   if (!account) return NextResponse.json({ error: "account_not_found" }, { status: 404 });
   const topic = run.topic_pool.find((candidate) => candidate.id === parsed.data.topicId);
   if (!topic) return NextResponse.json({ error: "topic_not_found" }, { status: 404 });
+  if (account.persona === "buyer" && topic.direction === "C" && buyerCNeedsMaterial(account)) {
+    return NextResponse.json(
+      {
+        error: "buyer_c_case_material_required",
+        message: "真实案例模式需要先在买家定位卡补充案例素材。",
+      },
+      { status: 409 },
+    );
+  }
 
   const notes = await store.listDrafts(account.id);
   const reviews = await store.listReviewsByAccount(account.id);

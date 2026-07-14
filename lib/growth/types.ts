@@ -96,7 +96,9 @@ export const PERSONA_SPECIFIC_FIELDS: Record<GrowthPersona, PersonaSpecificField
     { key: "identity", label: "真人身份/现状", placeholder: "例如：34 岁被裁的前互联网中层，正在找方向" },
     { key: "struggle", label: "正在纠结的决策", placeholder: "例如：要不要裸辞、副业该不该做、转不转行" },
     { key: "growth_arc", label: "成长弧线/人设走向", placeholder: "从迷茫求助 → 边试边记录 → 找到方向" },
-    { key: "bridge", label: "转化桥（转折帖怎么软出场）", placeholder: "例如：做了个职业测评/找人梳理后想通了，引导私信" },
+    { key: "bridge", label: "转化桥（转折帖怎么软出场）", placeholder: "例如：后来找专业的人带，服务只作为故事中的自然经历出现，不做评论或私信诱导" },
+    { key: "case_mode", label: "案例模式", placeholder: "填写：真实案例 或 情景演绎。选择情景演绎后，系统会自动添加公开标识" },
+    { key: "case_material", label: "案例素材", placeholder: "集中填写企业/岗位、Offer结果、老大与老二阶段、招聘现场和可公开细节" },
   ],
   expert: [
     { key: "expertise", label: "专业领域", placeholder: "例如：组织发展、职业决策" },
@@ -183,6 +185,9 @@ export interface ContentDraft {
   status: ContentStatus;
   direction: GrowthDirection;
   content_type: ContentType;
+  case_mode?: "真实案例" | "情景演绎";
+  cover_source?: "ai" | "manual";
+  cover_variant?: "招聘现场版" | "结果对照版";
   test_variable: string;
   expected_signal: string;
   title: string;

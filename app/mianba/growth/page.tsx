@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import NextImage from "next/image";
 import type {
   ContentDraft,
   DirectionAggregate,
@@ -14,6 +15,12 @@ import type {
   TopicCandidate,
 } from "@/lib/growth/types";
 import { GROWTH_PERSONA_LABELS, GROWTH_PERSONAS, PERSONA_SPECIFIC_FIELDS } from "@/lib/growth/types";
+import {
+  buyerCaseMaterial,
+  buyerCaseMode,
+  buyerCNeedsMaterial,
+  isBuyerCWeeklyFocusActive,
+} from "@/lib/growth/buyerCStrategy";
 import { scanDraftCompliance } from "@/lib/growth/validation";
 
 interface WorkspaceState {
@@ -67,6 +74,16 @@ interface ScreenshotExtractionState {
   warnings: string[];
 }
 
+interface GeneratedCover {
+  variant: "招聘现场版" | "结果对照版";
+  brief: {
+    coverText: string;
+    overlayGuidance: string;
+  };
+  imageDataUrl?: string;
+  imageError?: string;
+}
+
 interface ImportPublishedFormState {
   title: string;
   body: string;
@@ -84,7 +101,7 @@ const DIRECTION_LABELS: Record<string, string> = {
 const BUYER_DIRECTION_LABELS: Record<string, string> = {
   A: "求助/情绪",
   B: "成长/复盘",
-  C: "转折/桥接",
+  C: "留学生家长Offer转折",
 };
 
 function directionLabel(persona: GrowthPersona, direction: string) {
@@ -263,7 +280,8 @@ async function compressReviewScreenshot(file: File) {
 function toAccountForm(account: GrowthAccount): AccountForm {
   const personaSpecific: Record<string, string> = {};
   for (const field of PERSONA_SPECIFIC_FIELDS[account.persona]) {
-    personaSpecific[field.key] = account.persona_specific?.[field.key] ?? "";
+    personaSpecific[field.key] =
+      field.key === "case_mode" ? buyerCaseMode(account) : account.persona_specific?.[field.key] ?? "";
   }
   return {
     name: account.name,
@@ -315,6 +333,7 @@ export default function XiaohongshuNotesPage() {
   const [selectedTopicId, setSelectedTopicId] = useState<string | null>(null);
   const [variants, setVariants] = useState<ContentDraft[]>([]);
   const [chosenDraft, setChosenDraft] = useState<ContentDraft | null>(null);
+  const [generatedCovers, setGeneratedCovers] = useState<GeneratedCover[]>([]);
 
   // 以笔记为单元：每篇笔记各自的复盘结果与回填表单
   const [reviews, setReviews] = useState<Record<string, GrowthReview>>({});
@@ -350,6 +369,7 @@ export default function XiaohongshuNotesPage() {
       setAccountCardOpen(false);
       setChosenDraft(drafts[0] || run?.draft || null);
       setVariants([]);
+      setGeneratedCovers([]);
       setSelectedTopicId(run?.selected_topic?.id ?? null);
       applyReviews((data.reviews ?? {}) as Record<string, GrowthReview>, drafts);
       setWeeklyResult(
@@ -464,6 +484,7 @@ export default function XiaohongshuNotesPage() {
       if (!res.ok) throw new Error(data.message || data.error || "生成正文失败");
       setVariants(data.drafts || []);
       setChosenDraft(null);
+      setGeneratedCovers([]);
     }, `生成正文:${topic.id}`);
   }
 
@@ -478,6 +499,7 @@ export default function XiaohongshuNotesPage() {
       if (!res.ok) throw new Error(data.message || data.error || "选定失败");
       setChosenDraft(data.draft);
       setVariants([]);
+      setGeneratedCovers([]);
       await loadWorkspaceKeepChosen(data.draft);
     }, `选正文:${draft.id}`);
   }
@@ -494,6 +516,112 @@ export default function XiaohongshuNotesPage() {
       (data.weeklyReview ?? data.stageReview ?? data.account?.weekly_review ?? data.account?.stage_review ?? null) as WeeklyReviewResult | null,
     );
     setScreenshotEnabled(Boolean(data.capabilities?.reviewScreenshot));
+  }
+
+  async function generateBuyerCCovers(draft: ContentDraft) {
+    if (!state.account || state.account.persona !== "buyer" || draft.direction !== "C") return;
+    await run("生成 2 张封面", async () => {
+      const res = await fetch("/api/growth/covers", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          title: draft.title,
+          body: draft.body,
+          coverText: draft.cover_text,
+          targetUser: draft.target_user,
+          contentType: draft.content_type,
+          testVariable: draft.test_variable,
+          buyerC: true,
+          caseMode: buyerCaseMode(state.account!),
+          caseMaterial: buyerCaseMaterial(state.account!),
+          count: 2,
+          withImage: true,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.message || data.error || "生成封面失败");
+      setGeneratedCovers((data.covers ?? []) as GeneratedCover[]);
+    });
+  }
+
+  async function saveCoverChoice(
+    draft: ContentDraft,
+    source: "ai" | "manual",
+    variant?: "招聘现场版" | "结果对照版",
+  ) {
+    await run(source === "ai" ? "选定封面" : "记录手工封面", async () => {
+      const nextDraft: ContentDraft = {
+        ...draft,
+        cover_source: source,
+        cover_variant: source === "ai" ? variant : undefined,
+      };
+      const res = await fetch("/api/growth/drafts/choose", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ draft: nextDraft }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.message || data.error || "保存封面选择失败");
+      setChosenDraft(data.draft);
+      setState((current) => ({
+        ...current,
+        drafts: current.drafts.map((item) => (item.id === data.draft.id ? data.draft : item)),
+      }));
+    }, `选封面:${source}:${variant ?? "manual"}`);
+  }
+
+  async function downloadComposedCover(cover: GeneratedCover, draft: ContentDraft) {
+    if (!cover.imageDataUrl) throw new Error("这张封面没有可下载的图片");
+    await run("下载封面", async () => {
+      const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+        const element = new window.Image();
+        element.onload = () => resolve(element);
+        element.onerror = () => reject(new Error("封面图片读取失败"));
+        element.src = cover.imageDataUrl!;
+      });
+      const canvas = document.createElement("canvas");
+      canvas.width = 1024;
+      canvas.height = 1536;
+      const context = canvas.getContext("2d");
+      if (!context) throw new Error("浏览器无法合成封面");
+      context.drawImage(image, 0, 0, canvas.width, canvas.height);
+      const gradient = context.createLinearGradient(0, 720, 0, 1536);
+      gradient.addColorStop(0, "rgba(9, 15, 20, 0)");
+      gradient.addColorStop(1, "rgba(9, 15, 20, 0.86)");
+      context.fillStyle = gradient;
+      context.fillRect(0, 650, 1024, 886);
+
+      if (draft.case_mode === "情景演绎" || buyerCaseMode(state.account!) === "情景演绎") {
+        context.fillStyle = "#F5C451";
+        context.fillRect(64, 64, 330, 74);
+        context.fillStyle = "#17130B";
+        context.font = "700 32px sans-serif";
+        context.fillText("情景演绎 / 示意图", 88, 113);
+      }
+
+      context.fillStyle = "#FFFFFF";
+      context.font = "800 72px sans-serif";
+      context.textBaseline = "top";
+      const text = (draft.cover_text || draft.title).trim();
+      const lines: string[] = [];
+      let line = "";
+      for (const char of text) {
+        const candidate = line + char;
+        if (context.measureText(candidate).width > 880 && line) {
+          lines.push(line);
+          line = char;
+        } else {
+          line = candidate;
+        }
+      }
+      if (line) lines.push(line);
+      lines.slice(0, 3).forEach((item, index) => context.fillText(item, 72, 1120 + index * 90));
+
+      const link = document.createElement("a");
+      link.href = canvas.toDataURL("image/png");
+      link.download = `${draft.title}-${cover.variant}.png`;
+      link.click();
+    }, `下载封面:${cover.variant}`);
   }
 
   async function markPublishedNote(draft: ContentDraft, publishedAt: string) {
@@ -696,19 +824,55 @@ export default function XiaohongshuNotesPage() {
             <EditField label="要避免的表达（顿号/逗号分隔）" value={accountForm.avoid_expressions} onChange={(v) => setAccountForm({ ...accountForm, avoid_expressions: v })} />
 
             <div className="pt-2 text-xs font-semibold text-gold-700">{GROWTH_PERSONA_LABELS[persona]}视角专属</div>
-            {PERSONA_SPECIFIC_FIELDS[persona].map((field) => (
-              <EditField
-                key={field.key}
-                label={field.label}
-                value={accountForm.persona_specific[field.key] ?? ""}
-                onChange={(v) =>
-                  setAccountForm({
-                    ...accountForm,
-                    persona_specific: { ...accountForm.persona_specific, [field.key]: v },
-                  })
-                }
-              />
-            ))}
+            {PERSONA_SPECIFIC_FIELDS[persona].map((field) =>
+              field.key === "case_mode" ? (
+                <div key={field.key}>
+                  <label className="mb-1 block text-xs font-medium text-ink-500">{field.label}</label>
+                  <select
+                    value={accountForm.persona_specific[field.key] ?? ""}
+                    onChange={(event) =>
+                      setAccountForm({
+                        ...accountForm,
+                        persona_specific: {
+                          ...accountForm.persona_specific,
+                          [field.key]: event.target.value,
+                        },
+                      })
+                    }
+                    className="w-full rounded-xl border border-ink-100 bg-white px-3 py-2 text-sm"
+                  >
+                    <option value="">请选择案例模式</option>
+                    <option value="情景演绎">情景演绎（允许虚构，自动公开标注）</option>
+                    <option value="真实案例">真实案例（正文只使用下方素材）</option>
+                  </select>
+                </div>
+              ) : field.key === "case_material" ? (
+                <EditArea
+                  key={field.key}
+                  label={field.label}
+                  value={accountForm.persona_specific[field.key] ?? ""}
+                  onChange={(v) =>
+                    setAccountForm({
+                      ...accountForm,
+                      persona_specific: { ...accountForm.persona_specific, [field.key]: v },
+                    })
+                  }
+                />
+              ) : (
+                <EditField
+                  key={field.key}
+                  label={field.label}
+                  value={accountForm.persona_specific[field.key] ?? ""}
+                  placeholder={field.placeholder}
+                  onChange={(v) =>
+                    setAccountForm({
+                      ...accountForm,
+                      persona_specific: { ...accountForm.persona_specific, [field.key]: v },
+                    })
+                  }
+                />
+              ),
+            )}
 
             <div className="pt-2 text-xs font-semibold text-gold-700">实验管理</div>
             <EditArea label="30 天待验证假设（每行一个）" value={accountForm.hypotheses} onChange={(v) => setAccountForm({ ...accountForm, hypotheses: v })} />
@@ -780,31 +944,56 @@ export default function XiaohongshuNotesPage() {
         </button>
         {topicPool.length > 0 && (
           <div className="mt-4 grid gap-3 md:grid-cols-2">
-            {topicPool.map((topic) => (
-              <div
-                key={topic.id}
-                className={
-                  "rounded-2xl border p-4 " +
-                  (selectedTopicId === topic.id ? "border-gold-400 bg-gold-50/50" : "border-ink-100")
-                }
-              >
-                <div className="mb-2 flex items-center gap-2 text-xs text-ink-500">
-                  <span>方向 {topic.direction} · {directionLabel(persona, topic.direction)}</span>
-                  <span>·</span>
-                  <span>{CONTENT_TYPE_LABELS[topic.content_type] ?? topic.content_type}</span>
-                  {topic.weekly_action && <span>· {WEEKLY_ACTION_LABELS[topic.weekly_action]}</span>}
+            {topicPool.map((topic) => {
+              const isBuyerOfferFocus = persona === "buyer" && topic.direction === "C";
+              const needsCaseMaterial = Boolean(isBuyerOfferFocus && account && buyerCNeedsMaterial(account));
+              const isFictionalCase = Boolean(
+                isBuyerOfferFocus && account && buyerCaseMode(account) === "情景演绎",
+              );
+              const isWeeklyFocus = isBuyerOfferFocus && isBuyerCWeeklyFocusActive() && topic.priority === "S";
+              return (
+                <div
+                  key={topic.id}
+                  className={
+                    "rounded-2xl border p-4 " +
+                    (selectedTopicId === topic.id ? "border-gold-400 bg-gold-50/50" : "border-ink-100")
+                  }
+                >
+                  {isWeeklyFocus && (
+                    <div className="mb-2 inline-flex rounded-full bg-gold-100 px-3 py-1 text-xs font-semibold text-gold-800">
+                      {isFictionalCase
+                        ? "本周高优 · 留学生家长情景演绎"
+                        : "本周高优 · 留学生家长真实Offer现场"}
+                    </div>
+                  )}
+                  <div className="mb-2 flex items-center gap-2 text-xs text-ink-500">
+                    <span>方向 {topic.direction} · {directionLabel(persona, topic.direction)}</span>
+                    <span>·</span>
+                    <span>{CONTENT_TYPE_LABELS[topic.content_type] ?? topic.content_type}</span>
+                    {topic.weekly_action && <span>· {WEEKLY_ACTION_LABELS[topic.weekly_action]}</span>}
+                  </div>
+                  <div className="font-medium leading-6">{topic.title}</div>
+                  <p className="mt-1 text-xs leading-5 text-ink-500">验证变量：{topic.test_variable}</p>
+                  {topic.evidence && <p className="mt-1 text-xs leading-5 text-ink-500">生成依据：{topic.evidence}</p>}
+                  {isFictionalCase && (
+                    <p className="mt-2 rounded-xl bg-sky-50 px-3 py-2 text-xs leading-5 text-sky-800">
+                      当前为情景演绎：可虚构公司、Offer和招聘现场；正文首行与封面会自动添加公开标识。
+                    </p>
+                  )}
+                  {needsCaseMaterial && (
+                    <p className="mt-2 rounded-xl bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">
+                      当前选择真实案例，请先在定位卡填写「案例素材」；正文只使用你填写的内容。
+                    </p>
+                  )}
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <button className="btn-primary" disabled={!!busy || needsCaseMaterial} onClick={() => generateVariants(topic)}>
+                      {busy === `生成正文:${topic.id}` ? "生成中..." : needsCaseMaterial ? "补充案例素材后再写" : "用这个选题写正文"}
+                    </button>
+                    <CopyButton text={topic.title} label="复制标题" onCopied={showCopyMessage} onCopyFailed={showCopyError} />
+                  </div>
                 </div>
-                <div className="font-medium leading-6">{topic.title}</div>
-                <p className="mt-1 text-xs leading-5 text-ink-500">验证变量：{topic.test_variable}</p>
-                {topic.evidence && <p className="mt-1 text-xs leading-5 text-ink-500">生成依据：{topic.evidence}</p>}
-                <div className="mt-3 flex flex-wrap gap-2">
-                  <button className="btn-primary" disabled={!!busy} onClick={() => generateVariants(topic)}>
-                    {busy === `生成正文:${topic.id}` ? "生成中..." : "用这个选题写正文"}
-                  </button>
-                  <CopyButton text={topic.title} label="复制标题" onCopied={showCopyMessage} onCopyFailed={showCopyError} />
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </StepCard>
@@ -869,6 +1058,91 @@ export default function XiaohongshuNotesPage() {
                 {chosenDraft.cover_text && (
                   <div className="mt-2">
                     <CopyButton text={chosenDraft.cover_text} label="复制封面句" disabled={draftIsBlocked(chosenDraft)} onCopied={showCopyMessage} onCopyFailed={showCopyError} />
+                  </div>
+                )}
+              </div>
+            )}
+            {persona === "buyer" && chosenDraft.direction === "C" && (
+              <div className="mt-4 rounded-2xl border border-gold-200 bg-white p-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <div className="text-sm font-semibold text-ink-900">买家 C 专属 AI 封面</div>
+                    <div className="mt-1 text-xs leading-5 text-ink-500">
+                      仅此方向开放。一次生成「招聘现场版」和「结果对照版」，确认后仍由你手工发布。
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      className="btn-primary"
+                      disabled={!!busy || draftIsBlocked(chosenDraft)}
+                      onClick={() => generateBuyerCCovers(chosenDraft)}
+                    >
+                      {busy === "生成 2 张封面" ? "生成中..." : generatedCovers.length ? "重新生成 2 张" : "生成 2 张封面"}
+                    </button>
+                    <button
+                      className="rounded-full bg-ink-100 px-4 py-2 text-sm font-semibold text-ink-700 disabled:opacity-40"
+                      disabled={!!busy}
+                      onClick={() => saveCoverChoice(chosenDraft, "manual")}
+                    >
+                      使用手工封面
+                    </button>
+                  </div>
+                </div>
+
+                {chosenDraft.cover_source && (
+                  <div className="mt-3 rounded-xl bg-ink-50 px-3 py-2 text-xs text-ink-600">
+                    当前封面：{chosenDraft.cover_source === "ai" ? `AI · ${chosenDraft.cover_variant ?? "已选择"}` : "手工封面"}
+                  </div>
+                )}
+
+                {generatedCovers.length > 0 && (
+                  <div className="mt-4 grid gap-4 md:grid-cols-2">
+                    {generatedCovers.map((cover) => (
+                      <div key={cover.variant} className="rounded-2xl border border-ink-100 p-3">
+                        <div className="mb-2 text-xs font-semibold text-gold-700">{cover.variant}</div>
+                        {cover.imageDataUrl ? (
+                          <div className="relative aspect-[2/3] overflow-hidden rounded-xl bg-ink-100">
+                            <NextImage
+                              src={cover.imageDataUrl}
+                              alt={`${chosenDraft.title}-${cover.variant}`}
+                              fill
+                              unoptimized
+                              className="object-cover"
+                            />
+                            <div className="absolute inset-0 bg-gradient-to-b from-transparent via-transparent to-black/80" />
+                            {(chosenDraft.case_mode === "情景演绎" || buyerCaseMode(account!) === "情景演绎") && (
+                              <div className="absolute left-3 top-3 rounded bg-amber-300 px-2 py-1 text-[10px] font-bold text-ink-900">
+                                情景演绎 / 示意图
+                              </div>
+                            )}
+                            <div className="absolute inset-x-4 bottom-5 whitespace-pre-line text-2xl font-extrabold leading-tight text-white drop-shadow md:text-3xl">
+                              {chosenDraft.cover_text || chosenDraft.title}
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="flex aspect-[2/3] items-center justify-center rounded-xl bg-ink-50 p-4 text-center text-xs leading-5 text-ink-500">
+                            {cover.imageError || "当前图片服务未配置，可先使用封面文案与画面建议。"}
+                          </div>
+                        )}
+                        <div className="mt-3 text-xs leading-5 text-ink-500">{cover.brief.overlayGuidance}</div>
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          <button
+                            className="btn-primary"
+                            disabled={!!busy || !cover.imageDataUrl}
+                            onClick={() => saveCoverChoice(chosenDraft, "ai", cover.variant)}
+                          >
+                            选这张
+                          </button>
+                          <button
+                            className="rounded-full bg-ink-100 px-4 py-2 text-sm font-semibold text-ink-700 disabled:opacity-40"
+                            disabled={!!busy || !cover.imageDataUrl}
+                            onClick={() => downloadComposedCover(cover, chosenDraft)}
+                          >
+                            下载成品图
+                          </button>
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 )}
               </div>
@@ -1391,11 +1665,26 @@ function Field({ label, value }: { label: string; value: string | number }) {
   );
 }
 
-function EditField({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
+function EditField({
+  label,
+  value,
+  placeholder,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  placeholder?: string;
+  onChange: (v: string) => void;
+}) {
   return (
     <div>
       <label className="mb-1 block text-xs font-medium text-ink-500">{label}</label>
-      <input value={value} onChange={(e) => onChange(e.target.value)} className="w-full rounded-xl border border-ink-100 bg-white px-3 py-2 text-sm" />
+      <input
+        value={value}
+        placeholder={placeholder}
+        onChange={(e) => onChange(e.target.value)}
+        className="w-full rounded-xl border border-ink-100 bg-white px-3 py-2 text-sm"
+      />
     </div>
   );
 }

@@ -14,6 +14,9 @@ const bodySchema = z.object({
   targetUser: z.string().trim().max(500).optional(),
   contentType: z.enum(["diagnostic", "tool", "story"]).optional(),
   testVariable: z.string().trim().max(500).optional(),
+  buyerC: z.boolean().optional(),
+  caseMode: z.enum(["真实案例", "情景演绎"]).optional(),
+  caseMaterial: z.string().trim().max(2000).optional(),
   count: z.number().int().min(1).max(2).optional(),
   withImage: z.boolean().optional(),
 });
@@ -21,6 +24,11 @@ const bodySchema = z.object({
 const COVER_VARIANTS = [
   { hint: "大字标题版", coverSuffix: "" },
   { hint: "痛点提问版", coverSuffix: "？" },
+];
+
+const BUYER_C_COVER_VARIANTS = [
+  { hint: "招聘现场版", coverSuffix: "" },
+  { hint: "结果对照版", coverSuffix: "" },
 ];
 
 export async function POST(req: Request) {
@@ -36,9 +44,10 @@ export async function POST(req: Request) {
   const count = parsed.data.count ?? 2;
   const wantImage = parsed.data.withImage !== false && isImageProviderConfigured();
   const covers = [] as Array<Record<string, unknown>>;
+  const variants = parsed.data.buyerC ? BUYER_C_COVER_VARIANTS : COVER_VARIANTS;
 
   for (let i = 0; i < count; i++) {
-    const variant = COVER_VARIANTS[i % COVER_VARIANTS.length];
+    const variant = variants[i % variants.length];
     const baseCoverText = parsed.data.coverText || parsed.data.title;
     const brief = buildCoverBrief({
       title: parsed.data.title,
@@ -46,6 +55,10 @@ export async function POST(req: Request) {
       targetUser: parsed.data.targetUser,
       contentType: parsed.data.contentType,
       testVariable: parsed.data.testVariable,
+      styleHint: variant.hint,
+      buyerC: parsed.data.buyerC,
+      caseMode: parsed.data.caseMode,
+      caseMaterial: parsed.data.caseMaterial,
     });
 
     let imageDataUrl: string | undefined;

@@ -1,5 +1,10 @@
 import type { ContentType, GrowthDirection, GrowthPersona } from "./types";
 import { PERSONA_SPECIFIC_FIELDS } from "./types";
+import {
+  BUYER_C_DISCLOSURE,
+  BUYER_C_WEEKLY_FOCUS,
+  isBuyerCWeeklyFocusActive,
+} from "./buyerCStrategy";
 
 const PERSONA_GUIDE: Record<GrowthPersona, string> = {
   merchant:
@@ -12,7 +17,7 @@ const PERSONA_GUIDE: Record<GrowthPersona, string> = {
 本视角下 A/B/C 三方向重新理解为：
 - A 求助/示弱/情绪帖：真实抛出自己的困惑和处境，或记录当下的情绪（emo、被 PUA、纠结要不要辞），目的是形成真实讨论和共鸣，不设计评论任务。
 - B 成长/顿悟/复盘帖：分享自己最近想明白的一件事、踩过的坑、做过的小尝试，软性输出、建立信任。
-- C 转折/成功桥接帖：这是唯一允许产品自然出场的帖子——「我之前迷茫成 XX 样，后来做了一件事（做了个职业梳理/测评、找人帮我把方向理清楚了），现在不慌了」。产品/服务只在故事中作为真实经历出现，绝不硬广、不报价，也不得用评论关键词、私信、点赞、收藏或关注换取资料、样例、报告、链接或福利。
+- C 留学生家长Offer转折帖：用留学生家长第一人称，写孩子求职阶段变化、招聘现场和Offer结果对照；这是唯一允许产品自然出场的方向，可自然写「后来找专业的人带」，但绝不硬广、不报价，也不得用评论关键词、私信、点赞、收藏或关注换取资料、样例、报告、链接或福利。真实案例只使用定位卡中的案例素材；情景演绎允许虚构公司、Offer和现场，但必须保留公开标识，不能伪装成真实证明。
 配比：A/B 类蓄势帖占绝大多数，C 类桥接帖占少数（约 9:1），不要每篇都想转化。
 写作口吻：第一人称、像真人发牢骚/记录，可以不完美、口语化，绝不端着、不像品牌号、不输出方法论密度（那是专家视角的活）。`,
   expert:
@@ -120,11 +125,21 @@ export function buildAccountPlanUserPrompt(input: {
 - 何以见得 = 答「信任状」：给能让上面差异显得可信的事实/行为，从三类里选其一或组合——①有效承诺（如不满意退款、免费试用）②顾客可自行验证（交付样例、现场/过往体验、能见度）③可信第三方证明（成功案例、典型客户、口碑、媒体报道）。不要空喊「专业靠谱」，要给具体证据。
 `
       : "";
+  const buyerCaseModeGuide =
+    persona === "buyer"
+      ? `
+【买家Offer案例模式】
+- persona_specific 只使用两个案例字段：case_mode 和 case_material。
+- 如果输入没有明确提供真实案例，case_mode 默认填写「情景演绎」；只有用户明确选择真实案例时才填写「真实案例」。
+- case_material 集中填写企业/岗位、Offer结果、孩子阶段、招聘现场和可公开细节；情景演绎时可填写虚构设定。
+- case_mode=真实案例但没有素材时，case_material 留空，等待用户补充，不得自行编造。
+`
+      : "";
   const mianbaUsage: Record<GrowthPersona, string> = {
     merchant:
       "本视角是面霸君「明着经营」的号：定位卡和品牌三问都要直接以面霸君的身份、产品、差异、信任状来回答。",
     buyer:
-      "本视角是面霸君运营的「素人真实号」：账号表面不提面霸君，只在 C 类转折帖里让面霸君的报告/咨询以'我后来做了个职业决策梳理/测评'这种亲历方式软出场；转化桥要落到面霸君。",
+      "本视角是面霸君运营的「素人真实号」：账号表面不提面霸君，只在 C 类留学生家长求职转折帖里用'后来找专业的人带，做了求职方向梳理'这种亲历方式软出场；转化桥要落到面霸君。",
     expert:
       "本视角是面霸君运营的「专家号」：靠面霸君的六步决策方法论和真实案例建立权威，方法论密度要高，最终承接到面霸君的报告/咨询。",
   };
@@ -136,6 +151,7 @@ ${mianbaBusiness(input.reportPrices)}
 
 ${personaGuide(persona)}
 ${brandTrinityGuide}
+${buyerCaseModeGuide}
 账号名称：${input.accountName}
 目标用户线索：${input.targetUser || "使用默认账号方向"}
 核心问题线索：${input.coreProblem || "使用默认账号方向"}
@@ -184,9 +200,21 @@ export function buildTopicPoolUserPrompt(input: {
   count?: number;
   excludeTitles?: string[];
   context?: AccountContext;
+  at?: Date;
 }) {
   const count = input.count ?? 15;
   const exclude = (input.excludeTitles ?? []).filter(Boolean);
+  const buyerWeeklyFocus =
+    input.persona === "buyer" && isBuyerCWeeklyFocusActive(input.at)
+      ? `
+【${BUYER_C_WEEKLY_FOCUS.label}】
+- 本批至少生成 1 个方向 C、content_type=story 的选题，并设为 priority="S"，排在第一位。
+- 本周选题与测试配比按 A 25% / B 25% / C 50% 执行；每次只生成 2 个时，第一题固定为 C，另一题在 A/B 中轮换。
+- 固定模式：留学生家长第一人称；老大Offer结果；老二进入新的求职阶段；招聘现场触发家长复盘；鼓励自然写「后来找专业的人带」。
+- 标题优先使用「一转眼，轮到老二参加秋招了」这一阶段切换结构；封面钩子使用「老大企业上岸 / 老二首战留学生秋招」的两行对照。
+- 根据定位卡 case_mode 二选一：真实案例只能使用 case_material；情景演绎允许虚构公司、Offer、岗位和现场，但标题不得冒充新闻，正文首行必须写「${BUYER_C_DISCLOSURE}」，封面必须标注「情景演绎 / 示意图」。
+`
+      : "";
   return `
 请以选题官 V3 身份，围绕账号当前阶段生成候选题池。
 
@@ -196,6 +224,7 @@ ${accountContextBlock(input.context)}
 目标用户：${input.targetUser}
 核心问题：${input.coreProblem}
 最近复盘信号：${input.recentSignals || "暂无真实数据，不得编造，用当前阶段目标继续生产。"}
+${buyerWeeklyFocus}
 
 要求：
 - 生成 ${count} 个候选题，覆盖方向 A/B/C。
@@ -254,6 +283,26 @@ const BUYER_STORY_SPEC = `
 必须在输出 JSON 里如实填写 story_mode（「靶心人模式」或「意外人模式」二选一）和 pictorial_rate（预估画面率，如「26%」，必须≥20%）。
 `.trim();
 
+const BUYER_C_OFFER_STRATEGY_SPEC = `
+【买家 C 类专属·留学生家长Offer现场策略】
+本篇是「留学生家长＋企业Offer＋招聘现场＋两个孩子阶段对照」的故事，不是老师口吻、顾问口吻或机构案例复盘。
+
+案例模式硬门槛：
+- case_mode=真实案例：企业、岗位、Offer/终面结果、孩子阶段和招聘现场，只能使用账号定位卡 case_material 中的内容；不得补写、推测或用相似公司替代。
+- case_mode=情景演绎：允许虚构公司、Offer、岗位、横幅和招聘现场；正文首行必须原样写「${BUYER_C_DISCLOSURE}」，封面必须显著标注「情景演绎 / 示意图」。虚构企业不得使用真实公司名称或近似Logo，虚构Offer/邀请函不得仿制真实文件、编号、印章或邮箱，不能作为效果证明。
+- 无论哪种模式，都不得虚构真实企业与学校的合作关系，不得暴露个人敏感信息。
+
+固定叙事顺序：
+1. 家长在真实招聘现场看到老二进入会场，触发感慨；
+2. 简短交代老大已经拿到Offer的结果，建立经验背书；
+3. 老二第一次进入同类求职阶段，形成两个孩子的阶段对照；
+4. 家长复盘 2-3 个具体认知，专业判断藏在经历里，不写成顾问授课；
+5. 服务只作为故事中的自然转折出现，鼓励使用「后来找专业的人带」，不要写成硬广；
+6. 用孩子走出会场后的一个动作或一句话收尾，不做评论、私信、资料领取或销售引导。
+
+封面结构：招聘入口＋企业招聘横幅＋成年孩子背影＋场景凭证＋「老大结果 / 老二新阶段」两行对照。真实模式使用已授权素材；情景演绎模式使用虚构企业和示意凭证并加醒目标识，不得仿制真实Offer或暴露个人敏感信息。
+`.trim();
+
 export function buildDraftUserPrompt(input: {
   targetUser: string;
   trustSource: string;
@@ -300,6 +349,7 @@ ${exclude.length ? `严禁与以下已生成正文重复或近似（可换结构
 - 【禁止利益交换】不得用资料、匿名样例、报告、清单、模板、链接、福利、抽奖、诊断或体检作为互动奖励。像「需要职业方向体检的评论区扣1，我发你匿名交付样例」这种表达一律禁止。
 - 结尾优先给出一个读者当下就能完成的自查动作或判断标准。可以提出与正文直接相关的自然问题，但不能承诺根据评论发送任何东西。
 ${input.persona === "buyer" ? `\n${BUYER_STORY_SPEC}\n` : ""}
+${input.persona === "buyer" && input.direction === "C" ? `\n${BUYER_C_OFFER_STRATEGY_SPEC}\n` : ""}
 输出 JSON：
 {
   "title": "最终标题",

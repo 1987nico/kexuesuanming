@@ -159,4 +159,46 @@ describe("generateDraftVariants", () => {
     expect(result.drafts.every((draft) => draft.word_count.within_limit)).toBe(true);
     warn.mockRestore();
   });
+
+  it("情景演绎模式强制补齐正文和封面的公开标识", async () => {
+    const fictionalAccount: GrowthAccount = {
+      ...account,
+      persona_specific: {
+        case_mode: "情景演绎",
+        case_material: "虚构能源公司的数据分析岗；老大拿到Offer；老二第一次参加校园招聘会。",
+      },
+    };
+    const fictionalTopic: TopicCandidate = {
+      ...topic,
+      id: "fictional-topic",
+      direction: "C",
+      content_type: "story",
+    };
+    const fictionalRun: GrowthRun = { ...run, topic_pool: [fictionalTopic] };
+
+    const result = await generateDraftVariants({
+      account: fictionalAccount,
+      run: fictionalRun,
+      topic: fictionalTopic,
+      count: 1,
+    });
+
+    expect(result.drafts[0].body).toMatch(/^【情景演绎｜根据常见留学生求职经历改编】/);
+    expect(result.drafts[0].case_mode).toBe("情景演绎");
+    expect(result.drafts[0].cover_suggestion).toContain("情景演绎 / 示意图");
+    expect(result.drafts[0].comment_prompt).toBe("");
+  });
+
+  it("真实案例模式没有案例素材时拒绝生成 buyer C 正文", async () => {
+    const realAccount: GrowthAccount = {
+      ...account,
+      persona_specific: { case_mode: "真实案例", case_material: "" },
+    };
+    const realTopic: TopicCandidate = { ...topic, direction: "C", content_type: "story" };
+    const realRun: GrowthRun = { ...run, topic_pool: [realTopic] };
+
+    await expect(
+      generateDraftVariants({ account: realAccount, run: realRun, topic: realTopic, count: 1 }),
+    ).rejects.toThrow("buyer_c_case_material_required");
+  });
 });

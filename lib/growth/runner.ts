@@ -25,6 +25,14 @@ import { countPublishChars, enforceDraftCompliance, normalizeTags } from "./vali
 import { PERSONA_SPECIFIC_FIELDS, DEFAULT_BUSINESS_SETTINGS } from "./types";
 import type { AccountContext, ReportPrices } from "./agents";
 import {
+  BUYER_C_DISCLOSURE,
+  buildBuyerCTopic,
+  buyerCaseMaterial,
+  buyerCaseMode,
+  buyerCNeedsMaterial,
+  prioritizeBuyerCTopics,
+} from "./buyerCStrategy";
+import {
   buildReviewBenchmarks,
   buildWeeklyReviewResult,
   computeDerivedMetrics,
@@ -61,6 +69,17 @@ function formatDraftLearningBrief(brief: GrowthLearningBrief) {
     experimentGuidance,
     `证据版本：${brief.trace.version}`,
   ].join("\n");
+}
+
+function assertBuyerCCaseMaterial(account: GrowthAccount, topic: TopicCandidate) {
+  if (account.persona !== "buyer" || topic.direction !== "C") return;
+  if (buyerCNeedsMaterial(account)) throw new Error("buyer_c_case_material_required");
+}
+
+function discloseFictionalCase(body: string, fictional: boolean) {
+  if (!fictional) return body;
+  const withoutDuplicate = body.split(BUYER_C_DISCLOSURE).join("").trimStart();
+  return `${BUYER_C_DISCLOSURE}\n\n${withoutDuplicate}`;
 }
 
 // 模型有时把本应是字符串的字段返回成数组，这里统一安全转成字符串（数组用换行拼接）
@@ -275,6 +294,12 @@ export async function generateAccountAndPlan(input: {
 
   const accountData = payload?.account ?? {};
   const accountId = input.regenerateAccountId || id();
+  const personaSpecific = mergePersonaSpecific(persona, accountData.persona_specific);
+  if (persona === "buyer" && !personaSpecific.case_mode) personaSpecific.case_mode = "情景演绎";
+  const defaultContentDirections =
+    persona === "buyer"
+      ? ["A 求助/示弱/情绪", "B 成长/顿悟/复盘", "C 留学生家长Offer现场与求职转折"]
+      : ["A 目标客户痛点诊断", "B 可收藏工具/清单", "C 创始人故事/过程记录"];
   const account: GrowthAccount = {
     id: accountId,
     tenant_id: tenantId,
@@ -301,7 +326,7 @@ export async function generateAccountAndPlan(input: {
     content_directions:
       Array.isArray(accountData.content_directions) && accountData.content_directions.length
         ? accountData.content_directions.slice(0, 3)
-        : ["A 目标客户痛点诊断", "B 可收藏工具/清单", "C 创始人故事/过程记录"],
+        : defaultContentDirections,
     tone_style: accountData.tone_style || "具体、克制、有判断、有下一步，不鸡汤。",
     filter_words: Array.isArray(accountData.filter_words) ? accountData.filter_words.slice(0, 8) : [],
     avoid_expressions: Array.isArray(accountData.avoid_expressions)
@@ -309,7 +334,7 @@ export async function generateAccountAndPlan(input: {
       : ["逆袭", "暴富", "月入X万", "包成功"],
     compliance_redline: asText(accountData.compliance_redline) || "不承诺收益、不玄学、客户匿名、不用泛焦虑换阅读。",
     private_domain: asText(accountData.private_domain),
-    persona_specific: mergePersonaSpecific(persona, accountData.persona_specific),
+    persona_specific: personaSpecific,
     created_at: input.createdAt || timestamp,
     updated_at: timestamp,
   };
@@ -366,7 +391,13 @@ export async function generateTopicPool(input: {
     console.warn("[growth] topic pool fallback:", (error as Error).message);
   }
 
-  const topics = normalizeTopics(payload?.topics);
+  const normalizedTopics = normalizeTopics(payload?.topics);
+  const baseTopics = normalizedTopics.length ? normalizedTopics : fallbackTopics(input.account);
+  const topics = prioritizeBuyerCTopics({
+    account: input.account,
+    topics: baseTopics,
+    topicId: id(),
+  });
   const run: GrowthRun = {
     id: id(),
     tenant_id: tenantId,
@@ -397,6 +428,7 @@ export async function generateDraft(input: {
     input.run.topic_pool.find((candidate) => candidate.priority === "S") ||
     input.run.topic_pool[0];
   if (!topic) throw new Error("topic_pool_empty");
+  assertBuyerCCaseMaterial(input.account, topic);
 
   const timestamp = now();
   let payload: any = null;
@@ -432,11 +464,26 @@ export async function generateDraft(input: {
     console.warn("[growth] draft fallback:", (error as Error).message);
   }
 
-  const hashtags = normalizeTags(payload?.hashtags || ["#中高层转型", "#第二曲线", "#小红书运营"]);
+  const isBuyerC = input.account.persona === "buyer" && topic.direction === "C";
+  const caseMode = buyerCaseMode(input.account);
+  const isFictionalCase = isBuyerC && caseMode === "情景演绎";
+  const caseMaterial =
+    buyerCaseMaterial(input.account) ||
+    "一家虚构能源公司的数据分析岗；老大已拿到Offer；老二第一次参加留学生秋招；家长在校园招聘入口等候。";
+  const hashtags = normalizeTags(
+    payload?.hashtags ||
+      (isBuyerC
+        ? ["#留学生求职", "#留学生家长", "#秋招", "#校招"]
+        : ["#中高层转型", "#第二曲线", "#小红书运营"]),
+  );
   const title = enforceTitleLimit(payload?.title || topic.title);
-  const body =
+  const body = discloseFictionalCase(
     payload?.body ||
-    `如果你已经在公司里做出成绩，但离开这个位置后，客户、预算和信任还会不会跟着你走？\n\n先别急着做个人 IP，也别急着追爆款。先判断三件事：\n\n1. 你现在的价值，是岗位给的，还是市场愿意单独为你付费？\n2. 你手里有没有能被目标客户理解的具体成果？\n3. 你发出的内容，是在吸引目标客户，还是只吸引泛职场围观？\n\n这篇先验证一个变量：${topic.test_variable}。\n\n我会继续记录，一个成熟职场人怎么把经验变成市场上的资产。`;
+      (isBuyerC
+        ? `一转眼，轮到老二参加秋招了。\n\n那天我站在招聘入口，看着他拿着材料往里走，一下想起老大当年的那一轮。\n\n这次故事里的素材是：${caseMaterial}\n\n结果现在说起来只有一句话，但我们家知道，真正难的从来不是投出一份简历，而是孩子第一次面对招聘节奏时，能不能把方向、岗位和准备顺序理清。\n\n老二这次刚开始，我没有再让他靠自己四处试。后来找专业的人带，先把适合的岗位、时间线和每一轮要准备的东西拆开。\n\n他走出会场后低头把下一场宣讲记进手机。我没催，只觉得这一回，我们终于没有在起点上慌。`
+        : `如果你已经在公司里做出成绩，但离开这个位置后，客户、预算和信任还会不会跟着你走？\n\n先别急着做个人 IP，也别急着追爆款。先判断三件事：\n\n1. 你现在的价值，是岗位给的，还是市场愿意单独为你付费？\n2. 你手里有没有能被目标客户理解的具体成果？\n3. 你发出的内容，是在吸引目标客户，还是只吸引泛职场围观？\n\n这篇先验证一个变量：${topic.test_variable}。\n\n我会继续记录，一个成熟职场人怎么把经验变成市场上的资产。`),
+    isFictionalCase,
+  );
 
   const rawDraft: ContentDraft = {
     id: id(),
@@ -446,6 +493,7 @@ export async function generateDraft(input: {
     status: "ready",
     direction: topic.direction,
     content_type: topic.content_type,
+    case_mode: isBuyerC ? caseMode : undefined,
     test_variable: topic.test_variable,
     expected_signal: topic.expected_signal,
     title,
@@ -457,8 +505,9 @@ export async function generateDraft(input: {
     cover_text: payload?.cover_text || topic.hook,
     body,
     hashtags,
-    comment_prompt:
-      payload?.comment_prompt || "你现在更像公司里的能人，还是市场上的资产？",
+    comment_prompt: isBuyerC
+      ? ""
+      : payload?.comment_prompt || "你现在更像公司里的能人，还是市场上的资产？",
     word_count: countPublishChars(title, body, hashtags),
     follow_reason: payload?.follow_reason || topic.follow_reason,
     trust_anchor: payload?.trust_anchor || input.account.trust_source,
@@ -466,8 +515,12 @@ export async function generateDraft(input: {
       ? payload.review_points.slice(0, 5)
       : ["收藏", "评论", "主页访问", "新增关注", "评论里是否出现目标用户信号"],
     cover_suggestion:
-      payload?.cover_suggestion ||
-      "真实办公桌面，手写目标客户判断表，画面克制，有真实过程感。",
+      (isFictionalCase
+        ? `${payload?.cover_suggestion || "留学生家长视角的虚构招聘入口、成年孩子背影和现场人群"}；封面标注“情景演绎 / 示意图”，不用真实企业Logo，不仿制Offer文件。`
+        : payload?.cover_suggestion ||
+          (isBuyerC
+            ? `使用案例素材中的公开招聘现场，家长视角拍成年孩子背影；不要补造素材中没有的企业或Offer细节。`
+            : "真实办公桌面，手写目标客户判断表，画面克制，有真实过程感。")),
     story_mode: asText(payload?.story_mode) || undefined,
     pictorial_rate: asText(payload?.pictorial_rate) || undefined,
     learning_trace: input.learningBrief?.trace,
@@ -547,10 +600,17 @@ export async function generateTopicBatch(input: {
     topics = topics.map((topic) => ({
       ...topic,
       weekly_action: input.learningBrief?.trace.direction_action,
-      evidence: input.learningBrief?.trace.basis.join("；"),
+      evidence: [topic.evidence, input.learningBrief?.trace.basis.join("；")].filter(Boolean).join("；"),
       learning_trace: input.learningBrief?.trace,
     }));
   }
+
+  topics = prioritizeBuyerCTopics({
+    account: input.account,
+    topics,
+    topicId: id(),
+    limit: count,
+  });
 
   return { topics: topics.slice(0, count), usage };
 }
@@ -567,6 +627,7 @@ export async function generateDraftVariants(input: {
   excludeBodies?: string[];
   learningBrief?: GrowthLearningBrief;
 }): Promise<{ drafts: ContentDraft[]; usage?: Record<string, unknown> }> {
+  assertBuyerCCaseMaterial(input.account, input.topic);
   const count = input.count ?? 2;
   // 用户已在选题阶段选定标题。正文阶段恢复为两个编辑候选稿，
   // 不再把同一篇正文复制后重新做标题二选一。
@@ -665,11 +726,31 @@ async function generateSingleDraft(input: {
     console.warn("[growth] draft variant fallback:", (error as Error).message);
   }
 
-  const hashtags = normalizeTags(payload?.hashtags || ["#中高层转型", "#第二曲线", "#小红书运营"]);
+  const isBuyerC = input.account.persona === "buyer" && topic.direction === "C";
+  const caseMode = buyerCaseMode(input.account);
+  const isFictionalCase = isBuyerC && caseMode === "情景演绎";
+  const hashtags = normalizeTags(
+    payload?.hashtags ||
+      (isBuyerC
+        ? ["#留学生家长", "#留学生求职", "#留学生回国求职", "#秋招", "#求职规划"]
+        : ["#中高层转型", "#第二曲线", "#小红书运营"]),
+  );
   const title = enforceTitleLimit(payload?.title || topic.title);
   const shortFallback = `围绕「${topic.title}」，先验证一个变量：${topic.test_variable}。\n\n最锋利的判断：别急着做，先看你现在的价值是岗位给的，还是市场愿意单独为你付费。\n\n3 个信号：\n1. 有没有能被目标客户理解的具体成果？\n2. 你的内容在吸引目标客户，还是只吸引泛围观？\n3. 离开这个位置，客户还会不会找你？`;
   const longFallback = `围绕「${topic.title}」，本篇先验证一个变量：${topic.test_variable}。\n\n先说一个反常识判断：很多人以为自己缺的是流量，其实缺的是“市场愿意单独为你付费的理由”。\n\n一、先自查三件事\n1. 你现在的价值，是岗位给的，还是市场愿意单独为你付费？\n2. 你手里有没有能被目标客户理解的具体成果（案例、数字、可复用方法）？\n3. 你发出的内容，是在吸引目标客户，还是只吸引泛围观？\n\n二、怎么把经验变成可被购买的表达\n把你做过的判断拆成“别人可以照着用”的清单和标准，而不是只讲故事。每一篇只讲清楚一个判断，并给出下一步动作。\n\n三、下一步\n先用一篇内容测试：目标客户看完，会不会主动来问。如果会，说明方向成立；如果只有点赞没有咨询，就换角度。\n\n我会继续记录，一个成熟职场人怎么把经验变成市场上可被信任、可被定价的资产。`;
-  const body = payload?.body || (input.lengthKind === "long" ? longFallback : shortFallback);
+  const caseMaterial =
+    buyerCaseMaterial(input.account) ||
+    "一家虚构能源公司的数据分析岗；老大已拿到Offer；老二第一次参加留学生秋招；家长在校园招聘入口等候。";
+  const buyerCFallback = `今天陪老二去参加校园招聘活动。看着他拿着材料走进会场，我坐在外面，忽然想起老大当年求职的样子。\n\n这次故事里的素材是：${caseMaterial}\n\n老大刚开始求职时，也以为海外学历加一份英文简历就够了。后来才发现，岗位、毕业时间、招聘单位和材料要求只要有一项没核对清楚，就可能进不了下一轮。后来找专业的人带，他才开始按岗位重新整理经历，知道每次被拒以后应该调整什么。\n\n现在轮到老二，我们没有直接照搬老大的路线。两个孩子的专业、性格和目标岗位不同，老大的经验只能参考，不能原样复制。\n\n老二走出会场时说，原来光是把单位和岗位研究清楚，就要花不少时间。我说没事，第一次本来就是来摸清规则的，回去把今天记下的问题一项项整理出来。`;
+  const body = discloseFictionalCase(
+    payload?.body ||
+      (isBuyerC
+        ? buyerCFallback
+        : input.lengthKind === "long"
+          ? longFallback
+          : shortFallback),
+    isFictionalCase,
+  );
 
   const rawDraft: ContentDraft = {
     id: id(),
@@ -679,6 +760,7 @@ async function generateSingleDraft(input: {
     status: "draft",
     direction: topic.direction,
     content_type: topic.content_type,
+    case_mode: isBuyerC ? caseMode : undefined,
     test_variable: topic.test_variable,
     expected_signal: topic.expected_signal,
     title,
@@ -690,14 +772,22 @@ async function generateSingleDraft(input: {
     cover_text: payload?.cover_text || topic.hook,
     body,
     hashtags,
-    comment_prompt: payload?.comment_prompt || "你现在更像公司里的能人，还是市场上的资产？",
+    comment_prompt: isBuyerC
+      ? ""
+      : payload?.comment_prompt || "你现在更像公司里的能人，还是市场上的资产？",
     word_count: countPublishChars(title, body, hashtags),
     follow_reason: payload?.follow_reason || topic.follow_reason,
     trust_anchor: payload?.trust_anchor || input.account.trust_source,
     review_points: Array.isArray(payload?.review_points)
       ? payload.review_points.slice(0, 5)
       : ["收藏", "评论", "主页访问", "新增关注", "评论里是否出现目标用户信号"],
-    cover_suggestion: payload?.cover_suggestion || "真实办公桌面，手写目标客户判断表，画面克制。",
+    cover_suggestion:
+      (isFictionalCase
+        ? `${payload?.cover_suggestion || "家长视角拍成年孩子走进虚构招聘现场"}；封面标注“情景演绎 / 示意图”，不用真实企业Logo，不仿制Offer、邮件、印章或编号。`
+        : payload?.cover_suggestion ||
+          (isBuyerC
+            ? "使用案例素材中的公开招聘现场，家长视角拍成年孩子背影；不要补造素材中没有的企业或Offer细节。"
+            : "真实办公桌面，手写目标客户判断表，画面克制。")),
     story_mode: asText(payload?.story_mode) || undefined,
     pictorial_rate: asText(payload?.pictorial_rate) || undefined,
     learning_trace: input.learningBrief?.trace,
@@ -929,7 +1019,7 @@ function fallbackTopics(account: GrowthAccount): TopicCandidate[] {
     ["C", "从公司位置到市场位置，我先改了这件事", "story"],
   ] as const;
 
-  return base.map(([direction, title, contentType], index) => ({
+  const topics: TopicCandidate[] = base.map(([direction, title, contentType], index) => ({
     id: id(),
     direction,
     title: enforceTitleLimit(title),
@@ -954,4 +1044,17 @@ function fallbackTopics(account: GrowthAccount): TopicCandidate[] {
       repeatability: 8,
     },
   }));
+  if (account.persona !== "buyer") return topics;
+  const buyerC = buildBuyerCTopic(account, id());
+  return [
+    ...topics.filter((topic) => topic.direction !== "C"),
+    buyerC,
+    {
+      ...buyerC,
+      id: id(),
+      title: "老大拿Offer后，我没让老二照搬",
+      hook: "同一个家\n两条不同的求职路",
+      test_variable: "两个孩子路线差异是否提升目标家长共鸣",
+    },
+  ];
 }

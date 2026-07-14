@@ -3,6 +3,7 @@ import { z } from "zod";
 import { requireMianbaApiAuth } from "@/lib/auth/mianba";
 import { generateDraft } from "@/lib/growth/runner";
 import { growthStore } from "@/lib/growth/store";
+import { buyerCNeedsMaterial } from "@/lib/growth/buyerCStrategy";
 import {
   buildLearningBrief,
   buildWeeklyReviewResult,
@@ -47,6 +48,15 @@ export async function POST(req: Request, { params }: { params: { runId: string }
   }
   const selectedTopic =
     run.topic_pool.find((topic) => topic.id === parsed.data.selectedTopicId) || run.selected_topic || run.topic_pool[0];
+  if (account.persona === "buyer" && selectedTopic?.direction === "C" && buyerCNeedsMaterial(account)) {
+    return NextResponse.json(
+      {
+        error: "buyer_c_case_material_required",
+        message: "真实案例模式需要先在买家定位卡补充案例素材。",
+      },
+      { status: 409 },
+    );
+  }
   const learningBrief = buildLearningBrief({
     account,
     notes,

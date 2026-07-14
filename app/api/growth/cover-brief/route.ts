@@ -12,6 +12,9 @@ const bodySchema = z.object({
   targetUser: z.string().trim().max(500).optional(),
   contentType: z.enum(["diagnostic", "tool", "story"]).optional(),
   testVariable: z.string().trim().max(500).optional(),
+  buyerC: z.boolean().optional(),
+  caseMode: z.enum(["真实案例", "情景演绎"]).optional(),
+  caseMaterial: z.string().trim().max(2000).optional(),
 });
 
 export async function POST(req: Request) {

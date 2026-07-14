@@ -69,15 +69,17 @@ export async function POST(req: Request) {
   });
   const topics = generatedTopics.map((topic) => {
     const direction = weeklyReview?.by_direction.find((item) => item.direction === topic.direction);
+    const weeklyAction = topic.weekly_action ?? direction?.action;
+    const directionEvidence = direction
+      ? `${direction.label}：近28天${direction.valid_count || 0}篇有效样本，当前建议${direction.action || "explore"}。`
+      : "";
     return {
       ...topic,
-      weekly_action: direction?.action,
-      evidence: direction
-        ? `${direction.label}：近28天${direction.valid_count || 0}篇有效样本，当前建议${direction.action || "explore"}。`
-        : topic.evidence,
+      weekly_action: weeklyAction,
+      evidence: [topic.evidence, directionEvidence].filter(Boolean).join("；"),
       learning_trace: {
         ...learningBrief.trace,
-        direction_action: direction?.action,
+        direction_action: weeklyAction,
       },
     };
   });

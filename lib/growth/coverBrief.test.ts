@@ -17,12 +17,36 @@ describe("growth cover brief", () => {
   });
 
   it("uses the explicit cover text when provided", () => {
-    const brief = buildCoverBrief({
-      title: "一个很长的标题",
-      coverText: "先判断目标客户",
-    });
-
+    const brief = buildCoverBrief({ title: "一个很长的标题", coverText: "先判断目标客户" });
     expect(brief.coverText).toBe("先判断目标客户");
     expect(brief.overlayGuidance).toContain("先判断目标客户");
+  });
+
+  it("builds an onsite buyer C cover without generating text or proof", () => {
+    const brief = buildCoverBrief({
+      title: "一转眼，轮到老二秋招了",
+      buyerC: true,
+      caseMode: "真实案例",
+      caseMaterial: "某能源企业数据分析岗；老大拿到Offer；老二参加秋招。",
+      styleHint: "招聘现场版",
+    });
+
+    expect(brief.scene).toContain("招聘入口");
+    expect(brief.scene).toContain("成年留学生");
+    expect(brief.imagePrompt).toContain("不要生成任何文字");
+    expect(brief.negativePrompt).toContain("不要伪造Offer");
+  });
+
+  it("keeps the fictional disclosure in deterministic overlay guidance", () => {
+    const brief = buildCoverBrief({
+      title: "一转眼，轮到老二秋招了",
+      buyerC: true,
+      caseMode: "情景演绎",
+      styleHint: "结果对照版",
+    });
+
+    expect(brief.scene).toContain("左右阶段对照");
+    expect(brief.overlayGuidance).toContain("情景演绎 / 示意图");
+    expect(brief.negativePrompt).toContain("不要真实企业或学校标识");
   });
 });
