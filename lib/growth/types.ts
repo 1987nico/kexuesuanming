@@ -2,6 +2,34 @@ export type GrowthDirection = "A" | "B" | "C";
 
 export type GrowthPersona = "merchant" | "buyer" | "expert";
 
+export type GrowthBusinessTrack = "international-student-career" | "executive-career";
+
+export const GROWTH_BUSINESS_TRACKS: GrowthBusinessTrack[] = [
+  "international-student-career",
+  "executive-career",
+];
+
+export interface GrowthBusinessPosition {
+  track: GrowthBusinessTrack;
+  label: string;
+  short_label: string;
+  service_category: string;
+  target_user: string;
+  core_problem: string;
+  main_offer: string;
+  differentiation: string;
+  trust_source: string;
+  compliance_redline: string;
+  persona_profiles: Record<
+    GrowthPersona,
+    {
+      label: string;
+      account_name: string;
+      description: string;
+    }
+  >;
+}
+
 export const GROWTH_PERSONAS: GrowthPersona[] = ["merchant", "buyer", "expert"];
 
 export const GROWTH_PERSONA_LABELS: Record<GrowthPersona, string> = {
@@ -52,6 +80,8 @@ export interface GrowthAccount {
   tenant_id: string;
   owner_user_id?: string | null;
   persona: GrowthPersona;
+  // 业务母定位。旧账号未写此字段时按「中高管职业决策」读取。
+  business_track?: GrowthBusinessTrack;
   name: string;
   target_user: string;
   core_problem: string;
@@ -106,6 +136,42 @@ export const PERSONA_SPECIFIC_FIELDS: Record<GrowthPersona, PersonaSpecificField
     { key: "monetization", label: "变现方式", placeholder: "咨询 / 课程 / 知识付费 / 训练营" },
   ],
 };
+
+const INTERNATIONAL_STUDENT_PERSONA_SPECIFIC_FIELDS: Record<
+  GrowthPersona,
+  PersonaSpecificField[]
+> = {
+  merchant: [
+    { key: "what_you_are", label: "你是什么（品类）", placeholder: "例如：留学生回国求职方向规划与秋招陪跑服务" },
+    { key: "how_different", label: "有何不同（定位）", placeholder: "例如：先定方向和目标岗位，再做简历、面试与投递节奏" },
+    { key: "why_believe", label: "何以见得（信任状）", placeholder: "例如：导师背景、匿名案例、交付流程和招聘节点复盘" },
+    { key: "main_offer", label: "主营产品/服务", placeholder: "例如：方向诊断、岗位地图、简历面试与秋招陪跑" },
+    { key: "price_band", label: "客单价区间", placeholder: "填写实际价格区间，不确定可暂时留空" },
+    { key: "conversion_goal", label: "转化目标", placeholder: "例如：预约诊断、购买辅导服务" },
+  ],
+  buyer: [
+    { key: "identity", label: "留学生家长身份/现状", placeholder: "例如：孩子海外硕士毕业，正在准备回国秋招的家长" },
+    { key: "struggle", label: "正在纠结的求职问题", placeholder: "例如：专业能投哪些岗、秋招节奏是否已经晚了" },
+    { key: "growth_arc", label: "家庭求职成长弧线", placeholder: "从盲目海投 → 找到方向 → 按招聘节奏准备 → 拿到合适结果" },
+    { key: "bridge", label: "转化桥（老师怎么自然出现）", placeholder: "例如：后来找专业的老师带，先把方向和岗位理顺" },
+    { key: "case_mode", label: "案例模式", placeholder: "填写：真实案例 或 情景演绎。选择情景演绎后，系统会自动添加公开标识" },
+    { key: "case_material", label: "案例素材", placeholder: "集中填写企业/岗位、Offer结果、孩子阶段、招聘现场和可公开细节" },
+  ],
+  expert: [
+    { key: "expertise", label: "专业领域", placeholder: "例如：留学生回国求职方向规划、秋招与校招" },
+    { key: "methodology", label: "代表方法论/成果", placeholder: "例如：方向诊断—岗位地图—材料—面试—投递节奏五步法" },
+    { key: "monetization", label: "变现方式", placeholder: "诊断 / 单项辅导 / 秋招陪跑 / 训练营" },
+  ],
+};
+
+export function personaSpecificFields(
+  persona: GrowthPersona,
+  track: GrowthBusinessTrack = "executive-career",
+) {
+  return track === "international-student-career"
+    ? INTERNATIONAL_STUDENT_PERSONA_SPECIFIC_FIELDS[persona]
+    : PERSONA_SPECIFIC_FIELDS[persona];
+}
 
 export interface GrowthPlan {
   id: string;
@@ -407,6 +473,7 @@ export interface BusinessSettings {
   tenant_id: string;
   report_lite_price: string; // 初步诊断报告价格（字符串，允许写「199」或「199 元」等）
   report_deep_price: string; // 深度诊断报告价格
+  business_positions?: Partial<Record<GrowthBusinessTrack, GrowthBusinessPosition>>;
   updated_at: string;
 }
 

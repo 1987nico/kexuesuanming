@@ -6,6 +6,8 @@ import type {
   ContentDraft,
   DirectionAggregate,
   GrowthAccount,
+  GrowthBusinessPosition,
+  GrowthBusinessTrack,
   GrowthPersona,
   GrowthPlan,
   GrowthReview,
@@ -14,7 +16,17 @@ import type {
   WeeklyReviewResult,
   TopicCandidate,
 } from "@/lib/growth/types";
-import { GROWTH_PERSONA_LABELS, GROWTH_PERSONAS, PERSONA_SPECIFIC_FIELDS } from "@/lib/growth/types";
+import {
+  GROWTH_BUSINESS_TRACKS,
+  GROWTH_PERSONA_LABELS,
+  GROWTH_PERSONAS,
+  personaSpecificFields,
+} from "@/lib/growth/types";
+import {
+  DEFAULT_BUSINESS_POSITIONS,
+  isInternationalStudentTrack,
+  resolveAccountBusinessTrack,
+} from "@/lib/growth/businessPosition";
 import {
   buyerCaseMaterial,
   buyerCaseMode,
@@ -52,6 +64,17 @@ interface AccountForm {
   hypotheses: string;
   persona_specific: Record<string, string>;
 }
+
+type BusinessPositionForm = Pick<
+  GrowthBusinessPosition,
+  | "service_category"
+  | "target_user"
+  | "core_problem"
+  | "main_offer"
+  | "differentiation"
+  | "trust_source"
+  | "compliance_redline"
+>;
 
 interface ReviewFormState {
   note_status: "normal" | "limited" | "violation" | "deleted";
@@ -222,8 +245,23 @@ const BUYER_DIRECTION_LABELS: Record<string, string> = {
   C: "留学生家长Offer转折",
 };
 
-function directionLabel(persona: GrowthPersona, direction: string) {
-  const labels = persona === "buyer" ? BUYER_DIRECTION_LABELS : DIRECTION_LABELS;
+const EXECUTIVE_BUYER_DIRECTION_LABELS: Record<string, string> = {
+  A: "求助/情绪",
+  B: "成长/复盘",
+  C: "方向转折/桥接",
+};
+
+function directionLabel(
+  persona: GrowthPersona,
+  direction: string,
+  businessTrack: GrowthBusinessTrack,
+) {
+  const labels =
+    persona === "buyer"
+      ? businessTrack === "international-student-career"
+        ? BUYER_DIRECTION_LABELS
+        : EXECUTIVE_BUYER_DIRECTION_LABELS
+      : DIRECTION_LABELS;
   return labels[direction] ?? "";
 }
 
@@ -397,7 +435,10 @@ async function compressReviewScreenshot(file: File) {
 
 function toAccountForm(account: GrowthAccount): AccountForm {
   const personaSpecific: Record<string, string> = {};
-  for (const field of PERSONA_SPECIFIC_FIELDS[account.persona]) {
+  for (const field of personaSpecificFields(
+    account.persona,
+    resolveAccountBusinessTrack(account),
+  )) {
     personaSpecific[field.key] =
       field.key === "case_mode" ? buyerCaseMode(account) : account.persona_specific?.[field.key] ?? "";
   }
@@ -421,6 +462,18 @@ function toAccountForm(account: GrowthAccount): AccountForm {
   };
 }
 
+function toBusinessPositionForm(position: GrowthBusinessPosition): BusinessPositionForm {
+  return {
+    service_category: position.service_category,
+    target_user: position.target_user,
+    core_problem: position.core_problem,
+    main_offer: position.main_offer,
+    differentiation: position.differentiation,
+    trust_source: position.trust_source,
+    compliance_redline: position.compliance_redline,
+  };
+}
+
 function splitList(value: string, sep: RegExp) {
   return value.split(sep).map((s) => s.trim()).filter(Boolean);
 }
@@ -439,7 +492,21 @@ function draftIsBlocked(draft: ContentDraft) {
 }
 
 export default function XiaohongshuNotesPage() {
+  const [businessTrack, setBusinessTrack] = useState<GrowthBusinessTrack>(
+    "international-student-career",
+  );
   const [persona, setPersona] = useState<GrowthPersona>("merchant");
+  const [businessPosition, setBusinessPosition] =
+    useState<GrowthBusinessPosition>(
+      DEFAULT_BUSINESS_POSITIONS["international-student-career"],
+    );
+  const [businessPositions, setBusinessPositions] = useState<
+    Record<GrowthBusinessTrack, GrowthBusinessPosition>
+  >(DEFAULT_BUSINESS_POSITIONS);
+  const [positionEditing, setPositionEditing] = useState(false);
+  const [positionForm, setPositionForm] = useState<BusinessPositionForm>(
+    toBusinessPositionForm(DEFAULT_BUSINESS_POSITIONS["international-student-career"]),
+  );
   const [state, setState] = useState<WorkspaceState>({ account: null, plan: null, run: null, drafts: [] });
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState("");
@@ -472,8 +539,11 @@ export default function XiaohongshuNotesPage() {
   }, []);
 
   const loadWorkspace = useCallback(
-    async (p: GrowthPersona) => {
-      const res = await fetch(`/api/growth/bootstrap?persona=${p}`, { cache: "no-store" });
+    async (p: GrowthPersona, track: GrowthBusinessTrack) => {
+      const res = await fetch(
+        `/api/growth/bootstrap?persona=${p}&track=${encodeURIComponent(track)}`,
+        { cache: "no-store" },
+      );
       const data = await res.json();
       if (res.status === 401) {
         window.location.href = `/mianba/login?next=${encodeURIComponent("/mianba/growth")}`;
@@ -481,6 +551,12 @@ export default function XiaohongshuNotesPage() {
       }
       const run: GrowthRun | null = (data.runs && data.runs[0]) || null;
       const drafts: ContentDraft[] = data.drafts ?? [];
+      const nextPosition =
+        data.businessPosition ?? DEFAULT_BUSINESS_POSITIONS[track];
+      setBusinessPosition(nextPosition);
+      if (data.businessPositions) setBusinessPositions(data.businessPositions);
+      setPositionForm(toBusinessPositionForm(nextPosition));
+      setPositionEditing(false);
       setState({ account: data.account ?? null, plan: data.plan ?? null, run, drafts });
       setAccountForm(data.account ? toAccountForm(data.account) : null);
       setEditing(false);
@@ -500,8 +576,10 @@ export default function XiaohongshuNotesPage() {
 
   useEffect(() => {
     setMessage("");
-    loadWorkspace(persona).catch((error) => setMessage((error as Error).message));
-  }, [persona, loadWorkspace]);
+    loadWorkspace(persona, businessTrack).catch((error) =>
+      setMessage((error as Error).message),
+    );
+  }, [persona, businessTrack, loadWorkspace]);
 
   const showCopyMessage = useCallback((label: string) => {
     setMessage(`${label}已复制`);
@@ -531,12 +609,30 @@ export default function XiaohongshuNotesPage() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           persona,
-          accountName: state.account?.name || `面霸君 · ${GROWTH_PERSONA_LABELS[persona]}`,
+          businessTrack,
+          accountName:
+            state.account?.name || businessPosition.persona_profiles[persona].account_name,
           ...(regenerate && state.account ? { regenerateAccountId: state.account.id } : {}),
         }),
       });
       if (!res.ok) throw new Error("生成定位卡失败");
-      await loadWorkspace(persona);
+      await loadWorkspace(persona, businessTrack);
+    });
+  }
+
+  async function saveBusinessPosition() {
+    await run("保存业务定位", async () => {
+      const res = await fetch("/api/growth/business-position", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ track: businessTrack, ...positionForm }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.message || data.error || "保存业务定位失败");
+      const position = data.position as GrowthBusinessPosition;
+      setBusinessPosition(position);
+      setBusinessPositions((current) => ({ ...current, [businessTrack]: position }));
+      setPositionEditing(false);
     });
   }
 
@@ -567,7 +663,7 @@ export default function XiaohongshuNotesPage() {
         }),
       });
       if (!res.ok) throw new Error("保存定位卡失败");
-      await loadWorkspace(persona);
+      await loadWorkspace(persona, businessTrack);
     });
   }
 
@@ -623,7 +719,10 @@ export default function XiaohongshuNotesPage() {
   }
 
   async function loadWorkspaceKeepChosen(draft: ContentDraft) {
-    const res = await fetch(`/api/growth/bootstrap?persona=${persona}`, { cache: "no-store" });
+    const res = await fetch(
+      `/api/growth/bootstrap?persona=${persona}&track=${encodeURIComponent(businessTrack)}`,
+      { cache: "no-store" },
+    );
     const data = await res.json();
     const run2: GrowthRun | null = (data.runs && data.runs[0]) || null;
     const drafts: ContentDraft[] = data.drafts ?? [];
@@ -637,7 +736,14 @@ export default function XiaohongshuNotesPage() {
   }
 
   async function generateBuyerCCovers(draft: ContentDraft) {
-    if (!state.account || state.account.persona !== "buyer" || draft.direction !== "C") return;
+    if (
+      !state.account ||
+      !isInternationalStudentTrack(state.account) ||
+      state.account.persona !== "buyer" ||
+      draft.direction !== "C"
+    ) {
+      return;
+    }
     await run("生成 2 张封面", async () => {
       const res = await fetch("/api/growth/covers", {
         method: "POST",
@@ -862,27 +968,158 @@ export default function XiaohongshuNotesPage() {
         </div>
       </header>
 
-      <div className="mb-6 flex flex-wrap gap-2">
-        {GROWTH_PERSONAS.map((p) => (
-          <button
-            key={p}
-            onClick={() => setPersona(p)}
-            className={
-              "rounded-full px-5 py-2 text-sm font-semibold transition " +
-              (persona === p ? "bg-ink-900 text-white" : "bg-white text-ink-600 shadow-sm")
-            }
-          >
-            {GROWTH_PERSONA_LABELS[p]}
-          </button>
-        ))}
-      </div>
+      <StepCard
+        step="0"
+        title="先选业务定位"
+        desc="业务定位在三个内容视角之上。切换后，账号定位卡、选题、正文和复盘数据都会进入对应业务空间。"
+      >
+        <div className="grid gap-3 md:grid-cols-2">
+          {GROWTH_BUSINESS_TRACKS.map((track) => {
+            const position = businessPositions[track] ?? DEFAULT_BUSINESS_POSITIONS[track];
+            const active = businessTrack === track;
+            return (
+              <button
+                key={track}
+                type="button"
+                onClick={() => {
+                  setBusinessTrack(track);
+                  setBusinessPosition(position);
+                  setPositionEditing(false);
+                  setPositionForm(toBusinessPositionForm(position));
+                }}
+                className={
+                  "rounded-2xl border p-4 text-left transition " +
+                  (active
+                    ? "border-gold-400 bg-gold-50/60 shadow-sm"
+                    : "border-ink-100 bg-ink-50/60 hover:border-ink-200")
+                }
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <div className="font-semibold text-ink-900">{position.label}</div>
+                  {active && (
+                    <span className="rounded-full bg-ink-900 px-3 py-1 text-[11px] font-semibold text-white">
+                      当前业务
+                    </span>
+                  )}
+                </div>
+                <p className="mt-2 text-xs leading-5 text-ink-500">{position.service_category}</p>
+                <p className="mt-1 text-xs leading-5 text-ink-400">服务：{position.main_offer}</p>
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="mt-4 rounded-2xl border border-ink-100 bg-white p-4">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <div className="text-xs font-semibold tracking-[0.18em] text-gold-700">当前业务母定位</div>
+              <div className="mt-2 text-lg font-semibold text-ink-900">{businessPosition.label}</div>
+              <p className="mt-1 text-sm leading-6 text-ink-600">{businessPosition.target_user}</p>
+            </div>
+            <button
+              className="rounded-full bg-ink-100 px-4 py-2 text-sm font-semibold text-ink-700"
+              onClick={() => {
+                setPositionForm(toBusinessPositionForm(businessPosition));
+                setPositionEditing((value) => !value);
+              }}
+            >
+              {positionEditing ? "收起设置" : "调整业务定位"}
+            </button>
+          </div>
+
+          {positionEditing ? (
+            <div className="mt-4 grid gap-3 md:grid-cols-2">
+              <EditField
+                label="你是什么（品类）"
+                value={positionForm.service_category}
+                onChange={(value) => setPositionForm({ ...positionForm, service_category: value })}
+              />
+              <EditField
+                label="主营服务"
+                value={positionForm.main_offer}
+                onChange={(value) => setPositionForm({ ...positionForm, main_offer: value })}
+              />
+              <EditArea
+                label="目标用户"
+                value={positionForm.target_user}
+                onChange={(value) => setPositionForm({ ...positionForm, target_user: value })}
+              />
+              <EditArea
+                label="核心问题"
+                value={positionForm.core_problem}
+                onChange={(value) => setPositionForm({ ...positionForm, core_problem: value })}
+              />
+              <EditArea
+                label="有何不同"
+                value={positionForm.differentiation}
+                onChange={(value) => setPositionForm({ ...positionForm, differentiation: value })}
+              />
+              <EditArea
+                label="何以见得（信任来源）"
+                value={positionForm.trust_source}
+                onChange={(value) => setPositionForm({ ...positionForm, trust_source: value })}
+              />
+              <div className="md:col-span-2">
+                <EditArea
+                  label="合规红线"
+                  value={positionForm.compliance_redline}
+                  onChange={(value) => setPositionForm({ ...positionForm, compliance_redline: value })}
+                />
+              </div>
+              <div className="flex flex-wrap items-center gap-3 md:col-span-2">
+                <button className="btn-primary" disabled={!!busy} onClick={saveBusinessPosition}>
+                  {busy === "保存业务定位" ? "保存中..." : "保存业务定位"}
+                </button>
+                <span className="text-xs leading-5 text-ink-500">
+                  保存后作为三种视角的共同生成依据；已有账号卡不会被强制覆盖。
+                </span>
+              </div>
+            </div>
+          ) : (
+            <div className="mt-4 grid gap-3 text-sm leading-6 text-ink-700 md:grid-cols-3">
+              <Field label="你是什么（品类）" value={businessPosition.service_category} />
+              <Field label="有何不同" value={businessPosition.differentiation} />
+              <Field label="何以见得（信任来源）" value={businessPosition.trust_source} />
+            </div>
+          )}
+
+          <div className="mt-4 border-t border-ink-100 pt-4">
+            <div className="mb-3 text-xs font-semibold text-ink-500">再选择这个业务下的内容视角</div>
+            <div className="grid gap-2 md:grid-cols-3">
+              {GROWTH_PERSONAS.map((p) => {
+                const profile = businessPosition.persona_profiles[p];
+                return (
+                  <button
+                    key={p}
+                    onClick={() => setPersona(p)}
+                    className={
+                      "rounded-2xl px-4 py-3 text-left transition " +
+                      (persona === p
+                        ? "bg-ink-900 text-white"
+                        : "bg-ink-50 text-ink-700 hover:bg-ink-100")
+                    }
+                  >
+                    <div className="text-xs opacity-65">{GROWTH_PERSONA_LABELS[p]}</div>
+                    <div className="mt-1 text-sm font-semibold">{profile.label}</div>
+                    <div className="mt-1 text-xs leading-5 opacity-70">{profile.description}</div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      </StepCard>
 
       {/* Step 1 账号定位卡 */}
-      <StepCard step="1" title="账号定位卡" desc="可编辑，随时调整目标用户、核心问题和账号价值。">
+      <StepCard
+        step="1"
+        title={`${businessPosition.persona_profiles[persona].label}账号定位卡`}
+        desc={`继承「${businessPosition.label}」母定位，可继续调整这个视角的目标用户、核心问题和账号价值。`}
+      >
         {!account ? (
           <div>
             <p className="text-sm leading-6 text-ink-600">
-              当前视角「{GROWTH_PERSONA_LABELS[persona]}」还没有定位卡。
+              当前业务「{businessPosition.label}」下的「{businessPosition.persona_profiles[persona].label}」还没有定位卡。
             </p>
             <button className="btn-primary mt-4" disabled={!!busy} onClick={() => createAccount()}>
               {busy === "创建账号定位卡" ? "生成中..." : "生成账号定位卡"}
@@ -912,7 +1149,7 @@ export default function XiaohongshuNotesPage() {
             <EditField label="要避免的表达（顿号/逗号分隔）" value={accountForm.avoid_expressions} onChange={(v) => setAccountForm({ ...accountForm, avoid_expressions: v })} />
 
             <div className="pt-2 text-xs font-semibold text-gold-700">{GROWTH_PERSONA_LABELS[persona]}视角专属</div>
-            {PERSONA_SPECIFIC_FIELDS[persona].map((field) =>
+            {personaSpecificFields(persona, businessTrack).map((field) =>
               field.key === "case_mode" ? (
                 <div key={field.key}>
                   <label className="mb-1 block text-xs font-medium text-ink-500">{field.label}</label>
@@ -993,7 +1230,7 @@ export default function XiaohongshuNotesPage() {
                 )}
                 {account.tone_style && <Field label="语气风格" value={account.tone_style} />}
                 {account.persona_specific &&
-                  PERSONA_SPECIFIC_FIELDS[persona].map((field) =>
+                  personaSpecificFields(persona, businessTrack).map((field) =>
                     account.persona_specific?.[field.key] ? (
                       <Field key={field.key} label={field.label} value={account.persona_specific[field.key]} />
                     ) : null
@@ -1033,7 +1270,10 @@ export default function XiaohongshuNotesPage() {
         {topicPool.length > 0 && (
           <div className="mt-4 grid gap-3 md:grid-cols-2">
             {topicPool.map((topic) => {
-              const isBuyerOfferFocus = persona === "buyer" && topic.direction === "C";
+              const isBuyerOfferFocus =
+                businessTrack === "international-student-career" &&
+                persona === "buyer" &&
+                topic.direction === "C";
               const needsCaseMaterial = Boolean(isBuyerOfferFocus && account && buyerCNeedsMaterial(account));
               const isFictionalCase = Boolean(
                 isBuyerOfferFocus && account && buyerCaseMode(account) === "情景演绎",
@@ -1055,7 +1295,9 @@ export default function XiaohongshuNotesPage() {
                     </div>
                   )}
                   <div className="mb-2 flex items-center gap-2 text-xs text-ink-500">
-                    <span>方向 {topic.direction} · {directionLabel(persona, topic.direction)}</span>
+                    <span>
+                      方向 {topic.direction} · {directionLabel(persona, topic.direction, businessTrack)}
+                    </span>
                     <span>·</span>
                     <span>{CONTENT_TYPE_LABELS[topic.content_type] ?? topic.content_type}</span>
                     {topic.weekly_action && <span>· {WEEKLY_ACTION_LABELS[topic.weekly_action]}</span>}
@@ -1150,7 +1392,9 @@ export default function XiaohongshuNotesPage() {
                 )}
               </div>
             )}
-            {persona === "buyer" && chosenDraft.direction === "C" && (
+            {businessTrack === "international-student-career" &&
+              persona === "buyer" &&
+              chosenDraft.direction === "C" && (
               <div className="mt-4 rounded-2xl border border-gold-200 bg-white p-4">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>

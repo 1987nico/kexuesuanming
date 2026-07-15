@@ -3,6 +3,7 @@ import type {
   BusinessSettings,
   ContentDraft,
   GrowthAccount,
+  GrowthBusinessTrack,
   GrowthPersona,
   GrowthPlan,
   GrowthReview,
@@ -10,6 +11,10 @@ import type {
   UsageEvent,
 } from "./types";
 import { DEFAULT_BUSINESS_SETTINGS } from "./types";
+import {
+  businessPositionsFromSettings,
+  resolveAccountBusinessTrack,
+} from "./businessPosition";
 
 export interface GrowthStore {
   saveAccount(account: GrowthAccount): Promise<void>;
@@ -29,6 +34,7 @@ export interface GrowthStore {
     tenantId: string,
     persona: GrowthPersona,
     ownerUserId?: string,
+    businessTrack?: GrowthBusinessTrack,
   ): Promise<GrowthAccount | null>;
   savePlan(plan: GrowthPlan): Promise<void>;
   getPlan(id: string): Promise<GrowthPlan | null>;
@@ -56,7 +62,20 @@ function defaultBusinessSettings(tenantId: string): BusinessSettings {
   return {
     tenant_id: tenantId,
     ...DEFAULT_BUSINESS_SETTINGS,
+    business_positions: businessPositionsFromSettings(),
     updated_at: new Date().toISOString(),
+  };
+}
+
+function hydrateBusinessSettings(
+  tenantId: string,
+  settings?: BusinessSettings | null,
+): BusinessSettings {
+  return {
+    ...defaultBusinessSettings(tenantId),
+    ...settings,
+    tenant_id: tenantId,
+    business_positions: businessPositionsFromSettings(settings),
   };
 }
 
@@ -103,10 +122,19 @@ class MemoryGrowthStore implements GrowthStore {
     );
   }
 
-  async getLatestAccountByPersona(tenantId: string, persona: GrowthPersona, ownerUserId?: string) {
+  async getLatestAccountByPersona(
+    tenantId: string,
+    persona: GrowthPersona,
+    ownerUserId?: string,
+    businessTrack?: GrowthBusinessTrack,
+  ) {
     return (
       [...this.accounts.values()]
         .filter((account) => account.tenant_id === tenantId && account.persona === persona)
+        .filter(
+          (account) =>
+            !businessTrack || resolveAccountBusinessTrack(account) === businessTrack,
+        )
         .filter((account) => matchesOwner(account, ownerUserId))
         .sort((a, b) => b.created_at.localeCompare(a.created_at))[0] ?? null
     );
@@ -189,11 +217,11 @@ class MemoryGrowthStore implements GrowthStore {
   }
 
   async getBusinessSettings(tenantId: string) {
-    return this.settings.get(tenantId) ?? defaultBusinessSettings(tenantId);
+    return hydrateBusinessSettings(tenantId, this.settings.get(tenantId));
   }
 
   async saveBusinessSettings(settings: BusinessSettings) {
-    this.settings.set(settings.tenant_id, settings);
+    this.settings.set(settings.tenant_id, hydrateBusinessSettings(settings.tenant_id, settings));
   }
 }
 
@@ -239,7 +267,12 @@ class SupabaseGrowthStore implements GrowthStore {
     return accounts.find((account) => matchesOwner(account, ownerUserId)) ?? null;
   }
 
-  async getLatestAccountByPersona(tenantId: string, persona: GrowthPersona, ownerUserId?: string) {
+  async getLatestAccountByPersona(
+    tenantId: string,
+    persona: GrowthPersona,
+    ownerUserId?: string,
+    businessTrack?: GrowthBusinessTrack,
+  ) {
     const { data, error } = await this.db
       .from("growth_accounts")
       .select("payload")
@@ -248,7 +281,14 @@ class SupabaseGrowthStore implements GrowthStore {
       .limit(50);
     if (error) throw error;
     const accounts = (data ?? []).map((row) => row.payload as GrowthAccount);
-    return accounts.find((account) => account.persona === persona && matchesOwner(account, ownerUserId)) ?? null;
+    return (
+      accounts.find(
+        (account) =>
+          account.persona === persona &&
+          matchesOwner(account, ownerUserId) &&
+          (!businessTrack || resolveAccountBusinessTrack(account) === businessTrack),
+      ) ?? null
+    );
   }
 
   async savePlan(plan: GrowthPlan) {
@@ -415,14 +455,15 @@ class SupabaseGrowthStore implements GrowthStore {
       .eq("tenant_id", tenantId)
       .maybeSingle();
     if (error) throw error;
-    return (data?.payload as BusinessSettings) ?? defaultBusinessSettings(tenantId);
+    return hydrateBusinessSettings(tenantId, data?.payload as BusinessSettings | undefined);
   }
 
   async saveBusinessSettings(settings: BusinessSettings) {
+    const hydrated = hydrateBusinessSettings(settings.tenant_id, settings);
     const { error } = await this.db.from("growth_business_settings").upsert({
-      tenant_id: settings.tenant_id,
-      payload: settings,
-      updated_at: settings.updated_at,
+      tenant_id: hydrated.tenant_id,
+      payload: hydrated,
+      updated_at: hydrated.updated_at,
     });
     if (error) throw error;
   }

@@ -1,12 +1,18 @@
-import type { ContentType, GrowthDirection, GrowthPersona } from "./types";
-import { PERSONA_SPECIFIC_FIELDS } from "./types";
+import type {
+  ContentType,
+  GrowthBusinessPosition,
+  GrowthBusinessTrack,
+  GrowthDirection,
+  GrowthPersona,
+} from "./types";
+import { personaSpecificFields } from "./types";
 import {
   BUYER_C_DISCLOSURE,
   BUYER_C_WEEKLY_FOCUS,
   isBuyerCWeeklyFocusActive,
 } from "./buyerCStrategy";
 
-const PERSONA_GUIDE: Record<GrowthPersona, string> = {
+const EXECUTIVE_PERSONA_GUIDE: Record<GrowthPersona, string> = {
   merchant:
     "视角：商家。账号是要卖产品/服务的经营者，内容要建立专业信任并把关注者转成客户，突出交付力、案例和转化。",
   buyer: `视角：真实亲历者/素人（目标人群里的一个真人，不是测评号，不是专家）。
@@ -17,15 +23,35 @@ const PERSONA_GUIDE: Record<GrowthPersona, string> = {
 本视角下 A/B/C 三方向重新理解为：
 - A 求助/示弱/情绪帖：真实抛出自己的困惑和处境，或记录当下的情绪（emo、被 PUA、纠结要不要辞），目的是形成真实讨论和共鸣，不设计评论任务。
 - B 成长/顿悟/复盘帖：分享自己最近想明白的一件事、踩过的坑、做过的小尝试，软性输出、建立信任。
-- C 留学生家长Offer转折帖：用留学生家长第一人称，写孩子求职阶段变化、招聘现场和Offer结果对照；这是唯一允许产品自然出场的方向，可自然写「后来找专业的人带」，但绝不硬广、不报价，也不得用评论关键词、私信、点赞、收藏或关注换取资料、样例、报告、链接或福利。真实案例只使用定位卡中的案例素材；情景演绎允许虚构公司、Offer和现场，但必须保留公开标识，不能伪装成真实证明。
+- C 转折/桥接帖：写自己从乱试、纠结到重新梳理方向的具体过程；这是唯一允许产品自然出场的方向，可自然写「后来找专业的人带」，但绝不硬广、不报价，也不得用评论关键词、私信、点赞、收藏或关注换取资料、样例、报告、链接或福利。
 配比：A/B 类蓄势帖占绝大多数，C 类桥接帖占少数（约 9:1），不要每篇都想转化。
 写作口吻：第一人称、像真人发牢骚/记录，可以不完美、口语化，绝不端着、不像品牌号、不输出方法论密度（那是专家视角的活）。`,
   expert:
     "视角：专家/从业者。账号靠专业判断建立个人品牌，内容要有方法论密度和行业洞察，突出判断力与体系。",
 };
 
-export function personaGuide(persona: GrowthPersona) {
-  return PERSONA_GUIDE[persona];
+const INTERNATIONAL_STUDENT_PERSONA_GUIDE: Record<GrowthPersona, string> = {
+  merchant:
+    "视角：留学生求职辅导服务商。账号明着经营，内容要把服务品类、方向诊断、岗位地图、辅导交付和可验证证据讲清楚，帮助家庭判断是否适合购买。",
+  buyer: `视角：留学生家长/真实亲历者（不是老师、顾问或机构案例号）。
+账号是同一个正在陪孩子经历海外秋招或回国求职的家长，第一竞争力是具体、可信、有人情味的家庭视角。
+本视角下 A/B/C 三方向：
+- A 求助/情绪帖：家长真实抛出孩子专业、岗位、时间线或家庭沟通上的困惑，引发同类家长共鸣。
+- B 成长/复盘帖：分享家庭最近想明白的一件事、走过的弯路或做过的小调整。
+- C 留学生家长Offer转折帖：用家长第一人称写孩子求职阶段变化、招聘现场和Offer结果对照；可自然写「后来找专业的人带」，但不得硬广、报价或设计互动换资料。
+配比：A/B 类蓄势帖为主，C 类桥接帖为少数；同一个家庭身份和成长弧线必须连续。
+写作口吻：像家长随手记录，第一人称、口语化、场景具体，不写成老师授课或机构战报。`,
+  expert:
+    "视角：留学生求职老师/从业者。账号靠岗位判断、招聘节奏、材料与面试方法建立专业信任，内容要有方法论密度，但不保Offer、不制造焦虑。",
+};
+
+export function personaGuide(
+  persona: GrowthPersona,
+  businessTrack: GrowthBusinessTrack = "executive-career",
+) {
+  return businessTrack === "international-student-career"
+    ? INTERNATIONAL_STUDENT_PERSONA_GUIDE[persona]
+    : EXECUTIVE_PERSONA_GUIDE[persona];
 }
 
 export interface AccountContext {
@@ -60,7 +86,22 @@ export interface ReportPrices {
   deep: string; // 深度诊断报告价格
 }
 
-export function mianbaBusiness(prices: ReportPrices) {
+export function mianbaBusiness(
+  prices: ReportPrices,
+  position: GrowthBusinessPosition,
+) {
+  if (position.track === "international-student-career") {
+    return `
+【业务母定位：${position.label}】
+- 卖什么（品类）：${position.service_category}
+- 目标人群：${position.target_user}
+- 核心问题：${position.core_problem}
+- 主营服务：${position.main_offer}
+- 核心差异：${position.differentiation}
+- 信任来源：${position.trust_source}
+- 红线：${position.compliance_redline}
+`.trim();
+  }
   return `
 【运营主体：面霸君（本账号就是面霸君在运营，一切定位/身份/三问都以面霸君真实业务为准）】
 - 卖什么（品类）：职业/职场「方向决策」测评报告与咨询。不是性格测试、不是测评工具、不是简历/面试培训。
@@ -85,8 +126,8 @@ export const GROWTH_SYSTEM_PROMPT = `
 3. 主笔 V3：模板化内容写作者，把最终选题写成可发布、可比较、可复盘的小红书笔记。
 4. 复盘官 V3：方向裁判，读取真实数据，判断方向、入口、承接、人群和模板是否成立。
 
-默认账号方向：
-帮助中高层、合伙人、创业者、准创业者和成熟职场人，把经验、判断、案例和能力，从公司位置转成市场上可被信任、可被定价的资产。
+账号方向：
+每次以用户当前选择的「业务母定位」为最高约束；不得把另一业务定位的人群、产品或案例混进来。
 
 三类内容方向：
 A 目标客户痛点诊断：验证目标用户是否认同账号判断。
@@ -110,9 +151,11 @@ export function buildAccountPlanUserPrompt(input: {
   coreProblem?: string;
   trustSource?: string;
   reportPrices: ReportPrices;
+  businessTrack: GrowthBusinessTrack;
+  businessPosition: GrowthBusinessPosition;
 }) {
   const persona = input.persona ?? "expert";
-  const specFields = PERSONA_SPECIFIC_FIELDS[persona];
+  const specFields = personaSpecificFields(persona, input.businessTrack);
   const specJsonLines = specFields
     .map((f) => `      "${f.key}": "${f.label}（结合本视角具体写实，例如：${f.placeholder}）"`)
     .join(",\n");
@@ -126,7 +169,7 @@ export function buildAccountPlanUserPrompt(input: {
 `
       : "";
   const buyerCaseModeGuide =
-    persona === "buyer"
+    persona === "buyer" && input.businessTrack === "international-student-career"
       ? `
 【买家Offer案例模式】
 - persona_specific 只使用两个案例字段：case_mode 和 case_material。
@@ -135,21 +178,28 @@ export function buildAccountPlanUserPrompt(input: {
 - case_mode=真实案例但没有素材时，case_material 留空，等待用户补充，不得自行编造。
 `
       : "";
-  const mianbaUsage: Record<GrowthPersona, string> = {
+  const mianbaUsage: Record<GrowthPersona, string> = input.businessTrack === "international-student-career" ? {
+    merchant:
+      "本视角是留学生求职辅导业务的商家号：直接讲服务品类、交付流程、差异、案例证据和购买判断。",
+    buyer:
+      "本视角是业务运营的留学生家长号：表面是家长真实记录，只在 C 类转折帖里用「后来找专业的人带，做了求职方向梳理」自然带出老师。",
+    expert:
+      "本视角是留学生求职老师号：靠岗位判断、招聘节奏和辅导方法建立权威，最终自然承接诊断与辅导服务。",
+  } : {
     merchant:
       "本视角是面霸君「明着经营」的号：定位卡和品牌三问都要直接以面霸君的身份、产品、差异、信任状来回答。",
     buyer:
-      "本视角是面霸君运营的「素人真实号」：账号表面不提面霸君，只在 C 类留学生家长求职转折帖里用'后来找专业的人带，做了求职方向梳理'这种亲历方式软出场；转化桥要落到面霸君。",
+      "本视角是面霸君运营的「素人真实号」：账号表面不提面霸君，只在少数 C 类转折帖里用「后来找专业的人带，做了方向梳理」这种亲历方式软出场；转化桥要落到面霸君。",
     expert:
       "本视角是面霸君运营的「专家号」：靠面霸君的六步决策方法论和真实案例建立权威，方法论密度要高，最终承接到面霸君的报告/咨询。",
   };
   return `
 请以总经理 V3 身份，为这个账号生成账号定位卡和 30 天实验计划。
 
-${mianbaBusiness(input.reportPrices)}
+${mianbaBusiness(input.reportPrices, input.businessPosition)}
 【本视角怎么用面霸君业务】${mianbaUsage[persona]}
 
-${personaGuide(persona)}
+${personaGuide(persona, input.businessTrack)}
 ${brandTrinityGuide}
 ${buyerCaseModeGuide}
 账号名称：${input.accountName}
@@ -201,11 +251,14 @@ export function buildTopicPoolUserPrompt(input: {
   excludeTitles?: string[];
   context?: AccountContext;
   at?: Date;
+  businessTrack?: GrowthBusinessTrack;
 }) {
   const count = input.count ?? 15;
   const exclude = (input.excludeTitles ?? []).filter(Boolean);
   const buyerWeeklyFocus =
-    input.persona === "buyer" && isBuyerCWeeklyFocusActive(input.at)
+    input.persona === "buyer" &&
+    input.businessTrack === "international-student-career" &&
+    isBuyerCWeeklyFocusActive(input.at)
       ? `
 【${BUYER_C_WEEKLY_FOCUS.label}】
 - 本批至少生成 1 个方向 C、content_type=story 的选题，并设为 priority="S"，排在第一位。
@@ -218,7 +271,7 @@ export function buildTopicPoolUserPrompt(input: {
   return `
 请以选题官 V3 身份，围绕账号当前阶段生成候选题池。
 
-${input.persona ? personaGuide(input.persona) : ""}
+${input.persona ? personaGuide(input.persona, input.businessTrack) : ""}
 ${accountContextBlock(input.context)}
 当前第 ${input.week} 周。
 目标用户：${input.targetUser}
@@ -317,12 +370,13 @@ export function buildDraftUserPrompt(input: {
   learningGuidance?: string;
   excludeBodies?: string[];
   context?: AccountContext;
+  businessTrack?: GrowthBusinessTrack;
 }) {
   const exclude = (input.excludeBodies ?? []).filter(Boolean);
   return `
 请以主笔 V3 身份，把最终选题写成可直接发布的小红书发布包。
 
-${input.persona ? personaGuide(input.persona) : ""}
+${input.persona ? personaGuide(input.persona, input.businessTrack) : ""}
 ${accountContextBlock(input.context)}
 ${input.context?.privateDomain ? `业务承接背景（仅用于理解业务，不得照搬互动话术，不得引导评论/私信换资料）：${input.context.privateDomain}` : ""}
 目标用户：${input.targetUser}
@@ -349,7 +403,7 @@ ${exclude.length ? `严禁与以下已生成正文重复或近似（可换结构
 - 【禁止利益交换】不得用资料、匿名样例、报告、清单、模板、链接、福利、抽奖、诊断或体检作为互动奖励。像「需要职业方向体检的评论区扣1，我发你匿名交付样例」这种表达一律禁止。
 - 结尾优先给出一个读者当下就能完成的自查动作或判断标准。可以提出与正文直接相关的自然问题，但不能承诺根据评论发送任何东西。
 ${input.persona === "buyer" ? `\n${BUYER_STORY_SPEC}\n` : ""}
-${input.persona === "buyer" && input.direction === "C" ? `\n${BUYER_C_OFFER_STRATEGY_SPEC}\n` : ""}
+${input.persona === "buyer" && input.businessTrack === "international-student-career" && input.direction === "C" ? `\n${BUYER_C_OFFER_STRATEGY_SPEC}\n` : ""}
 输出 JSON：
 {
   "title": "最终标题",

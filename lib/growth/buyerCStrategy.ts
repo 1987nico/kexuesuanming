@@ -1,4 +1,5 @@
 import type { GrowthAccount, TopicCandidate } from "./types";
+import { isInternationalStudentTrack } from "./businessPosition";
 
 export const BUYER_C_WEEKLY_FOCUS = {
   startsAt: "2026-07-13T00:00:00+08:00",
@@ -19,7 +20,10 @@ export function buyerCaseMaterial(account: Pick<GrowthAccount, "persona_specific
   return account.persona_specific?.case_material?.trim() || "";
 }
 
-export function buyerCNeedsMaterial(account: Pick<GrowthAccount, "persona" | "persona_specific">) {
+export function buyerCNeedsMaterial(
+  account: Pick<GrowthAccount, "persona" | "persona_specific" | "business_track">,
+) {
+  if (!isInternationalStudentTrack(account)) return false;
   return buyerCaseMode(account) === "真实案例" && !buyerCaseMaterial(account);
 }
 
@@ -74,7 +78,11 @@ export function prioritizeBuyerCTopics(input: {
   at?: Date;
 }) {
   const limit = input.limit ?? Math.max(1, input.topics.length);
-  if (input.account.persona !== "buyer" || !isBuyerCWeeklyFocusActive(input.at)) {
+  if (
+    input.account.persona !== "buyer" ||
+    !isInternationalStudentTrack(input.account) ||
+    !isBuyerCWeeklyFocusActive(input.at)
+  ) {
     return input.topics.slice(0, limit);
   }
   const existing = input.topics.find((topic) => topic.direction === "C");

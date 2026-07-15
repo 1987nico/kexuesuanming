@@ -163,6 +163,7 @@ describe("generateDraftVariants", () => {
   it("情景演绎模式强制补齐正文和封面的公开标识", async () => {
     const fictionalAccount: GrowthAccount = {
       ...account,
+      business_track: "international-student-career",
       persona_specific: {
         case_mode: "情景演绎",
         case_material: "虚构能源公司的数据分析岗；老大拿到Offer；老二第一次参加校园招聘会。",
@@ -192,6 +193,7 @@ describe("generateDraftVariants", () => {
   it("真实案例模式没有案例素材时拒绝生成 buyer C 正文", async () => {
     const realAccount: GrowthAccount = {
       ...account,
+      business_track: "international-student-career",
       persona_specific: { case_mode: "真实案例", case_material: "" },
     };
     const realTopic: TopicCandidate = { ...topic, direction: "C", content_type: "story" };

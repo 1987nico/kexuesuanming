@@ -10,6 +10,8 @@ import {
 import type {
   ContentDraft,
   GrowthAccount,
+  GrowthBusinessPosition,
+  GrowthBusinessTrack,
   GrowthDirection,
   GrowthLearningBrief,
   GrowthPersona,
@@ -22,7 +24,7 @@ import type {
   TopicCandidate,
 } from "./types";
 import { countPublishChars, enforceDraftCompliance, normalizeTags } from "./validation";
-import { PERSONA_SPECIFIC_FIELDS, DEFAULT_BUSINESS_SETTINGS } from "./types";
+import { DEFAULT_BUSINESS_SETTINGS, personaSpecificFields } from "./types";
 import type { AccountContext, ReportPrices } from "./agents";
 import {
   BUYER_C_DISCLOSURE,
@@ -42,6 +44,11 @@ import {
   normalizeExperimentVariable,
   resolvePublishedAt,
 } from "./reviewLearning";
+import {
+  DEFAULT_BUSINESS_POSITIONS,
+  isInternationalStudentTrack,
+  resolveAccountBusinessTrack,
+} from "./businessPosition";
 
 const DEFAULT_TENANT_ID = "mianbajun";
 
@@ -95,10 +102,14 @@ function asText(value: unknown): string {
 }
 
 // 只保留当前视角合法的字段 key，用模型返回值填充，缺失或非法值留空
-function mergePersonaSpecific(persona: GrowthPersona, raw: unknown): Record<string, string> {
+function mergePersonaSpecific(
+  persona: GrowthPersona,
+  businessTrack: GrowthBusinessTrack,
+  raw: unknown,
+): Record<string, string> {
   const source = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
   return Object.fromEntries(
-    PERSONA_SPECIFIC_FIELDS[persona].map((field) => {
+    personaSpecificFields(persona, businessTrack).map((field) => {
       return [field.key, asText(source[field.key])];
     }),
   );
@@ -262,14 +273,41 @@ export async function generateAccountAndPlan(input: {
   regenerateAccountId?: string;
   createdAt?: string;
   reportPrices?: ReportPrices;
+  businessTrack?: GrowthBusinessTrack;
+  businessPosition?: GrowthBusinessPosition;
 }): Promise<{ account: GrowthAccount; plan: GrowthPlan; usage?: Record<string, unknown> }> {
   const tenantId = input.tenantId ?? DEFAULT_TENANT_ID;
   const persona: GrowthPersona = input.persona ?? "expert";
+  const businessTrack = input.businessTrack ?? "executive-career";
+  const businessPosition =
+    input.businessPosition ?? DEFAULT_BUSINESS_POSITIONS[businessTrack];
   const reportPrices: ReportPrices = input.reportPrices ?? {
     lite: DEFAULT_BUSINESS_SETTINGS.report_lite_price,
     deep: DEFAULT_BUSINESS_SETTINGS.report_deep_price,
   };
-  const fallback = pick(FALLBACK_ACCOUNT_VARIANTS[persona]);
+  const genericFallback = pick(FALLBACK_ACCOUNT_VARIANTS[persona]);
+  const profile = businessPosition.persona_profiles[persona];
+  const fallback: FallbackAccountFields =
+    businessTrack === "international-student-career"
+      ? {
+          target_user: businessPosition.target_user,
+          core_problem: businessPosition.core_problem,
+          account_value:
+            persona === "buyer"
+              ? "以留学生家长视角，真实记录孩子从迷茫、准备到求职结果的过程"
+              : persona === "expert"
+                ? "用岗位判断、招聘节奏和求职方法帮助留学生少走弯路"
+                : `用${businessPosition.main_offer}帮助家庭把求职准备做成可执行路径`,
+          one_liner:
+            persona === "buyer"
+              ? "陪孩子走海外秋招的家长记录"
+              : profile.label,
+          follow_reason:
+            persona === "buyer"
+              ? "持续看一个留学生家庭如何走过不同求职阶段"
+              : profile.description,
+        }
+      : genericFallback;
   const timestamp = now();
   let payload: any = null;
   let usage: Record<string, unknown> | undefined;
@@ -277,7 +315,13 @@ export async function generateAccountAndPlan(input: {
   try {
     const result = await llmJSON<any>({
       system: GROWTH_SYSTEM_PROMPT,
-      user: buildAccountPlanUserPrompt({ ...input, persona, reportPrices }),
+      user: buildAccountPlanUserPrompt({
+        ...input,
+        persona,
+        reportPrices,
+        businessTrack,
+        businessPosition,
+      }),
       maxTokens: 3000,
       temperature: 0.4,
     });
@@ -294,25 +338,44 @@ export async function generateAccountAndPlan(input: {
 
   const accountData = payload?.account ?? {};
   const accountId = input.regenerateAccountId || id();
-  const personaSpecific = mergePersonaSpecific(persona, accountData.persona_specific);
-  if (persona === "buyer" && !personaSpecific.case_mode) personaSpecific.case_mode = "情景演绎";
+  const personaSpecific = mergePersonaSpecific(
+    persona,
+    businessTrack,
+    accountData.persona_specific,
+  );
+  if (
+    persona === "buyer" &&
+    businessTrack === "international-student-career" &&
+    !personaSpecific.case_mode
+  ) {
+    personaSpecific.case_mode = "情景演绎";
+  }
   const defaultContentDirections =
-    persona === "buyer"
+    persona === "buyer" && businessTrack === "international-student-career"
       ? ["A 求助/示弱/情绪", "B 成长/顿悟/复盘", "C 留学生家长Offer现场与求职转折"]
+      : persona === "buyer"
+        ? ["A 求助/示弱/情绪", "B 成长/顿悟/复盘", "C 方向梳理转折/桥接"]
       : ["A 目标客户痛点诊断", "B 可收藏工具/清单", "C 创始人故事/过程记录"];
   const account: GrowthAccount = {
     id: accountId,
     tenant_id: tenantId,
     persona,
-    name: input.accountName,
+    business_track: businessTrack,
+    name: input.accountName || profile.account_name,
     target_user: accountData.target_user || input.targetUser || fallback.target_user,
     core_problem: accountData.core_problem || input.coreProblem || fallback.core_problem,
     account_value: accountData.account_value || fallback.account_value,
     trust_source:
       accountData.trust_source ||
       input.trustSource ||
-      "来自真实经营、客户和内容增长实践。",
-    not_doing: accountData.not_doing || "不做泛职场鸡汤，不承诺收益，不追无意义爆款。",
+      (businessTrack === "international-student-career"
+        ? businessPosition.trust_source
+        : "来自真实经营、客户和内容增长实践。"),
+    not_doing:
+      accountData.not_doing ||
+      (businessTrack === "international-student-career"
+        ? "不保Offer，不把个例包装成普遍结果，不泄露学生隐私。"
+        : "不做泛职场鸡汤，不承诺收益，不追无意义爆款。"),
     hypotheses:
       Array.isArray(accountData.hypotheses) && accountData.hypotheses.length
         ? accountData.hypotheses.slice(0, 5)
@@ -332,7 +395,8 @@ export async function generateAccountAndPlan(input: {
     avoid_expressions: Array.isArray(accountData.avoid_expressions)
       ? accountData.avoid_expressions.slice(0, 8)
       : ["逆袭", "暴富", "月入X万", "包成功"],
-    compliance_redline: asText(accountData.compliance_redline) || "不承诺收益、不玄学、客户匿名、不用泛焦虑换阅读。",
+    compliance_redline:
+      asText(accountData.compliance_redline) || businessPosition.compliance_redline,
     private_domain: asText(accountData.private_domain),
     persona_specific: personaSpecific,
     created_at: input.createdAt || timestamp,
@@ -372,6 +436,7 @@ export async function generateTopicPool(input: {
       user: buildTopicPoolUserPrompt({
         week,
         persona: input.account.persona,
+        businessTrack: resolveAccountBusinessTrack(input.account),
         targetUser: input.account.target_user,
         coreProblem: input.account.core_problem,
         recentSignals: input.learningBrief ? formatLearningBrief(input.learningBrief) : input.recentSignals,
@@ -439,6 +504,7 @@ export async function generateDraft(input: {
       system: GROWTH_SYSTEM_PROMPT,
       user: buildDraftUserPrompt({
         persona: input.account.persona,
+        businessTrack: resolveAccountBusinessTrack(input.account),
         context: accountContext(input.account),
         targetUser: topic.target_user,
         trustSource: input.account.trust_source,
@@ -464,7 +530,10 @@ export async function generateDraft(input: {
     console.warn("[growth] draft fallback:", (error as Error).message);
   }
 
-  const isBuyerC = input.account.persona === "buyer" && topic.direction === "C";
+  const isBuyerC =
+    input.account.persona === "buyer" &&
+    isInternationalStudentTrack(input.account) &&
+    topic.direction === "C";
   const caseMode = buyerCaseMode(input.account);
   const isFictionalCase = isBuyerC && caseMode === "情景演绎";
   const caseMaterial =
@@ -565,6 +634,7 @@ export async function generateTopicBatch(input: {
       user: buildTopicPoolUserPrompt({
         week,
         persona: input.account.persona,
+        businessTrack: resolveAccountBusinessTrack(input.account),
         targetUser: input.account.target_user,
         coreProblem: input.account.core_problem,
         recentSignals: input.learningBrief ? formatLearningBrief(input.learningBrief) : input.recentSignals,
@@ -697,6 +767,7 @@ async function generateSingleDraft(input: {
       system: GROWTH_SYSTEM_PROMPT,
       user: buildDraftUserPrompt({
         persona: input.account.persona,
+        businessTrack: resolveAccountBusinessTrack(input.account),
         targetUser: topic.target_user,
         trustSource: input.account.trust_source,
         direction: topic.direction,
@@ -726,7 +797,10 @@ async function generateSingleDraft(input: {
     console.warn("[growth] draft variant fallback:", (error as Error).message);
   }
 
-  const isBuyerC = input.account.persona === "buyer" && topic.direction === "C";
+  const isBuyerC =
+    input.account.persona === "buyer" &&
+    isInternationalStudentTrack(input.account) &&
+    topic.direction === "C";
   const caseMode = buyerCaseMode(input.account);
   const isFictionalCase = isBuyerC && caseMode === "情景演绎";
   const hashtags = normalizeTags(
@@ -1010,14 +1084,23 @@ function normalizeTopics(topics: any): TopicCandidate[] {
 }
 
 function fallbackTopics(account: GrowthAccount): TopicCandidate[] {
-  const base = [
-    ["A", "公司外你还有议价权吗？看5个信号", "diagnostic"],
-    ["A", "年薪高的人，最怕没有市场价格", "diagnostic"],
-    ["B", "中高层做内容，先写目标客户判断表", "tool"],
-    ["B", "离开公司前，先盘个人资产负债表", "tool"],
-    ["C", "做过合伙人，才知道谁能真正上桌", "story"],
-    ["C", "从公司位置到市场位置，我先改了这件事", "story"],
-  ] as const;
+  const base = isInternationalStudentTrack(account)
+    ? ([
+        ["A", "海归硕士海投50家没回音", "diagnostic"],
+        ["A", "秋招真不是从改简历开始", "diagnostic"],
+        ["B", "留学生秋招先画这张时间表", "tool"],
+        ["B", "专业能投哪些岗？先做岗位地图", "tool"],
+        ["C", "陪学生走完秋招，我改了这一步", "story"],
+        ["C", "拿到Offer前，方向先收窄了", "story"],
+      ] as const)
+    : ([
+        ["A", "公司外你还有议价权吗？看5个信号", "diagnostic"],
+        ["A", "年薪高的人，最怕没有市场价格", "diagnostic"],
+        ["B", "中高层做内容，先写目标客户判断表", "tool"],
+        ["B", "离开公司前，先盘个人资产负债表", "tool"],
+        ["C", "做过合伙人，才知道谁能真正上桌", "story"],
+        ["C", "从公司位置到市场位置，我先改了这件事", "story"],
+      ] as const);
 
   const topics: TopicCandidate[] = base.map(([direction, title, contentType], index) => ({
     id: id(),
@@ -1027,9 +1110,13 @@ function fallbackTopics(account: GrowthAccount): TopicCandidate[] {
     pain: account.core_problem,
     content_type: contentType,
     hook: title,
-    origin_force: "标题包含目标受众熟悉的具体角色、场景或资产词，不只用抽象概念做入口。",
-    conflict_judgement: "围绕公司内位置与市场外定价之间的落差，形成反预期冲突。",
-    follow_reason: "看完知道这个账号会持续拆解成熟职场人的市场化路径。",
+    origin_force: "标题包含目标受众熟悉的具体角色、场景或动作，不只用抽象概念做入口。",
+    conflict_judgement: isInternationalStudentTrack(account)
+      ? "围绕海外学历与实际求职结果、盲目海投与先定方向之间的落差形成冲突。"
+      : "围绕公司内位置与市场外定价之间的落差，形成反预期冲突。",
+    follow_reason: isInternationalStudentTrack(account)
+      ? "看完知道这个账号会持续拆解留学生求职方向、招聘节奏与真实过程。"
+      : "看完知道这个账号会持续拆解成熟职场人的市场化路径。",
     test_variable: index < 2 ? "目标客户表达" : index < 4 ? "工具收藏价值" : "信任锚点",
     expected_signal: "收藏、评论、主页访问或新增关注中至少出现一个正向信号。",
     repeatable_angle: "可延展为同方向系列内容。",
@@ -1044,7 +1131,7 @@ function fallbackTopics(account: GrowthAccount): TopicCandidate[] {
       repeatability: 8,
     },
   }));
-  if (account.persona !== "buyer") return topics;
+  if (account.persona !== "buyer" || !isInternationalStudentTrack(account)) return topics;
   const buyerC = buildBuyerCTopic(account, id());
   return [
     ...topics.filter((topic) => topic.direction !== "C"),

@@ -7,6 +7,7 @@ const account: GrowthAccount = {
   id: "account-1",
   tenant_id: "mianbajun",
   persona: "buyer",
+  business_track: "international-student-career",
   name: "留学生家长",
   target_user: "留学生家长",
   core_problem: "孩子第一次参加秋招",

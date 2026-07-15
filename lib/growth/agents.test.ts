@@ -1,11 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { buildAccountPlanUserPrompt, buildDraftUserPrompt, buildTopicPoolUserPrompt } from "./agents";
+import { DEFAULT_BUSINESS_POSITIONS } from "./businessPosition";
 
 describe("buyer C prompts", () => {
   it("defaults auto-generated buyer positioning to dramatization with only two case fields", () => {
     const prompt = buildAccountPlanUserPrompt({
       accountName: "留学生家长记录",
       persona: "buyer",
+      businessTrack: "international-student-career",
+      businessPosition: DEFAULT_BUSINESS_POSITIONS["international-student-career"],
       reportPrices: { lite: "199元", deep: "6999元" },
     });
     expect(prompt).toContain("case_mode 默认填写「情景演绎」");
@@ -17,6 +20,7 @@ describe("buyer C prompts", () => {
     const prompt = buildTopicPoolUserPrompt({
       week: 2,
       persona: "buyer",
+      businessTrack: "international-student-career",
       targetUser: "留学生家长",
       coreProblem: "孩子第一次参加秋招",
       at: new Date("2026-07-14T12:00:00+08:00"),
@@ -33,6 +37,7 @@ describe("buyer C prompts", () => {
     const prompt = buildTopicPoolUserPrompt({
       week: 3,
       persona: "buyer",
+      businessTrack: "international-student-career",
       targetUser: "留学生家长",
       coreProblem: "孩子第一次参加秋招",
       at: new Date("2026-07-20T00:00:00+08:00"),
@@ -43,6 +48,7 @@ describe("buyer C prompts", () => {
   it("applies the parent Offer strategy to every buyer C draft", () => {
     const prompt = buildDraftUserPrompt({
       persona: "buyer",
+      businessTrack: "international-student-career",
       targetUser: "留学生家长",
       trustSource: "家庭经历",
       direction: "C",
