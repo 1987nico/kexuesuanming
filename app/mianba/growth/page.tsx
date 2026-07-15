@@ -21,6 +21,10 @@ import {
   buyerCNeedsMaterial,
   isBuyerCWeeklyFocusActive,
 } from "@/lib/growth/buyerCStrategy";
+import {
+  buildBuyerCCoverOverlay,
+  type BuyerCCoverOverlay,
+} from "@/lib/growth/coverComposition";
 import { scanDraftCompliance } from "@/lib/growth/validation";
 
 interface WorkspaceState {
@@ -79,9 +83,123 @@ interface GeneratedCover {
   brief: {
     coverText: string;
     overlayGuidance: string;
+    overlay?: BuyerCCoverOverlay;
   };
   imageDataUrl?: string;
   imageError?: string;
+}
+
+function resolveCoverOverlay(
+  cover: GeneratedCover,
+  draft: ContentDraft,
+  account: GrowthAccount | null,
+) {
+  return (
+    cover.brief.overlay ||
+    buildBuyerCCoverOverlay({
+      title: draft.title,
+      coverText: draft.cover_text,
+      caseMode: account ? buyerCaseMode(account) : draft.case_mode,
+      caseMaterial: account ? buyerCaseMaterial(account) : "",
+      body: draft.body,
+    })
+  );
+}
+
+function fillRoundRect(
+  context: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  radius: number,
+  color: string,
+) {
+  context.beginPath();
+  context.roundRect(x, y, width, height, radius);
+  context.fillStyle = color;
+  context.fill();
+}
+
+function drawBuyerCCoverOverlay(
+  context: CanvasRenderingContext2D,
+  overlay: BuyerCCoverOverlay,
+) {
+  context.textBaseline = "middle";
+
+  context.save();
+  context.shadowColor = "rgba(0,0,0,0.28)";
+  context.shadowBlur = 18;
+  fillRoundRect(context, 132, 138, 760, 86, 8, overlay.accentColor);
+  context.restore();
+  context.fillStyle = "#FFFFFF";
+  context.font = "800 34px sans-serif";
+  context.textAlign = "center";
+  context.fillText(overlay.venueBanner, 512, 181, 700);
+
+  context.save();
+  context.translate(92, 400);
+  context.rotate(-0.065);
+  context.shadowColor = "rgba(0,0,0,0.34)";
+  context.shadowBlur = 30;
+  fillRoundRect(context, 0, 0, 710, 405, 18, "#FFFFFF");
+  context.shadowBlur = 0;
+  fillRoundRect(context, 0, 0, 710, 16, 8, overlay.accentColor);
+  context.textAlign = "left";
+  context.fillStyle = "#1F2937";
+  context.font = "800 31px sans-serif";
+  context.fillText(overlay.emailSender, 42, 65, 620);
+  context.fillStyle = "#6B7280";
+  context.font = "500 22px sans-serif";
+  context.fillText("recruiting@••••••.com", 42, 105);
+  context.fillStyle = overlay.accentColor;
+  context.font = "800 34px sans-serif";
+  context.fillText(overlay.emailSubject, 42, 164, 620);
+  context.strokeStyle = "#E5E7EB";
+  context.lineWidth = 2;
+  context.beginPath();
+  context.moveTo(42, 198);
+  context.lineTo(668, 198);
+  context.stroke();
+  context.fillStyle = "#374151";
+  context.font = "600 24px sans-serif";
+  overlay.emailRows.slice(0, 4).forEach((row, index) => {
+    context.fillText(row, 42, 238 + index * 40, 610);
+  });
+  fillRoundRect(context, 510, 338, 155, 42, 8, "#F3F4F6");
+  context.fillStyle = "#6B7280";
+  context.font = "700 19px sans-serif";
+  context.textAlign = "center";
+  context.fillText("关键内容已隐去", 587, 359, 145);
+  context.restore();
+
+  const gradient = context.createLinearGradient(0, 850, 0, 1536);
+  gradient.addColorStop(0, "rgba(10, 12, 16, 0)");
+  gradient.addColorStop(1, "rgba(10, 12, 16, 0.66)");
+  context.fillStyle = gradient;
+  context.fillRect(0, 780, 1024, 756);
+
+  context.textAlign = "left";
+  context.textBaseline = "top";
+  context.font = "900 72px sans-serif";
+  overlay.headlineLines.slice(0, 2).forEach((line, index) => {
+    const y = 1160 + index * 104;
+    const width = Math.min(880, context.measureText(line).width);
+    fillRoundRect(context, 62, y + 36, width + 42, 54, 10, "#f7ef48");
+    context.lineJoin = "round";
+    context.lineWidth = 14;
+    context.strokeStyle = "#FFFFFF";
+    context.strokeText(line, 78, y, 850);
+    context.fillStyle = "#f04a23";
+    context.fillText(line, 78, y, 850);
+  });
+
+  fillRoundRect(context, 58, 54, 400, 58, 10, "rgba(20,20,20,0.76)");
+  context.fillStyle = "#FFFFFF";
+  context.font = "700 25px sans-serif";
+  context.textAlign = "center";
+  context.textBaseline = "middle";
+  context.fillText(overlay.disclosure, 258, 83, 370);
 }
 
 interface ImportPublishedFormState {
@@ -585,37 +703,7 @@ export default function XiaohongshuNotesPage() {
       const context = canvas.getContext("2d");
       if (!context) throw new Error("浏览器无法合成封面");
       context.drawImage(image, 0, 0, canvas.width, canvas.height);
-      const gradient = context.createLinearGradient(0, 720, 0, 1536);
-      gradient.addColorStop(0, "rgba(9, 15, 20, 0)");
-      gradient.addColorStop(1, "rgba(9, 15, 20, 0.86)");
-      context.fillStyle = gradient;
-      context.fillRect(0, 650, 1024, 886);
-
-      if (draft.case_mode === "情景演绎" || buyerCaseMode(state.account!) === "情景演绎") {
-        context.fillStyle = "#F5C451";
-        context.fillRect(64, 64, 330, 74);
-        context.fillStyle = "#17130B";
-        context.font = "700 32px sans-serif";
-        context.fillText("情景演绎 / 示意图", 88, 113);
-      }
-
-      context.fillStyle = "#FFFFFF";
-      context.font = "800 72px sans-serif";
-      context.textBaseline = "top";
-      const text = (draft.cover_text || draft.title).trim();
-      const lines: string[] = [];
-      let line = "";
-      for (const char of text) {
-        const candidate = line + char;
-        if (context.measureText(candidate).width > 880 && line) {
-          lines.push(line);
-          line = char;
-        } else {
-          line = candidate;
-        }
-      }
-      if (line) lines.push(line);
-      lines.slice(0, 3).forEach((item, index) => context.fillText(item, 72, 1120 + index * 90));
+      drawBuyerCCoverOverlay(context, resolveCoverOverlay(cover, draft, state.account));
 
       const link = document.createElement("a");
       link.href = canvas.toDataURL("image/png");
@@ -1068,7 +1156,10 @@ export default function XiaohongshuNotesPage() {
                   <div>
                     <div className="text-sm font-semibold text-ink-900">买家 C 专属 AI 封面</div>
                     <div className="mt-1 text-xs leading-5 text-ink-500">
-                      仅此方向开放。一次生成「招聘现场版」和「结果对照版」，确认后仍由你手工发布。
+                      仅此方向开放。系统生成野生招聘现场底图，再稳定叠加企业招牌、脱敏Offer邮件卡片和橙红描边黄底大字。
+                    </div>
+                    <div className="mt-1 text-xs leading-5 text-ink-400">
+                      真实案例会读取「案例素材」里的中国石油、中国石化、阿里巴巴、腾讯等企业名；情景演绎保留求职情景标识。
                     </div>
                   </div>
                   <div className="flex flex-wrap gap-2">
@@ -1101,24 +1192,7 @@ export default function XiaohongshuNotesPage() {
                       <div key={cover.variant} className="rounded-2xl border border-ink-100 p-3">
                         <div className="mb-2 text-xs font-semibold text-gold-700">{cover.variant}</div>
                         {cover.imageDataUrl ? (
-                          <div className="relative aspect-[2/3] overflow-hidden rounded-xl bg-ink-100">
-                            <NextImage
-                              src={cover.imageDataUrl}
-                              alt={`${chosenDraft.title}-${cover.variant}`}
-                              fill
-                              unoptimized
-                              className="object-cover"
-                            />
-                            <div className="absolute inset-0 bg-gradient-to-b from-transparent via-transparent to-black/80" />
-                            {(chosenDraft.case_mode === "情景演绎" || buyerCaseMode(account!) === "情景演绎") && (
-                              <div className="absolute left-3 top-3 rounded bg-amber-300 px-2 py-1 text-[10px] font-bold text-ink-900">
-                                情景演绎 / 示意图
-                              </div>
-                            )}
-                            <div className="absolute inset-x-4 bottom-5 whitespace-pre-line text-2xl font-extrabold leading-tight text-white drop-shadow md:text-3xl">
-                              {chosenDraft.cover_text || chosenDraft.title}
-                            </div>
-                          </div>
+                          <BuyerCCoverPreview cover={cover} draft={chosenDraft} account={account} />
                         ) : (
                           <div className="flex aspect-[2/3] items-center justify-center rounded-xl bg-ink-50 p-4 text-center text-xs leading-5 text-ink-500">
                             {cover.imageError || "当前图片服务未配置，可先使用封面文案与画面建议。"}
@@ -1627,6 +1701,79 @@ function ComplianceStatus({ draft }: { draft: ContentDraft }) {
       {compliance.issues.slice(0, 2).map((issue) => (
         <div key={issue}>· {issue}</div>
       ))}
+    </div>
+  );
+}
+
+function BuyerCCoverPreview({
+  cover,
+  draft,
+  account,
+}: {
+  cover: GeneratedCover;
+  draft: ContentDraft;
+  account: GrowthAccount | null;
+}) {
+  const overlay = resolveCoverOverlay(cover, draft, account);
+  return (
+    <div className="relative aspect-[2/3] overflow-hidden rounded-xl bg-ink-100">
+      <NextImage
+        src={cover.imageDataUrl!}
+        alt={`${draft.title}-${cover.variant}`}
+        fill
+        unoptimized
+        className="object-cover"
+      />
+
+      <div
+        className="absolute left-[13%] right-[13%] top-[9%] rounded-sm px-2 py-1.5 text-center text-[9px] font-extrabold tracking-wide text-white shadow-lg md:text-xs"
+        style={{ backgroundColor: overlay.accentColor }}
+      >
+        {overlay.venueBanner}
+      </div>
+      <div className="absolute right-[6%] top-[17%] max-w-[44%] rounded-sm bg-white/90 px-2 py-1 text-right text-[8px] font-black leading-tight shadow md:text-[10px]" style={{ color: overlay.accentColor }}>
+        {overlay.companyLine}
+      </div>
+
+      <div className="absolute left-[7%] top-[27%] w-[72%] -rotate-[4deg] overflow-hidden rounded-md bg-white shadow-2xl">
+        <div className="h-1.5" style={{ backgroundColor: overlay.accentColor }} />
+        <div className="p-2.5 md:p-3">
+          <div className="text-[9px] font-extrabold text-slate-800 md:text-xs">{overlay.emailSender}</div>
+          <div className="text-[7px] text-slate-400 md:text-[9px]">recruiting@••••••.com</div>
+          <div className="mt-1.5 border-b border-slate-200 pb-1.5 text-[10px] font-black md:text-sm" style={{ color: overlay.accentColor }}>
+            {overlay.emailSubject}
+          </div>
+          <div className="mt-1.5 space-y-0.5 text-[7px] leading-tight text-slate-600 md:text-[9px]">
+            {overlay.emailRows.map((row) => <div key={row}>{row}</div>)}
+          </div>
+          <div className="mt-1.5 inline-flex rounded bg-slate-100 px-1.5 py-0.5 text-[6px] font-bold text-slate-500 md:text-[8px]">
+            关键内容已隐去
+          </div>
+        </div>
+      </div>
+
+      <div className="absolute inset-0 bg-gradient-to-b from-transparent via-transparent to-black/65" />
+      <div className="absolute left-3 top-3 rounded bg-black/75 px-2 py-1 text-[8px] font-bold text-white md:text-[10px]">
+        {overlay.disclosure}
+      </div>
+      <div className="absolute inset-x-[6%] bottom-[7%] space-y-1.5">
+        {overlay.headlineLines.map((line) => (
+          <div key={line} className="w-fit max-w-full">
+            <span
+              className="box-decoration-clone px-1 text-2xl font-black leading-tight md:text-3xl"
+              style={{
+                color: "#f04a23",
+                background: "linear-gradient(to bottom, transparent 0 55%, #fde047 55% 100%)",
+                WebkitTextStroke: "2px white",
+                paintOrder: "stroke fill",
+                textShadow: "0 2px 3px rgba(0,0,0,0.55)",
+              }}
+            >
+              {line}
+            </span>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

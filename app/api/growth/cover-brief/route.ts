@@ -8,6 +8,7 @@ export const dynamic = "force-dynamic";
 
 const bodySchema = z.object({
   title: z.string().trim().min(1).max(100),
+  body: z.string().trim().max(4000).optional(),
   coverText: z.string().trim().max(40).optional(),
   targetUser: z.string().trim().max(500).optional(),
   contentType: z.enum(["diagnostic", "tool", "story"]).optional(),

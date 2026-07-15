@@ -1,5 +1,8 @@
+import { buildBuyerCCoverOverlay, type BuyerCCoverOverlay } from "./coverComposition";
+
 export interface CoverBriefInput {
   title: string;
+  body?: string;
   coverText?: string;
   targetUser?: string;
   contentType?: "diagnostic" | "tool" | "story";
@@ -17,6 +20,7 @@ export interface CoverBrief {
   negativePrompt: string;
   imagePrompt: string;
   overlayGuidance: string;
+  overlay?: BuyerCCoverOverlay;
 }
 
 function sceneForType(contentType?: CoverBriefInput["contentType"]) {
@@ -41,12 +45,13 @@ export function buildCoverBrief(input: CoverBriefInput): CoverBrief {
   if (input.buyerC) {
     const fictional = input.caseMode !== "真实案例";
     const material = input.caseMaterial?.trim() || "留学生家庭的两段求职经历";
+    const overlay = buildBuyerCCoverOverlay(input);
     const scene =
       input.styleHint === "结果对照版"
-        ? "同一画面做左右阶段对照：左侧是成年留学生收到求职结果后与家长在家中看手机，右侧是另一名成年留学生拿材料走向校园招聘入口；两侧人物和光线连贯，像一个家庭两个阶段的纪实抓拍"
-        : "留学生家长站在校园招聘入口外，从家长视角看到一名成年留学生拿着文件夹走向会场，背景有人群、展架和无品牌招聘横幅，有真实现场感";
+        ? "真实校园招聘会入口的手机抓拍：一名成年留学生和家长站在入口侧面低头看手机，另一名成年留学生背着双肩包拿文件夹走向会场；背景有教学楼或企业园区建筑、入口台阶、路人、招聘帐篷、立式展架和一条长横幅，前景留出放置邮件卡片的空间"
+        : "留学生家长站在校园招聘会入口外，从家长肩后视角拍到一名成年留学生背着双肩包、拿文件夹走上台阶进入会场；背景有教学楼或企业园区建筑、门厅、路人、招聘帐篷、立式展架和一条长横幅，前景左侧留出放置邮件卡片的空间";
     const visualStyle =
-      "中国留学生家庭视角的手机纪实摄影，自然光，轻微生活化构图，不过度精修，人物为成年人；上方和下方保留足够干净空间供前端叠加中文标题与状态角标";
+      "中国留学生家庭视角的手机纪实摄影，自然日光，轻微倾斜和抓拍感，曝光不完全均匀，边缘可有被截断的路人，人物为成年人；像真实家长在现场随手拍，不要影棚光、不要商业广告片质感、不要过度精修；建筑招牌区、入口横幅区、前景邮件卡片区和底部大标题区都要有清晰空间层次";
     const negativePrompt = fictional
       ? "不要任何文字、汉字、字母、数字、标题、Logo或水印；不要真实企业或学校标识；不要Offer、合同、邮件、印章、编号、邮箱或证件；不要儿童形象；不要机构宣传照；不要卡通；不要畸形手部"
       : "不要任何文字、汉字、字母、数字、标题、Logo或水印；不要补造案例素材中没有的企业、岗位或结果；不要伪造Offer、合同、邮件、印章、编号、邮箱或证件；不要儿童形象；不要畸形手部";
@@ -61,8 +66,9 @@ export function buildCoverBrief(input: CoverBriefInput): CoverBrief {
           : "只呈现通用公开招聘现场，不让生成图承担结果真实性证明。"
       } 画面本身不要生成任何文字、Logo或文件细节，9:16竖版。`,
       overlayGuidance: fictional
-        ? "前端叠加两行主标题，并在左上角固定叠加“情景演绎 / 示意图”角标。"
-        : "前端叠加两行主标题；生成图只负责现场氛围，真实企业或结果细节由用户自己的公开素材承接。",
+        ? `系统会稳定叠加“${overlay.companyLine}”现场招牌、脱敏Offer邮件卡片、橙红描边黄底两行标题，并保留“情景演绎 / 示意图”。`
+        : `系统会从真实案例素材读取企业名，叠加“${overlay.companyLine}”现场招牌、脱敏Offer邮件卡片与橙红描边黄底两行标题；底图继续标注AI场景合成。`,
+      overlay,
     };
   }
 

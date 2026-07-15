@@ -51,6 +51,7 @@ export async function POST(req: Request) {
     const baseCoverText = parsed.data.coverText || parsed.data.title;
     const brief = buildCoverBrief({
       title: parsed.data.title,
+      body: parsed.data.body,
       coverText: `${baseCoverText}${variant.coverSuffix}`.slice(0, 18),
       targetUser: parsed.data.targetUser,
       contentType: parsed.data.contentType,
