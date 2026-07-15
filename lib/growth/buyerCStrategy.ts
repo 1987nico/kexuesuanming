@@ -8,12 +8,12 @@ export const BUYER_C_WEEKLY_FOCUS = {
 } as const;
 
 export const BUYER_C_DISCLOSURE = "【情景演绎｜根据常见留学生求职经历改编】";
+export const PARENT_RELAY_STRUCTURE_NAME = "家长双线接力体";
+export const PARENT_RELAY_IMAGE_LABEL = "家长双线接力体图片";
 
 export function buyerCaseMode(account: Pick<GrowthAccount, "persona" | "persona_specific">) {
-  if (account.persona !== "buyer") return "真实案例" as const;
-  return account.persona_specific?.case_mode?.trim() === "真实案例"
-    ? ("真实案例" as const)
-    : ("情景演绎" as const);
+  void account;
+  return "情景演绎" as const;
 }
 
 export function buyerCaseMaterial(account: Pick<GrowthAccount, "persona_specific">) {
@@ -23,8 +23,8 @@ export function buyerCaseMaterial(account: Pick<GrowthAccount, "persona_specific
 export function buyerCNeedsMaterial(
   account: Pick<GrowthAccount, "persona" | "persona_specific" | "business_track">,
 ) {
-  if (!isInternationalStudentTrack(account)) return false;
-  return buyerCaseMode(account) === "真实案例" && !buyerCaseMaterial(account);
+  void account;
+  return false;
 }
 
 export function isBuyerCWeeklyFocusActive(at = new Date()) {
@@ -36,7 +36,6 @@ export function isBuyerCWeeklyFocusActive(at = new Date()) {
 }
 
 export function buildBuyerCTopic(account: GrowthAccount, topicId: string): TopicCandidate {
-  const fictional = buyerCaseMode(account) === "情景演绎";
   return {
     id: topicId,
     direction: "C",
@@ -54,11 +53,7 @@ export function buildBuyerCTopic(account: GrowthAccount, topicId: string): Topic
     broad_traffic_risk: 3,
     priority: "S",
     weekly_action: "retest",
-    evidence: fictional
-      ? `${BUYER_C_WEEKLY_FOCUS.label}；当前使用情景演绎，正文和封面必须保留公开标识。`
-      : buyerCNeedsMaterial(account)
-        ? `${BUYER_C_WEEKLY_FOCUS.label}；生成正文前请先在定位卡补充真实案例素材。`
-        : `${BUYER_C_WEEKLY_FOCUS.label}；使用定位卡中的真实案例素材。`,
+    evidence: `${BUYER_C_WEEKLY_FOCUS.label}；使用有名有姓的虚构学校、企业、会场和数字完成情景演绎，正文与封面保留公开标识。`,
     scores: {
       positioning: 9,
       pain_clarity: 8,

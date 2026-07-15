@@ -51,4 +51,21 @@ describe("growth cover brief", () => {
     expect(brief.overlayGuidance).toContain("情景演绎 / 示意图");
     expect(brief.negativePrompt).toContain("不要真实企业或学校标识");
   });
+
+  it("routes parent relay articles through the dedicated image prompt and label", () => {
+    const brief = buildCoverBrief({
+      title: "一转眼，轮到老二进终面了",
+      body: "在上海国际青年人才中心（虚构），老二拿着A18号胸牌参加锦岳消费科技（虚构）终面。老大收到澄海数字科技（虚构）杭州用户策略岗Offer，年薪34.2万元。",
+      buyerC: true,
+      caseMode: "情景演绎",
+      structureName: "家长双线接力体",
+      styleHint: "招聘现场版",
+    });
+
+    expect(brief.imageLabel).toBe("家长双线接力体图片");
+    expect(brief.imagePrompt).toContain("家长双线接力体");
+    expect(brief.overlayGuidance).toContain("老二招聘现场＋老大Offer邮件");
+    expect(brief.overlay?.candidateNumber).toBe("A18");
+    expect(brief.overlay?.headlineLines).toEqual(["老大已拿34.2万Offer", "老二刚进终面"]);
+  });
 });

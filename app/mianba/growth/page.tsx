@@ -30,8 +30,9 @@ import {
 import {
   buyerCaseMaterial,
   buyerCaseMode,
-  buyerCNeedsMaterial,
   isBuyerCWeeklyFocusActive,
+  PARENT_RELAY_IMAGE_LABEL,
+  PARENT_RELAY_STRUCTURE_NAME,
 } from "@/lib/growth/buyerCStrategy";
 import {
   buildBuyerCCoverOverlay,
@@ -107,6 +108,7 @@ interface GeneratedCover {
     coverText: string;
     overlayGuidance: string;
     overlay?: BuyerCCoverOverlay;
+    imageLabel?: string;
   };
   imageDataUrl?: string;
   imageError?: string;
@@ -125,6 +127,7 @@ function resolveCoverOverlay(
       caseMode: account ? buyerCaseMode(account) : draft.case_mode,
       caseMaterial: account ? buyerCaseMaterial(account) : "",
       body: draft.body,
+      structureName: draft.structure_name,
     })
   );
 }
@@ -148,6 +151,7 @@ function drawBuyerCCoverOverlay(
   context: CanvasRenderingContext2D,
   overlay: BuyerCCoverOverlay,
 ) {
+  const isParentRelay = Boolean(overlay.imageLabel);
   context.textBaseline = "middle";
 
   context.save();
@@ -160,40 +164,66 @@ function drawBuyerCCoverOverlay(
   context.textAlign = "center";
   context.fillText(overlay.venueBanner, 512, 181, 700);
 
+  if (isParentRelay && overlay.venueName) {
+    fillRoundRect(context, 58, 254, 610, 66, 10, "rgba(255,255,255,0.88)");
+    context.fillStyle = "#20242A";
+    context.font = "900 31px sans-serif";
+    context.textAlign = "left";
+    context.fillText(overlay.venueName, 82, 287, 560);
+  }
+
+  if (isParentRelay && overlay.candidateNumber) {
+    fillRoundRect(context, 770, 360, 210, 326, 12, "#0B52C5");
+    context.fillStyle = "#DCE8FF";
+    context.font = "700 24px sans-serif";
+    context.textAlign = "center";
+    context.fillText("当前叫号", 875, 408, 170);
+    context.fillStyle = "#FFFFFF";
+    context.font = "900 72px sans-serif";
+    context.fillText(overlay.candidateNumber, 875, 492, 170);
+    context.font = "700 22px sans-serif";
+    context.fillText("请到", 875, 572, 170);
+    context.font = "800 28px sans-serif";
+    context.fillText(overlay.queueRoom || "终面会场", 875, 624, 170);
+  }
+
   context.save();
-  context.translate(92, 400);
+  const emailX = isParentRelay ? 50 : 92;
+  const emailY = isParentRelay ? 500 : 400;
+  const emailWidth = isParentRelay ? 620 : 710;
+  context.translate(emailX, emailY);
   context.rotate(-0.065);
   context.shadowColor = "rgba(0,0,0,0.34)";
   context.shadowBlur = 30;
-  fillRoundRect(context, 0, 0, 710, 405, 18, "#FFFFFF");
+  fillRoundRect(context, 0, 0, emailWidth, 405, 18, "#FFFFFF");
   context.shadowBlur = 0;
-  fillRoundRect(context, 0, 0, 710, 16, 8, overlay.accentColor);
+  fillRoundRect(context, 0, 0, emailWidth, 16, 8, overlay.accentColor);
   context.textAlign = "left";
   context.fillStyle = "#1F2937";
   context.font = "800 31px sans-serif";
-  context.fillText(overlay.emailSender, 42, 65, 620);
+  context.fillText(overlay.emailSender, 42, 65, emailWidth - 90);
   context.fillStyle = "#6B7280";
   context.font = "500 22px sans-serif";
   context.fillText("recruiting@••••••.com", 42, 105);
   context.fillStyle = overlay.accentColor;
   context.font = "800 34px sans-serif";
-  context.fillText(overlay.emailSubject, 42, 164, 620);
+  context.fillText(overlay.emailSubject, 42, 164, emailWidth - 90);
   context.strokeStyle = "#E5E7EB";
   context.lineWidth = 2;
   context.beginPath();
   context.moveTo(42, 198);
-  context.lineTo(668, 198);
+  context.lineTo(emailWidth - 42, 198);
   context.stroke();
   context.fillStyle = "#374151";
   context.font = "600 24px sans-serif";
   overlay.emailRows.slice(0, 4).forEach((row, index) => {
-    context.fillText(row, 42, 238 + index * 40, 610);
+    context.fillText(row, 42, 238 + index * 40, emailWidth - 100);
   });
-  fillRoundRect(context, 510, 338, 155, 42, 8, "#F3F4F6");
+  fillRoundRect(context, emailWidth - 200, 338, 155, 42, 8, "#F3F4F6");
   context.fillStyle = "#6B7280";
   context.font = "700 19px sans-serif";
   context.textAlign = "center";
-  context.fillText("关键内容已隐去", 587, 359, 145);
+  context.fillText("关键内容已隐去", emailWidth - 122, 359, 145);
   context.restore();
 
   const gradient = context.createLinearGradient(0, 850, 0, 1536);
@@ -439,8 +469,7 @@ function toAccountForm(account: GrowthAccount): AccountForm {
     account.persona,
     resolveAccountBusinessTrack(account),
   )) {
-    personaSpecific[field.key] =
-      field.key === "case_mode" ? buyerCaseMode(account) : account.persona_specific?.[field.key] ?? "";
+    personaSpecific[field.key] = account.persona_specific?.[field.key] ?? "";
   }
   return {
     name: account.name,
@@ -741,6 +770,7 @@ export default function XiaohongshuNotesPage() {
       !isInternationalStudentTrack(state.account) ||
       state.account.persona !== "buyer" ||
       draft.direction !== "C"
+      && draft.structure_name !== PARENT_RELAY_STRUCTURE_NAME
     ) {
       return;
     }
@@ -758,6 +788,7 @@ export default function XiaohongshuNotesPage() {
           buyerC: true,
           caseMode: buyerCaseMode(state.account!),
           caseMaterial: buyerCaseMaterial(state.account!),
+          structureName: draft.structure_name,
           count: 2,
           withImage: true,
         }),
@@ -1149,33 +1180,18 @@ export default function XiaohongshuNotesPage() {
             <EditField label="要避免的表达（顿号/逗号分隔）" value={accountForm.avoid_expressions} onChange={(v) => setAccountForm({ ...accountForm, avoid_expressions: v })} />
 
             <div className="pt-2 text-xs font-semibold text-gold-700">{GROWTH_PERSONA_LABELS[persona]}视角专属</div>
+            {persona === "buyer" && businessTrack === "international-student-career" && (
+              <div className="rounded-xl border border-gold-200 bg-gold-50 px-3 py-2 text-xs leading-5 text-gold-900">
+                仅使用情景演绎。系统会生成有名有姓的虚构学校、企业、招聘会、地点和数字，并自动保留公开标识；真实企业只作为求职目标或行业参照，不虚构其Offer结果。
+              </div>
+            )}
             {personaSpecificFields(persona, businessTrack).map((field) =>
-              field.key === "case_mode" ? (
-                <div key={field.key}>
-                  <label className="mb-1 block text-xs font-medium text-ink-500">{field.label}</label>
-                  <select
-                    value={accountForm.persona_specific[field.key] ?? ""}
-                    onChange={(event) =>
-                      setAccountForm({
-                        ...accountForm,
-                        persona_specific: {
-                          ...accountForm.persona_specific,
-                          [field.key]: event.target.value,
-                        },
-                      })
-                    }
-                    className="w-full rounded-xl border border-ink-100 bg-white px-3 py-2 text-sm"
-                  >
-                    <option value="">请选择案例模式</option>
-                    <option value="情景演绎">情景演绎（允许虚构，自动公开标注）</option>
-                    <option value="真实案例">真实案例（正文只使用下方素材）</option>
-                  </select>
-                </div>
-              ) : field.key === "case_material" ? (
+              field.key === "case_material" ? (
                 <EditArea
                   key={field.key}
                   label={field.label}
                   value={accountForm.persona_specific[field.key] ?? ""}
+                  placeholder={field.placeholder}
                   onChange={(v) =>
                     setAccountForm({
                       ...accountForm,
@@ -1274,10 +1290,6 @@ export default function XiaohongshuNotesPage() {
                 businessTrack === "international-student-career" &&
                 persona === "buyer" &&
                 topic.direction === "C";
-              const needsCaseMaterial = Boolean(isBuyerOfferFocus && account && buyerCNeedsMaterial(account));
-              const isFictionalCase = Boolean(
-                isBuyerOfferFocus && account && buyerCaseMode(account) === "情景演绎",
-              );
               const isWeeklyFocus = isBuyerOfferFocus && isBuyerCWeeklyFocusActive() && topic.priority === "S";
               return (
                 <div
@@ -1289,9 +1301,7 @@ export default function XiaohongshuNotesPage() {
                 >
                   {isWeeklyFocus && (
                     <div className="mb-2 inline-flex rounded-full bg-gold-100 px-3 py-1 text-xs font-semibold text-gold-800">
-                      {isFictionalCase
-                        ? "本周高优 · 留学生家长情景演绎"
-                        : "本周高优 · 留学生家长真实Offer现场"}
+                      本周高优 · 留学生家长情景演绎
                     </div>
                   )}
                   <div className="mb-2 flex items-center gap-2 text-xs text-ink-500">
@@ -1305,19 +1315,14 @@ export default function XiaohongshuNotesPage() {
                   <div className="font-medium leading-6">{topic.title}</div>
                   <p className="mt-1 text-xs leading-5 text-ink-500">验证变量：{topic.test_variable}</p>
                   {topic.evidence && <p className="mt-1 text-xs leading-5 text-ink-500">生成依据：{topic.evidence}</p>}
-                  {isFictionalCase && (
+                  {isBuyerOfferFocus && (
                     <p className="mt-2 rounded-xl bg-sky-50 px-3 py-2 text-xs leading-5 text-sky-800">
-                      当前为情景演绎：可虚构公司、Offer和招聘现场；正文首行与封面会自动添加公开标识。
-                    </p>
-                  )}
-                  {needsCaseMaterial && (
-                    <p className="mt-2 rounded-xl bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">
-                      当前选择真实案例，请先在定位卡填写「案例素材」；正文只使用你填写的内容。
+                      情景演绎会自动补齐具体学校、企业、岗位、会场、城市、日期和数字，正文与封面保留公开标识。
                     </p>
                   )}
                   <div className="mt-3 flex flex-wrap gap-2">
-                    <button className="btn-primary" disabled={!!busy || needsCaseMaterial} onClick={() => generateVariants(topic)}>
-                      {busy === `生成正文:${topic.id}` ? "生成中..." : needsCaseMaterial ? "补充案例素材后再写" : "用这个选题写正文"}
+                    <button className="btn-primary" disabled={!!busy} onClick={() => generateVariants(topic)}>
+                      {busy === `生成正文:${topic.id}` ? "生成中..." : "用这个选题写正文"}
                     </button>
                     <CopyButton text={topic.title} label="复制标题" onCopied={showCopyMessage} onCopyFailed={showCopyError} />
                   </div>
@@ -1337,6 +1342,11 @@ export default function XiaohongshuNotesPage() {
                 <div className="mb-2 text-xs text-gold-700">
                   方案 {index + 1} · {index % 2 === 0 ? "精简版" : "深度版"}（{draft.word_count.total} 字）
                 </div>
+                {draft.structure_name && (
+                  <div className="mb-3 inline-flex rounded-full bg-sky-100 px-3 py-1 text-xs font-semibold text-sky-800">
+                    指定结构 · {draft.structure_name}
+                  </div>
+                )}
                 <div className="font-medium leading-6">{draft.title}</div>
                 <pre className="mt-3 max-h-64 overflow-auto whitespace-pre-wrap rounded-xl bg-ink-50 p-3 text-xs leading-6 text-ink-700">{draft.body}</pre>
                 <div className="mt-2 text-xs text-ink-500">字数：{draft.word_count.total} / {draft.word_count.within_limit ? "≤1000 通过" : "超限"}</div>
@@ -1366,6 +1376,11 @@ export default function XiaohongshuNotesPage() {
         {chosenDraft && variants.length === 0 && (
           <div className="rounded-2xl border border-gold-300 bg-gold-50/40 p-4">
             <div className="mb-2 text-xs text-gold-700">已选定正文（状态：{DRAFT_STATUS_LABELS[chosenDraft.status] ?? chosenDraft.status}）</div>
+            {chosenDraft.structure_name && (
+              <div className="mb-3 inline-flex rounded-full bg-sky-100 px-3 py-1 text-xs font-semibold text-sky-800">
+                指定结构 · {chosenDraft.structure_name}
+              </div>
+            )}
             <div className="font-medium leading-6">{chosenDraft.title}</div>
             <pre className="mt-3 max-h-72 overflow-auto whitespace-pre-wrap rounded-xl bg-white p-3 text-sm leading-7 text-ink-800">{chosenDraft.body}{"\n\n"}{chosenDraft.hashtags.join(" ")}</pre>
             <ComplianceStatus draft={chosenDraft} />
@@ -1394,16 +1409,22 @@ export default function XiaohongshuNotesPage() {
             )}
             {businessTrack === "international-student-career" &&
               persona === "buyer" &&
-              chosenDraft.direction === "C" && (
+              (chosenDraft.direction === "C" || chosenDraft.structure_name === PARENT_RELAY_STRUCTURE_NAME) && (
               <div className="mt-4 rounded-2xl border border-gold-200 bg-white p-4">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
-                    <div className="text-sm font-semibold text-ink-900">买家 C 专属 AI 封面</div>
+                    <div className="text-sm font-semibold text-ink-900">
+                      {chosenDraft.structure_name === PARENT_RELAY_STRUCTURE_NAME
+                        ? "家长双线接力体 AI 配图"
+                        : "买家 C 专属 AI 封面"}
+                    </div>
                     <div className="mt-1 text-xs leading-5 text-ink-500">
-                      仅此方向开放。系统生成野生招聘现场底图，再稳定叠加企业招牌、脱敏Offer邮件卡片和橙红描边黄底大字。
+                      {chosenDraft.structure_name === PARENT_RELAY_STRUCTURE_NAME
+                        ? "系统会从正文提取老二招聘现场与老大Offer结果，生成野生招聘现场底图，再稳定叠加招牌、叫号屏、脱敏邮件和橙红描边黄底大字。"
+                        : "仅此方向开放。系统生成野生招聘现场底图，再稳定叠加企业招牌、脱敏Offer邮件卡片和橙红描边黄底大字。"}
                     </div>
                     <div className="mt-1 text-xs leading-5 text-ink-400">
-                      真实案例会读取「案例素材」里的中国石油、中国石化、阿里巴巴、腾讯等企业名；情景演绎保留求职情景标识。
+                      系统叠加虚构企业招聘招牌、脱敏情景Offer邮件和大字标题，并保留“情景演绎 / 示意图”标识。
                     </div>
                   </div>
                   <div className="flex flex-wrap gap-2">
@@ -1412,7 +1433,11 @@ export default function XiaohongshuNotesPage() {
                       disabled={!!busy || draftIsBlocked(chosenDraft)}
                       onClick={() => generateBuyerCCovers(chosenDraft)}
                     >
-                      {busy === "生成 2 张封面" ? "生成中..." : generatedCovers.length ? "重新生成 2 张" : "生成 2 张封面"}
+                      {busy === "生成 2 张封面"
+                        ? "生成中..."
+                        : chosenDraft.structure_name === PARENT_RELAY_STRUCTURE_NAME
+                          ? generatedCovers.length ? "重新生成 2 张图片" : "生成 2 张图片"
+                          : generatedCovers.length ? "重新生成 2 张" : "生成 2 张封面"}
                     </button>
                     <button
                       className="rounded-full bg-ink-100 px-4 py-2 text-sm font-semibold text-ink-700 disabled:opacity-40"
@@ -1427,6 +1452,7 @@ export default function XiaohongshuNotesPage() {
                 {chosenDraft.cover_source && (
                   <div className="mt-3 rounded-xl bg-ink-50 px-3 py-2 text-xs text-ink-600">
                     当前封面：{chosenDraft.cover_source === "ai" ? `AI · ${chosenDraft.cover_variant ?? "已选择"}` : "手工封面"}
+                    {chosenDraft.structure_name === PARENT_RELAY_STRUCTURE_NAME && ` · ${PARENT_RELAY_IMAGE_LABEL}`}
                   </div>
                 )}
 
@@ -1435,6 +1461,11 @@ export default function XiaohongshuNotesPage() {
                     {generatedCovers.map((cover) => (
                       <div key={cover.variant} className="rounded-2xl border border-ink-100 p-3">
                         <div className="mb-2 text-xs font-semibold text-gold-700">{cover.variant}</div>
+                        {cover.brief.imageLabel && (
+                          <div className="mb-2 inline-flex rounded-full bg-sky-100 px-3 py-1 text-xs font-semibold text-sky-800">
+                            {cover.brief.imageLabel}
+                          </div>
+                        )}
                         {cover.imageDataUrl ? (
                           <BuyerCCoverPreview cover={cover} draft={chosenDraft} account={account} />
                         ) : (
@@ -1654,6 +1685,11 @@ function NoteReviewCard({
             <span>· {CONTENT_TYPE_LABELS[note.content_type] ?? note.content_type}</span>
             <span>· {DRAFT_STATUS_LABELS[note.status] ?? note.status}</span>
           </div>
+          {note.structure_name && (
+            <div className="mt-2 inline-flex rounded-full bg-sky-100 px-3 py-1 text-xs font-semibold text-sky-800">
+              指定结构 · {note.structure_name}
+            </div>
+          )}
           <div className="mt-1 font-medium leading-6">{note.title}</div>
           <div className="mt-1 text-xs text-ink-400">验证变量：{note.test_variable}</div>
         </div>
@@ -1959,6 +1995,7 @@ function BuyerCCoverPreview({
   account: GrowthAccount | null;
 }) {
   const overlay = resolveCoverOverlay(cover, draft, account);
+  const isParentRelay = Boolean(overlay.imageLabel);
   return (
     <div className="relative aspect-[2/3] overflow-hidden rounded-xl bg-ink-100">
       <NextImage
@@ -1979,7 +2016,16 @@ function BuyerCCoverPreview({
         {overlay.companyLine}
       </div>
 
-      <div className="absolute left-[7%] top-[27%] w-[72%] -rotate-[4deg] overflow-hidden rounded-md bg-white shadow-2xl">
+      {isParentRelay && overlay.candidateNumber && (
+        <div className="absolute right-[5%] top-[27%] w-[22%] rounded-md bg-blue-700 px-1.5 py-2 text-center text-white shadow-xl">
+          <div className="text-[7px] font-semibold text-blue-100 md:text-[9px]">当前叫号</div>
+          <div className="mt-0.5 text-xl font-black leading-none md:text-3xl">{overlay.candidateNumber}</div>
+          <div className="mt-1 text-[6px] font-semibold text-blue-100 md:text-[8px]">请到</div>
+          <div className="text-[7px] font-black leading-tight md:text-[9px]">{overlay.queueRoom || "终面会场"}</div>
+        </div>
+      )}
+
+      <div className={`absolute -rotate-[4deg] overflow-hidden rounded-md bg-white shadow-2xl ${isParentRelay ? "left-[5%] top-[34%] w-[60%]" : "left-[7%] top-[27%] w-[72%]"}`}>
         <div className="h-1.5" style={{ backgroundColor: overlay.accentColor }} />
         <div className="p-2.5 md:p-3">
           <div className="text-[9px] font-extrabold text-slate-800 md:text-xs">{overlay.emailSender}</div>
@@ -2080,11 +2126,27 @@ function EditField({
   );
 }
 
-function EditArea({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
+function EditArea({
+  label,
+  value,
+  placeholder,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  placeholder?: string;
+  onChange: (v: string) => void;
+}) {
   return (
     <div>
       <label className="mb-1 block text-xs font-medium text-ink-500">{label}</label>
-      <textarea value={value} onChange={(e) => onChange(e.target.value)} rows={3} className="w-full rounded-xl border border-ink-100 bg-white px-3 py-2 text-sm leading-6" />
+      <textarea
+        value={value}
+        placeholder={placeholder}
+        onChange={(e) => onChange(e.target.value)}
+        rows={4}
+        className="w-full rounded-xl border border-ink-100 bg-white px-3 py-2 text-sm leading-6"
+      />
     </div>
   );
 }

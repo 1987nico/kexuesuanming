@@ -1,3 +1,6 @@
+import { PARENT_RELAY_IMAGE_LABEL, PARENT_RELAY_STRUCTURE_NAME } from "./buyerCStrategy";
+import { extractParentRelayCoverFacts } from "./parentRelayCover";
+
 export type BuyerCCaseMode = "真实案例" | "情景演绎";
 
 export interface BuyerCCoverOverlay {
@@ -10,6 +13,10 @@ export interface BuyerCCoverOverlay {
   disclosure: string;
   headlineLines: string[];
   accentColor: string;
+  imageLabel?: string;
+  venueName?: string;
+  candidateNumber?: string;
+  queueRoom?: string;
 }
 
 const COMPANY_PATTERNS = [
@@ -57,8 +64,35 @@ export function buildBuyerCCoverOverlay(input: {
   caseMode?: BuyerCCaseMode;
   caseMaterial?: string;
   body?: string;
+  structureName?: string;
 }): BuyerCCoverOverlay {
   const mode = input.caseMode === "真实案例" ? "真实案例" : "情景演绎";
+  if (input.structureName === PARENT_RELAY_STRUCTURE_NAME) {
+    const facts = extractParentRelayCoverFacts({
+      body: input.body,
+      coverText: input.coverText,
+    });
+    return {
+      companyName: facts.recruitingCompany,
+      companyLine: facts.venueName,
+      venueBanner: facts.recruitmentEvent,
+      emailSender: facts.offerCompany,
+      emailSubject: "录用通知",
+      emailRows: [
+        "候选人：姓名已隐去",
+        `应聘岗位：${facts.offerCity}${facts.offerRole}`,
+        `年薪：${facts.offerSalary}`,
+        "编号 / 邮箱：已打码",
+      ],
+      disclosure: "情景演绎 / 示意图",
+      headlineLines: facts.headlineLines,
+      accentColor: "#c6281d",
+      imageLabel: PARENT_RELAY_IMAGE_LABEL,
+      venueName: facts.venueName,
+      candidateNumber: facts.candidateNumber,
+      queueRoom: facts.queueRoom,
+    };
+  }
   const source = [input.caseMaterial, input.body].filter(Boolean).join("\n");
   const found = findCompany(source);
   const companyName = found?.name || (mode === "真实案例" ? "案例企业" : "远航能源（虚构）");

@@ -33,4 +33,19 @@ describe("buyer C cover composition", () => {
       "老二刚进秋招场",
     ]);
   });
+
+  it("marks a parent relay cover and ignores real target companies as proof", () => {
+    const overlay = buildBuyerCCoverOverlay({
+      title: "一转眼，轮到老二进终面了",
+      structureName: "家长双线接力体",
+      caseMode: "情景演绎",
+      body: "我们研究过中国石油、阿里巴巴和腾讯。老二在锦岳消费科技（虚构）终面，A18号；老大收到澄海数字科技（虚构）杭州用户策略岗Offer，年薪34.2万元。",
+    });
+
+    expect(overlay.imageLabel).toBe("家长双线接力体图片");
+    expect(overlay.companyName).toBe("锦岳消费科技（虚构）");
+    expect(overlay.emailSender).toBe("澄海数字科技（虚构）");
+    expect(overlay.emailRows.join(" ")).toContain("34.2万元");
+    expect(overlay.emailRows.join(" ")).not.toContain("中国石油");
+  });
 });

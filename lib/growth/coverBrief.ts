@@ -1,4 +1,9 @@
 import { buildBuyerCCoverOverlay, type BuyerCCoverOverlay } from "./coverComposition";
+import { PARENT_RELAY_STRUCTURE_NAME } from "./buyerCStrategy";
+import {
+  buildParentRelayImagePrompt,
+  extractParentRelayCoverFacts,
+} from "./parentRelayCover";
 
 export interface CoverBriefInput {
   title: string;
@@ -11,6 +16,7 @@ export interface CoverBriefInput {
   buyerC?: boolean;
   caseMode?: "真实案例" | "情景演绎";
   caseMaterial?: string;
+  structureName?: string;
 }
 
 export interface CoverBrief {
@@ -21,6 +27,7 @@ export interface CoverBrief {
   imagePrompt: string;
   overlayGuidance: string;
   overlay?: BuyerCCoverOverlay;
+  imageLabel?: string;
 }
 
 function sceneForType(contentType?: CoverBriefInput["contentType"]) {
@@ -43,6 +50,24 @@ export function buildCoverBrief(input: CoverBriefInput): CoverBrief {
   const coverText = (input.coverText || input.title).slice(0, 18);
 
   if (input.buyerC) {
+    if (input.structureName === PARENT_RELAY_STRUCTURE_NAME) {
+      const facts = extractParentRelayCoverFacts({
+        body: input.body,
+        coverText: input.coverText,
+      });
+      const relayPrompt = buildParentRelayImagePrompt(facts, input.styleHint);
+      const overlay = buildBuyerCCoverOverlay(input);
+      return {
+        coverText: facts.headlineLines.join(" "),
+        scene: relayPrompt.scene,
+        visualStyle: relayPrompt.visualStyle,
+        negativePrompt: relayPrompt.negativePrompt,
+        imagePrompt: relayPrompt.imagePrompt,
+        overlayGuidance: `文章已自动提取为“老二招聘现场＋老大Offer邮件”同框结构；系统会叠加“${overlay.venueBanner}”、叫号屏、脱敏Offer邮件、橙红描边黄底两行大字，并标注“${relayPrompt.imageLabel}”。`,
+        overlay,
+        imageLabel: relayPrompt.imageLabel,
+      };
+    }
     const fictional = input.caseMode !== "真实案例";
     const material = input.caseMaterial?.trim() || "留学生家庭的两段求职经历";
     const overlay = buildBuyerCCoverOverlay(input);

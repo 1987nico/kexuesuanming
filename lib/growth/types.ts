@@ -127,8 +127,7 @@ export const PERSONA_SPECIFIC_FIELDS: Record<GrowthPersona, PersonaSpecificField
     { key: "struggle", label: "正在纠结的决策", placeholder: "例如：要不要裸辞、副业该不该做、转不转行" },
     { key: "growth_arc", label: "成长弧线/人设走向", placeholder: "从迷茫求助 → 边试边记录 → 找到方向" },
     { key: "bridge", label: "转化桥（转折帖怎么软出场）", placeholder: "例如：后来找专业的人带，服务只作为故事中的自然经历出现，不做评论或私信诱导" },
-    { key: "case_mode", label: "案例模式", placeholder: "填写：真实案例 或 情景演绎。选择情景演绎后，系统会自动添加公开标识" },
-    { key: "case_material", label: "案例素材", placeholder: "集中填写企业/岗位、Offer结果、老大与老二阶段、招聘现场和可公开细节" },
+    { key: "case_material", label: "真实案例素材", placeholder: "填写已核对、可公开的真实经历；未提供的事实系统不会补写" },
   ],
   expert: [
     { key: "expertise", label: "专业领域", placeholder: "例如：组织发展、职业决策" },
@@ -154,8 +153,7 @@ const INTERNATIONAL_STUDENT_PERSONA_SPECIFIC_FIELDS: Record<
     { key: "struggle", label: "正在纠结的求职问题", placeholder: "例如：专业能投哪些岗、秋招节奏是否已经晚了" },
     { key: "growth_arc", label: "家庭求职成长弧线", placeholder: "从盲目海投 → 找到方向 → 按招聘节奏准备 → 拿到合适结果" },
     { key: "bridge", label: "转化桥（老师怎么自然出现）", placeholder: "例如：后来找专业的老师带，先把方向和岗位理顺" },
-    { key: "case_mode", label: "案例模式", placeholder: "填写：真实案例 或 情景演绎。选择情景演绎后，系统会自动添加公开标识" },
-    { key: "case_material", label: "案例素材", placeholder: "集中填写企业/岗位、Offer结果、孩子阶段、招聘现场和可公开细节" },
+    { key: "case_material", label: "情景设定（可选）", placeholder: "可指定孩子专业/学历/毕业时间、目标行业和岗位、希望出现的城市或求职阶段；不填时系统会生成完整具体设定。真实企业只能作为关注或准备投递的目标，不能写成虚构Offer结果" },
   ],
   expert: [
     { key: "expertise", label: "专业领域", placeholder: "例如：留学生回国求职方向规划、秋招与校招" },
@@ -276,6 +274,8 @@ export interface ContentDraft {
   // 买家视角故事化专属（其它视角为空）：所用故事模式与预估画面率
   story_mode?: string;
   pictorial_rate?: string;
+  // 系统指定的正文结构；用于生成候选稿和选定稿的醒目标注
+  structure_name?: string;
   compliance?: DraftCompliance;
   published_at?: string;
   learning_trace?: GrowthLearningTrace;

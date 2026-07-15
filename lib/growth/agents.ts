@@ -9,6 +9,7 @@ import { personaSpecificFields } from "./types";
 import {
   BUYER_C_DISCLOSURE,
   BUYER_C_WEEKLY_FOCUS,
+  PARENT_RELAY_STRUCTURE_NAME,
   isBuyerCWeeklyFocusActive,
 } from "./buyerCStrategy";
 
@@ -171,11 +172,11 @@ export function buildAccountPlanUserPrompt(input: {
   const buyerCaseModeGuide =
     persona === "buyer" && input.businessTrack === "international-student-career"
       ? `
-【买家Offer案例模式】
-- persona_specific 只使用两个案例字段：case_mode 和 case_material。
-- 如果输入没有明确提供真实案例，case_mode 默认填写「情景演绎」；只有用户明确选择真实案例时才填写「真实案例」。
-- case_material 集中填写企业/岗位、Offer结果、孩子阶段、招聘现场和可公开细节；情景演绎时可填写虚构设定。
-- case_mode=真实案例但没有素材时，case_material 留空，等待用户补充，不得自行编造。
+【买家Offer情景演绎规则】
+- 只使用情景演绎，不读取或生成真实案例模式。
+- case_material 是可选的情景偏好，只填写孩子专业/学历/毕业时间、目标行业/岗位、城市或求职阶段；没有输入时，由系统补齐一套完整具体的虚构设定。
+- 情景必须有名有姓、有地点、有日期、有数字，学校、企业、会场和岗位使用具体虚构名称并在首次出现时标注「（虚构）」。
+- 中国石油、阿里巴巴、腾讯等真实企业可以作为孩子关注、研究或准备投递的目标出现，但不得写成其已发Offer、已安排面试或与某学校举办了虚构招聘会。
 `
       : "";
   const mianbaUsage: Record<GrowthPersona, string> = input.businessTrack === "international-student-career" ? {
@@ -264,8 +265,9 @@ export function buildTopicPoolUserPrompt(input: {
 - 本批至少生成 1 个方向 C、content_type=story 的选题，并设为 priority="S"，排在第一位。
 - 本周选题与测试配比按 A 25% / B 25% / C 50% 执行；每次只生成 2 个时，第一题固定为 C，另一题在 A/B 中轮换。
 - 固定模式：留学生家长第一人称；老大Offer结果；老二进入新的求职阶段；招聘现场触发家长复盘；鼓励自然写「后来找专业的人带」。
+- 选题必须落到具体学校、具体招聘单位、具体岗位、具体会场或城市，并至少带一项数字结果；禁止用「某学校」「某公司」「某大厂」「一个招聘会」「投了很多家」作为核心场景。
 - 标题优先使用「一转眼，轮到老二参加秋招了」这一阶段切换结构；封面钩子使用「老大企业上岸 / 老二首战留学生秋招」的两行对照。
-- 根据定位卡 case_mode 二选一：真实案例只能使用 case_material；情景演绎允许虚构公司、Offer、岗位和现场，但标题不得冒充新闻，正文首行必须写「${BUYER_C_DISCLOSURE}」，封面必须标注「情景演绎 / 示意图」。
+- 固定为情景演绎：即使定位卡没有填写 case_material，也要生成一套完整具体的虚构学校、虚构企业、岗位、会场、城市、日期和数字；正文首行写「${BUYER_C_DISCLOSURE}」，封面标注「情景演绎 / 示意图」。
 `
       : "";
   return `
@@ -336,24 +338,62 @@ const BUYER_STORY_SPEC = `
 必须在输出 JSON 里如实填写 story_mode（「靶心人模式」或「意外人模式」二选一）和 pictorial_rate（预估画面率，如「26%」，必须≥20%）。
 `.trim();
 
+const STUDENT_BUYER_CONCRETE_SPEC = `
+【留学生买家视角·具体性硬门槛】
+这类内容的可信感来自可核对的生活细节。正文必须把事情写到读者能在脑中看见现场，不能只写「参加招聘会」「拿到大厂Offer」「投了很多家」。
+
+正文必须自然出现下列信息中的至少 5 类：
+1. 孩子的具体学校、专业、学历和毕业时间；
+2. 具体招聘企业或单位、具体岗位及招聘批次；
+3. 招聘会主办学校、楼宇/会场、城市或交通地点；
+4. 具体日期、时段、宣讲/笔试/群面/终面的阶段；
+5. 至少 2 组数字锚点，例如投递 42 家、9 场笔试、4 场终面、2 个Offer、排第 37 号、年薪 31 万、等待 18 天；
+6. 至少 3 个现场物件或动作，例如胸牌、横幅、简历袋、叫号屏、电梯口、折叠椅、孩子攥住文件袋或低头记下下一场宣讲。
+
+禁用空泛代称：不得用「某学校」「某公司」「某大厂」「一家单位」「一个招聘会」「一线城市」「那天」「很多家」「不少次」「薪资不错」代替本应具体的信息。若确实不能公开，改写为不依赖该事实的场景，不要用模糊词假装具体。
+
+情景演绎边界：
+- 学校、招聘企业、Offer结果和会场关系必须是有名有姓的虚构设定，并在首次出现时标「（虚构）」；不能使用「某学校」「某公司」逃避具体化。
+- 真实企业或真实学校只可作为求职目标、研究对象或背景信息出现，不得虚构其Offer、面试、招聘会、校企合作或录用结果。
+- 正文首行必须原样写「${BUYER_C_DISCLOSURE}」，但正文不能写成设定说明，要像家长真的在现场记录一段完整故事。
+
+把细节分散进人物动作和故事推进中，不要写「本次素材是」「案例信息如下」，不要把正文变成字段清单。
+`.trim();
+
 const BUYER_C_OFFER_STRATEGY_SPEC = `
 【买家 C 类专属·留学生家长Offer现场策略】
 本篇是「留学生家长＋企业Offer＋招聘现场＋两个孩子阶段对照」的故事，不是老师口吻、顾问口吻或机构案例复盘。
 
 案例模式硬门槛：
-- case_mode=真实案例：企业、岗位、Offer/终面结果、孩子阶段和招聘现场，只能使用账号定位卡 case_material 中的内容；不得补写、推测或用相似公司替代。
-- case_mode=情景演绎：允许虚构公司、Offer、岗位、横幅和招聘现场；正文首行必须原样写「${BUYER_C_DISCLOSURE}」，封面必须显著标注「情景演绎 / 示意图」。虚构企业不得使用真实公司名称或近似Logo，虚构Offer/邀请函不得仿制真实文件、编号、印章或邮箱，不能作为效果证明。
-- 无论哪种模式，都不得虚构真实企业与学校的合作关系，不得暴露个人敏感信息。
+- 固定为情景演绎。学校、招聘企业、Offer/终面结果、孩子阶段、招聘现场、日期、地点和数字都要具体；学校、企业和会场使用有名有姓的虚构设定并在首次出现时标「（虚构）」。
+- 正文首行必须原样写「${BUYER_C_DISCLOSURE}」，封面必须显著标注「情景演绎 / 示意图」。
+- 真实企业可出现在孩子的投递目标清单或行业研究中，但不得虚构其Offer、面试通知、招聘会或校企合作；虚构Offer邮件不得仿制真实文件、编号、印章或邮箱。
 
 固定叙事顺序：
-1. 家长在真实招聘现场看到老二进入会场，触发感慨；
+1. 家长在具体学校、楼宇或招聘会入口看到老二进入会场，现场名称、城市、时段和动作写清楚，触发感慨；
 2. 简短交代老大已经拿到Offer的结果，建立经验背书；
 3. 老二第一次进入同类求职阶段，形成两个孩子的阶段对照；
 4. 家长复盘 2-3 个具体认知，专业判断藏在经历里，不写成顾问授课；
 5. 服务只作为故事中的自然转折出现，鼓励使用「后来找专业的人带」，不要写成硬广；
 6. 用孩子走出会场后的一个动作或一句话收尾，不做评论、私信、资料领取或销售引导。
 
-封面结构：招聘入口＋企业招聘横幅＋成年孩子背影＋场景凭证＋「老大结果 / 老二新阶段」两行对照。真实模式使用已授权素材；情景演绎模式使用虚构企业和示意凭证并加醒目标识，不得仿制真实Offer或暴露个人敏感信息。
+封面结构：虚构学校招聘入口＋虚构企业招聘横幅＋成年孩子背影＋脱敏情景Offer邮件＋「老大结果 / 老二新阶段」两行对照。学校、企业、岗位、会场和数字必须具体，左上角固定标注「情景演绎 / 示意图」。
+`.trim();
+
+const PARENT_RELAY_STRUCTURE_SPEC = `
+【本篇指定结构：${PARENT_RELAY_STRUCTURE_NAME}】
+这不是参考建议，而是本篇必须完整执行的正文骨架。正文中不要说出结构名称，也不要把下面的模块名原样当标题。
+
+固定顺序：
+1. 阶段事件：用「一转眼，轮到老二……」或同类阶段切换进入当下事件；
+2. 家庭结果背书：交代家长身份、老大走过的求职路径和具体结果；
+3. 现场动作：写清老二进入招聘会、面试间或终面会场前后的动作、物件、时间和地点；
+4. 三点家长感受：依次写「真正获得的不只是Offer」「找对老师/领路人很重要」「老大的节奏不能直接套给老二」；
+5. 老师成为转折：自然写「后来找专业的老师带」，重点落在求职面试辅导如何改变准备方式，不写机构介绍；
+6. 信息差清单：补充 2-3 条与岗位拆解、模拟面试、追问或终面有关的可执行判断；
+7. 回到现场收尾：用孩子走出会场后的一个动作或一句话结束，并留下后续进展的余味。
+
+老大结果线与老二当下线要交替衔接，不能先写完一份案例再拼接另一份；学校、企业、岗位、会场、日期和数字都必须进入人物动作和叙事，不得写成素材清单。
 `.trim();
 
 export function buildDraftUserPrompt(input: {
@@ -367,6 +407,7 @@ export function buildDraftUserPrompt(input: {
   followReason: string;
   persona?: GrowthPersona;
   variantHint?: string;
+  structureName?: string;
   learningGuidance?: string;
   excludeBodies?: string[];
   context?: AccountContext;
@@ -389,6 +430,7 @@ ${input.context?.privateDomain ? `业务承接背景（仅用于理解业务，�
 关注理由：${input.followReason}
 ${input.learningGuidance ? `复盘学习依据（必须执行，但不能在成文中提及）：\n${input.learningGuidance}` : ""}
 ${input.variantHint ? `本次写作角度：${input.variantHint}` : ""}
+${input.structureName === PARENT_RELAY_STRUCTURE_NAME ? `\n${PARENT_RELAY_STRUCTURE_SPEC}\n` : ""}
 ${exclude.length ? `严禁与以下已生成正文重复或近似（可换结构、开头、案例）：\n${exclude.map((b) => b.slice(0, 120)).join("\n---\n")}` : ""}
 
 写作要求：
@@ -403,6 +445,7 @@ ${exclude.length ? `严禁与以下已生成正文重复或近似（可换结构
 - 【禁止利益交换】不得用资料、匿名样例、报告、清单、模板、链接、福利、抽奖、诊断或体检作为互动奖励。像「需要职业方向体检的评论区扣1，我发你匿名交付样例」这种表达一律禁止。
 - 结尾优先给出一个读者当下就能完成的自查动作或判断标准。可以提出与正文直接相关的自然问题，但不能承诺根据评论发送任何东西。
 ${input.persona === "buyer" ? `\n${BUYER_STORY_SPEC}\n` : ""}
+${input.persona === "buyer" && input.businessTrack === "international-student-career" ? `\n${STUDENT_BUYER_CONCRETE_SPEC}\n` : ""}
 ${input.persona === "buyer" && input.businessTrack === "international-student-career" && input.direction === "C" ? `\n${BUYER_C_OFFER_STRATEGY_SPEC}\n` : ""}
 输出 JSON：
 {
@@ -418,7 +461,8 @@ ${input.persona === "buyer" && input.businessTrack === "international-student-ca
   "review_points": ["发布后观察点 1", "观察点 2"],
   "cover_suggestion": "首图/封面建议",
   "story_mode": "仅买家视角必填：本篇所用故事模式，只能是「靶心人模式」或「意外人模式」；其它视角留空字符串",
-  "pictorial_rate": "仅买家视角必填：本篇预估画面率百分比字符串，如「26%」，必须≥20%；其它视角留空字符串"
+  "pictorial_rate": "仅买家视角必填：本篇预估画面率百分比字符串，如「26%」，必须≥20%；其它视角留空字符串",
+  "structure_name": "仅在系统指定结构时填写「${PARENT_RELAY_STRUCTURE_NAME}」，否则留空字符串"
 }
 `.trim();
 }

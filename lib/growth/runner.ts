@@ -28,10 +28,9 @@ import { DEFAULT_BUSINESS_SETTINGS, personaSpecificFields } from "./types";
 import type { AccountContext, ReportPrices } from "./agents";
 import {
   BUYER_C_DISCLOSURE,
+  PARENT_RELAY_STRUCTURE_NAME,
   buildBuyerCTopic,
-  buyerCaseMaterial,
   buyerCaseMode,
-  buyerCNeedsMaterial,
   prioritizeBuyerCTopics,
 } from "./buyerCStrategy";
 import {
@@ -78,15 +77,65 @@ function formatDraftLearningBrief(brief: GrowthLearningBrief) {
   ].join("\n");
 }
 
-function assertBuyerCCaseMaterial(account: GrowthAccount, topic: TopicCandidate) {
-  if (account.persona !== "buyer" || topic.direction !== "C") return;
-  if (buyerCNeedsMaterial(account)) throw new Error("buyer_c_case_material_required");
-}
-
 function discloseFictionalCase(body: string, fictional: boolean) {
   if (!fictional) return body;
   const withoutDuplicate = body.split(BUYER_C_DISCLOSURE).join("").trimStart();
   return `${BUYER_C_DISCLOSURE}\n\n${withoutDuplicate}`;
+}
+
+function buildStudentBuyerFallback(long: boolean, useRelayStructure = false) {
+  if (!useRelayStructure) {
+    return `2026年7月12日上午8点40分，我站在北京京华财经大学（虚构）就业中心B座三层。玻璃门上贴着「华辰能源集团（虚构）2027届留学生管培生终面」，老二拿着第37号胸牌进了B307厅。\n\n他是2027届金融硕士，之前把36道高频题背得很熟，面试官一追问项目数字就会卡住。后来找专业的老师带，做了6次模拟面试，把简历上的项目拆出26个追问，才慢慢学会不套模板、先讲自己的判断。\n\n11点25分，门开了。他低头在手机里记下没答稳的行业题。我没问结果，只陪他从B座走到西门。风把门口的红色横幅吹得一下下拍在栏杆上。`;
+  }
+
+  const extraDetail = long
+    ? "邮件右上角的姓名和编号被他截掉，只留下一行「录用结果通知」。"
+    : "那封邮件他到现在还单独存在收藏夹里。";
+
+  return `一转眼，轮到老二参加秋招了。2026年7月12日上午8点40分，我陪他到北京京华财经大学（虚构）就业中心B座三层。玻璃门上贴着「华辰能源集团（虚构）2027届留学生管培生专场」，走廊里摆了64把灰色折叠椅。他攥着第37号胸牌，回头冲我摆摆手，进了B307厅。\n\n我做了15年财务，孩子爸爸在制造业做技术。去年陪老大找工作时，我们把中国石油、阿里巴巴、腾讯这些他关注的企业全抄进Excel，催着他一天投十几份。老大从伦敦北岸大学（虚构）商业分析硕士毕业，前3周投了46家，只换来8场笔试、4场终面。后来找专业的老师带，先把方向收窄到数据策略和能源数字化，再把项目拆成26个追问，做了6次模拟面试。18天后，他收到华辰能源集团（虚构）上海数据策略岗Offer，年薪31.6万元。那一轮一共拿到2个Offer。${extraDetail}\n\n坐在走廊等老二时，想到哪儿说到哪儿：\n\n1️⃣ 求职真正带走的不只是Offer\n老大最大的变化，是终于能说清自己适合什么岗位、凭什么匹配。以前面试官追问项目数字，他只会背答案；后来能先讲判断，再拿数据证明。\n\n2️⃣ 找对老师，比多背面经重要\n老师不是替孩子包装经历，而是陪他把岗位、简历和追问一层层对齐。36道答案背得再熟，经历经不起追问，终面还是会露怯。\n\n3️⃣ 老大的节奏不能直接套给老二\n老大适合数据策略，老二是2027届金融硕士，目标是能源管培和财务分析。这次我没塞给他整包旧面经，只让他带蓝、透明两版简历，按岗位分别讲项目。\n\n几个秋招信息差：\n✅ 岗位没收窄前，不要用一份简历海投；\n✅ 模拟面试要追问到数字、角色和结果，不是只练自我介绍；\n✅ 终面结束立刻记录没答稳的问题，24小时内复盘。\n\n11点25分，B307厅的门开了。老二把胸牌折进文件袋，低头在手机里记下7月16日线上笔试。我没追着问结果，只陪他从B座走到西门。风把门口的红色横幅吹得一下下拍在栏杆上，这次学校、岗位、时间和下一步都清清楚楚。`;
+}
+
+function hasConcreteStudentBuyerScene(body: string) {
+  const categoryChecks = [
+    /[\p{Script=Han}A-Za-z0-9]{2,24}(?:大学|学院|学校)/u,
+    /[\p{Script=Han}A-Za-z0-9]{2,24}(?:公司|集团|银行|能源|石油|石化)|Offer/u,
+    /招聘会|就业中心|体育馆|会场|校区|[A-Z0-9一二三四五六七八九十]+座|[A-Z0-9一二三四五六七八九十]+厅/u,
+    /20\d{2}年|\d{1,2}月\d{1,2}日|上午|下午|北京|上海|深圳|广州|济南|杭州|成都|武汉|南京|青岛/u,
+    /胸牌|横幅|简历袋|文件袋|叫号屏|折叠椅|玻璃门|电梯口|邮箱|邮件|手机/u,
+    /（虚构）/u,
+  ];
+  const categoryCount = categoryChecks.filter((pattern) => pattern.test(body)).length;
+  const numericAnchors = body.match(/\d+(?:\.\d+)?(?:家|场|个|号|份|天|周|月|年|万|元|点|分|届|楼|层)?/g) ?? [];
+  return categoryCount >= 5 && numericAnchors.length >= 2;
+}
+
+function hasParentRelayStructure(body: string) {
+  const requiredBeats = [
+    /一转眼|轮到老二|这次轮到/u,
+    /老大[\s\S]{0,240}(?:Offer|终面|投了|拿到)/u,
+    /1️⃣|1[.、]/u,
+    /2️⃣|2[.、]/u,
+    /3️⃣|3[.、]/u,
+    /后来找专业的老师带|找对(?:专业的)?老师|找对领路人/u,
+    /信息差|✅/u,
+    /门开了|走出(?:会场|面试间)|出来了|回头|走到/u,
+  ];
+  return requiredBeats.every((pattern) => pattern.test(body));
+}
+
+function chooseStudentBuyerBody(
+  generatedBody: unknown,
+  studentBuyer: boolean,
+  fallback: string,
+  requiresRelayStructure = false,
+) {
+  const generated = asText(generatedBody);
+  if (!studentBuyer) return generated || fallback;
+  return generated &&
+    hasConcreteStudentBuyerScene(generated) &&
+    (!requiresRelayStructure || hasParentRelayStructure(generated))
+    ? generated
+    : fallback;
 }
 
 // 模型有时把本应是字符串的字段返回成数组，这里统一安全转成字符串（数组用换行拼接）
@@ -343,13 +392,6 @@ export async function generateAccountAndPlan(input: {
     businessTrack,
     accountData.persona_specific,
   );
-  if (
-    persona === "buyer" &&
-    businessTrack === "international-student-career" &&
-    !personaSpecific.case_mode
-  ) {
-    personaSpecific.case_mode = "情景演绎";
-  }
   const defaultContentDirections =
     persona === "buyer" && businessTrack === "international-student-career"
       ? ["A 求助/示弱/情绪", "B 成长/顿悟/复盘", "C 留学生家长Offer现场与求职转折"]
@@ -493,8 +535,6 @@ export async function generateDraft(input: {
     input.run.topic_pool.find((candidate) => candidate.priority === "S") ||
     input.run.topic_pool[0];
   if (!topic) throw new Error("topic_pool_empty");
-  assertBuyerCCaseMaterial(input.account, topic);
-
   const timestamp = now();
   let payload: any = null;
   let usage: Record<string, unknown> | undefined;
@@ -530,27 +570,25 @@ export async function generateDraft(input: {
     console.warn("[growth] draft fallback:", (error as Error).message);
   }
 
-  const isBuyerC =
-    input.account.persona === "buyer" &&
-    isInternationalStudentTrack(input.account) &&
-    topic.direction === "C";
+  const isStudentBuyer =
+    input.account.persona === "buyer" && isInternationalStudentTrack(input.account);
+  const isBuyerC = isStudentBuyer && topic.direction === "C";
   const caseMode = buyerCaseMode(input.account);
-  const isFictionalCase = isBuyerC && caseMode === "情景演绎";
-  const caseMaterial =
-    buyerCaseMaterial(input.account) ||
-    "一家虚构能源公司的数据分析岗；老大已拿到Offer；老二第一次参加留学生秋招；家长在校园招聘入口等候。";
+  const isFictionalCase = isStudentBuyer && caseMode === "情景演绎";
   const hashtags = normalizeTags(
     payload?.hashtags ||
-      (isBuyerC
+      (isStudentBuyer
         ? ["#留学生求职", "#留学生家长", "#秋招", "#校招"]
         : ["#中高层转型", "#第二曲线", "#小红书运营"]),
   );
   const title = enforceTitleLimit(payload?.title || topic.title);
+  const standardFallback = `如果你已经在公司里做出成绩，但离开这个位置后，客户、预算和信任还会不会跟着你走？\n\n先别急着做个人 IP，也别急着追爆款。先判断三件事：\n\n1. 你现在的价值，是岗位给的，还是市场愿意单独为你付费？\n2. 你手里有没有能被目标客户理解的具体成果？\n3. 你发出的内容，是在吸引目标客户，还是只吸引泛职场围观？\n\n这篇先验证一个变量：${topic.test_variable}。\n\n我会继续记录，一个成熟职场人怎么把经验变成市场上的资产。`;
   const body = discloseFictionalCase(
-    payload?.body ||
-      (isBuyerC
-        ? `一转眼，轮到老二参加秋招了。\n\n那天我站在招聘入口，看着他拿着材料往里走，一下想起老大当年的那一轮。\n\n这次故事里的素材是：${caseMaterial}\n\n结果现在说起来只有一句话，但我们家知道，真正难的从来不是投出一份简历，而是孩子第一次面对招聘节奏时，能不能把方向、岗位和准备顺序理清。\n\n老二这次刚开始，我没有再让他靠自己四处试。后来找专业的人带，先把适合的岗位、时间线和每一轮要准备的东西拆开。\n\n他走出会场后低头把下一场宣讲记进手机。我没催，只觉得这一回，我们终于没有在起点上慌。`
-        : `如果你已经在公司里做出成绩，但离开这个位置后，客户、预算和信任还会不会跟着你走？\n\n先别急着做个人 IP，也别急着追爆款。先判断三件事：\n\n1. 你现在的价值，是岗位给的，还是市场愿意单独为你付费？\n2. 你手里有没有能被目标客户理解的具体成果？\n3. 你发出的内容，是在吸引目标客户，还是只吸引泛职场围观？\n\n这篇先验证一个变量：${topic.test_variable}。\n\n我会继续记录，一个成熟职场人怎么把经验变成市场上的资产。`),
+    chooseStudentBuyerBody(
+      payload?.body,
+      isStudentBuyer,
+      isStudentBuyer ? buildStudentBuyerFallback(false) : standardFallback,
+    ),
     isFictionalCase,
   );
 
@@ -562,7 +600,7 @@ export async function generateDraft(input: {
     status: "ready",
     direction: topic.direction,
     content_type: topic.content_type,
-    case_mode: isBuyerC ? caseMode : undefined,
+    case_mode: isStudentBuyer ? caseMode : undefined,
     test_variable: topic.test_variable,
     expected_signal: topic.expected_signal,
     title,
@@ -584,12 +622,10 @@ export async function generateDraft(input: {
       ? payload.review_points.slice(0, 5)
       : ["收藏", "评论", "主页访问", "新增关注", "评论里是否出现目标用户信号"],
     cover_suggestion:
-      (isFictionalCase
-        ? `${payload?.cover_suggestion || "留学生家长视角的虚构招聘入口、成年孩子背影和现场人群"}；封面标注“情景演绎 / 示意图”，不用真实企业Logo，不仿制Offer文件。`
+      isFictionalCase
+        ? `${payload?.cover_suggestion || "家长肩后视角拍成年孩子走进虚构校园招聘会，背景写明虚构学校、企业、岗位、楼宇和会场，前景叠加脱敏情景Offer邮件"}；左上角固定标注“情景演绎 / 示意图”。`
         : payload?.cover_suggestion ||
-          (isBuyerC
-            ? `使用案例素材中的公开招聘现场，家长视角拍成年孩子背影；不要补造素材中没有的企业或Offer细节。`
-            : "真实办公桌面，手写目标客户判断表，画面克制，有真实过程感。")),
+          "真实办公桌面，手写目标客户判断表，画面克制，有真实过程感。",
     story_mode: asText(payload?.story_mode) || undefined,
     pictorial_rate: asText(payload?.pictorial_rate) || undefined,
     learning_trace: input.learningBrief?.trace,
@@ -697,8 +733,12 @@ export async function generateDraftVariants(input: {
   excludeBodies?: string[];
   learningBrief?: GrowthLearningBrief;
 }): Promise<{ drafts: ContentDraft[]; usage?: Record<string, unknown> }> {
-  assertBuyerCCaseMaterial(input.account, input.topic);
   const count = input.count ?? 2;
+  const isStudentBuyer =
+    input.account.persona === "buyer" && isInternationalStudentTrack(input.account);
+  // 留学生买家每轮两篇候选中固定一篇执行家长双线结构。
+  // 默认放在第二篇深度稿；如果调用方只要一篇，则该篇直接使用指定结构。
+  const requiredStructureIndex = count >= 2 ? 1 : 0;
   // 用户已在选题阶段选定标题。正文阶段恢复为两个编辑候选稿，
   // 不再把同一篇正文复制后重新做标题二选一。
   const variantSpecs = [
@@ -720,6 +760,8 @@ export async function generateDraftVariants(input: {
 
   for (let i = 0; i < count; i++) {
     const spec = variantSpecs[i % variantSpecs.length];
+    const structureName =
+      isStudentBuyer && i === requiredStructureIndex ? PARENT_RELAY_STRUCTURE_NAME : undefined;
     const single = await generateSingleDraft({
       tenantId: input.tenantId,
       account: input.account,
@@ -728,6 +770,7 @@ export async function generateDraftVariants(input: {
       variantHint: `${spec.hint} 标题已经由用户选定，禁止改写或替换标题。`,
       lengthHint: spec.lengthHint,
       lengthKind: spec.lengthKind,
+      structureName,
       excludeBodies: usedBodies,
       learningBrief: input.learningBrief,
     });
@@ -735,6 +778,8 @@ export async function generateDraftVariants(input: {
       ...single.draft,
       title: lockedTitle,
       alternative_titles: [lockedTitle],
+      // 结构归属由系统决定，不能让模型自行添加或删除。
+      structure_name: structureName,
       word_count: countPublishChars(lockedTitle, single.draft.body, single.draft.hashtags),
       learning_trace: input.learningBrief?.trace,
     };
@@ -754,6 +799,7 @@ async function generateSingleDraft(input: {
   variantHint?: string;
   lengthHint?: string;
   lengthKind?: "short" | "long";
+  structureName?: string;
   excludeBodies?: string[];
   learningBrief?: GrowthLearningBrief;
 }): Promise<{ draft: ContentDraft; usage?: Record<string, unknown> }> {
@@ -779,6 +825,7 @@ async function generateSingleDraft(input: {
         expectedSignal: topic.expected_signal,
         followReason: topic.follow_reason,
         variantHint: [input.variantHint, input.lengthHint].filter(Boolean).join(" "),
+        structureName: input.structureName,
         learningGuidance: input.learningBrief ? formatDraftLearningBrief(input.learningBrief) : undefined,
         excludeBodies: input.excludeBodies,
         context: accountContext(input.account),
@@ -797,32 +844,35 @@ async function generateSingleDraft(input: {
     console.warn("[growth] draft variant fallback:", (error as Error).message);
   }
 
-  const isBuyerC =
-    input.account.persona === "buyer" &&
-    isInternationalStudentTrack(input.account) &&
-    topic.direction === "C";
+  const isStudentBuyer =
+    input.account.persona === "buyer" && isInternationalStudentTrack(input.account);
+  const isBuyerC = isStudentBuyer && topic.direction === "C";
   const caseMode = buyerCaseMode(input.account);
-  const isFictionalCase = isBuyerC && caseMode === "情景演绎";
+  const isFictionalCase = isStudentBuyer && caseMode === "情景演绎";
   const hashtags = normalizeTags(
     payload?.hashtags ||
-      (isBuyerC
+      (isStudentBuyer
         ? ["#留学生家长", "#留学生求职", "#留学生回国求职", "#秋招", "#求职规划"]
         : ["#中高层转型", "#第二曲线", "#小红书运营"]),
   );
   const title = enforceTitleLimit(payload?.title || topic.title);
   const shortFallback = `围绕「${topic.title}」，先验证一个变量：${topic.test_variable}。\n\n最锋利的判断：别急着做，先看你现在的价值是岗位给的，还是市场愿意单独为你付费。\n\n3 个信号：\n1. 有没有能被目标客户理解的具体成果？\n2. 你的内容在吸引目标客户，还是只吸引泛围观？\n3. 离开这个位置，客户还会不会找你？`;
   const longFallback = `围绕「${topic.title}」，本篇先验证一个变量：${topic.test_variable}。\n\n先说一个反常识判断：很多人以为自己缺的是流量，其实缺的是“市场愿意单独为你付费的理由”。\n\n一、先自查三件事\n1. 你现在的价值，是岗位给的，还是市场愿意单独为你付费？\n2. 你手里有没有能被目标客户理解的具体成果（案例、数字、可复用方法）？\n3. 你发出的内容，是在吸引目标客户，还是只吸引泛围观？\n\n二、怎么把经验变成可被购买的表达\n把你做过的判断拆成“别人可以照着用”的清单和标准，而不是只讲故事。每一篇只讲清楚一个判断，并给出下一步动作。\n\n三、下一步\n先用一篇内容测试：目标客户看完，会不会主动来问。如果会，说明方向成立；如果只有点赞没有咨询，就换角度。\n\n我会继续记录，一个成熟职场人怎么把经验变成市场上可被信任、可被定价的资产。`;
-  const caseMaterial =
-    buyerCaseMaterial(input.account) ||
-    "一家虚构能源公司的数据分析岗；老大已拿到Offer；老二第一次参加留学生秋招；家长在校园招聘入口等候。";
-  const buyerCFallback = `今天陪老二去参加校园招聘活动。看着他拿着材料走进会场，我坐在外面，忽然想起老大当年求职的样子。\n\n这次故事里的素材是：${caseMaterial}\n\n老大刚开始求职时，也以为海外学历加一份英文简历就够了。后来才发现，岗位、毕业时间、招聘单位和材料要求只要有一项没核对清楚，就可能进不了下一轮。后来找专业的人带，他才开始按岗位重新整理经历，知道每次被拒以后应该调整什么。\n\n现在轮到老二，我们没有直接照搬老大的路线。两个孩子的专业、性格和目标岗位不同，老大的经验只能参考，不能原样复制。\n\n老二走出会场时说，原来光是把单位和岗位研究清楚，就要花不少时间。我说没事，第一次本来就是来摸清规则的，回去把今天记下的问题一项项整理出来。`;
+  const studentBuyerFallback = buildStudentBuyerFallback(
+    input.lengthKind === "long",
+    input.structureName === PARENT_RELAY_STRUCTURE_NAME,
+  );
   const body = discloseFictionalCase(
-    payload?.body ||
-      (isBuyerC
-        ? buyerCFallback
+    chooseStudentBuyerBody(
+      payload?.body,
+      isStudentBuyer,
+      isStudentBuyer
+        ? studentBuyerFallback
         : input.lengthKind === "long"
           ? longFallback
-          : shortFallback),
+          : shortFallback,
+      input.structureName === PARENT_RELAY_STRUCTURE_NAME,
+    ),
     isFictionalCase,
   );
 
@@ -834,7 +884,7 @@ async function generateSingleDraft(input: {
     status: "draft",
     direction: topic.direction,
     content_type: topic.content_type,
-    case_mode: isBuyerC ? caseMode : undefined,
+    case_mode: isStudentBuyer ? caseMode : undefined,
     test_variable: topic.test_variable,
     expected_signal: topic.expected_signal,
     title,
@@ -856,14 +906,12 @@ async function generateSingleDraft(input: {
       ? payload.review_points.slice(0, 5)
       : ["收藏", "评论", "主页访问", "新增关注", "评论里是否出现目标用户信号"],
     cover_suggestion:
-      (isFictionalCase
-        ? `${payload?.cover_suggestion || "家长视角拍成年孩子走进虚构招聘现场"}；封面标注“情景演绎 / 示意图”，不用真实企业Logo，不仿制Offer、邮件、印章或编号。`
-        : payload?.cover_suggestion ||
-          (isBuyerC
-            ? "使用案例素材中的公开招聘现场，家长视角拍成年孩子背影；不要补造素材中没有的企业或Offer细节。"
-            : "真实办公桌面，手写目标客户判断表，画面克制。")),
+      isFictionalCase
+        ? `${payload?.cover_suggestion || "家长肩后视角拍成年孩子走进虚构校园招聘会，背景写明虚构学校、企业、岗位、楼宇和会场，前景叠加脱敏情景Offer邮件"}；左上角固定标注“情景演绎 / 示意图”。`
+        : payload?.cover_suggestion || "真实办公桌面，手写目标客户判断表，画面克制。",
     story_mode: asText(payload?.story_mode) || undefined,
     pictorial_rate: asText(payload?.pictorial_rate) || undefined,
+    structure_name: input.structureName,
     learning_trace: input.learningBrief?.trace,
     created_at: timestamp,
     updated_at: timestamp,

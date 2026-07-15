@@ -40,6 +40,7 @@ const draftSchema = z.object({
   cover_suggestion: z.string(),
   story_mode: z.string().optional(),
   pictorial_rate: z.string().optional(),
+  structure_name: z.string().optional(),
   compliance: z
     .object({
       status: z.enum(["passed", "rewritten", "blocked"]),

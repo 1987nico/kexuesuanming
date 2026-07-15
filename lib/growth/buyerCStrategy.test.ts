@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { GrowthAccount, TopicCandidate } from "./types";
-import { buyerCaseMode, buyerCNeedsMaterial, prioritizeBuyerCTopics } from "./buyerCStrategy";
+import {
+  buyerCaseMode,
+  buyerCNeedsMaterial,
+  prioritizeBuyerCTopics,
+} from "./buyerCStrategy";
 
 const timestamp = "2026-07-14T00:00:00.000Z";
 const account: GrowthAccount = {
@@ -15,7 +19,7 @@ const account: GrowthAccount = {
   trust_source: "家庭经历",
   not_doing: "不做硬广",
   hypotheses: [],
-  persona_specific: { case_mode: "情景演绎", case_material: "" },
+  persona_specific: { case_material: "" },
   created_at: timestamp,
   updated_at: timestamp,
 };
@@ -38,12 +42,11 @@ const topic: TopicCandidate = {
 };
 
 describe("buyer C strategy", () => {
-  it("defaults buyer cases to dramatization", () => {
+  it("keeps buyer cases in dramatization mode", () => {
     expect(buyerCaseMode({ ...account, persona_specific: {} })).toBe("情景演绎");
   });
 
-  it("requires one combined material field only for real buyer cases", () => {
-    expect(buyerCNeedsMaterial({ ...account, persona_specific: { case_mode: "真实案例", case_material: "" } })).toBe(true);
+  it("does not require case material because the system completes a full setting", () => {
     expect(buyerCNeedsMaterial(account)).toBe(false);
   });
 
@@ -57,5 +60,6 @@ describe("buyer C strategy", () => {
     expect(topics[0].direction).toBe("C");
     expect(topics[0].priority).toBe("S");
     expect(topics[0].evidence).toContain("本周高优");
+    expect(topics[0].evidence).toContain("虚构学校、企业、会场和数字");
   });
 });

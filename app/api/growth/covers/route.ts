@@ -17,6 +17,7 @@ const bodySchema = z.object({
   buyerC: z.boolean().optional(),
   caseMode: z.enum(["真实案例", "情景演绎"]).optional(),
   caseMaterial: z.string().trim().max(2000).optional(),
+  structureName: z.string().trim().max(40).optional(),
   count: z.number().int().min(1).max(2).optional(),
   withImage: z.boolean().optional(),
 });
@@ -60,6 +61,7 @@ export async function POST(req: Request) {
       buyerC: parsed.data.buyerC,
       caseMode: parsed.data.caseMode,
       caseMaterial: parsed.data.caseMaterial,
+      structureName: parsed.data.structureName,
     });
 
     let imageDataUrl: string | undefined;

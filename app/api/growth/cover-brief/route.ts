@@ -16,6 +16,7 @@ const bodySchema = z.object({
   buyerC: z.boolean().optional(),
   caseMode: z.enum(["真实案例", "情景演绎"]).optional(),
   caseMaterial: z.string().trim().max(2000).optional(),
+  structureName: z.string().trim().max(40).optional(),
 });
 
 export async function POST(req: Request) {
