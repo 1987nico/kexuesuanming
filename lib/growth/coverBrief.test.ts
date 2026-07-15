@@ -65,6 +65,8 @@ describe("growth cover brief", () => {
     expect(brief.imageLabel).toBe("家长双线接力体图片");
     expect(brief.imagePrompt).toContain("家长双线接力体");
     expect(brief.overlayGuidance).toContain("老二招聘现场＋老大Offer邮件");
+    expect(brief.overlayGuidance).toContain("直接融入现场");
+    expect(brief.overlayGuidance).toContain("只稳定叠加");
     expect(brief.overlay?.candidateNumber).toBe("A18");
     expect(brief.overlay?.headlineLines).toEqual(["老大已拿34.2万Offer", "老二刚进终面"]);
   });

@@ -154,77 +154,56 @@ function drawBuyerCCoverOverlay(
   const isParentRelay = Boolean(overlay.imageLabel);
   context.textBaseline = "middle";
 
-  context.save();
-  context.shadowColor = "rgba(0,0,0,0.28)";
-  context.shadowBlur = 18;
-  fillRoundRect(context, 132, 138, 760, 86, 8, overlay.accentColor);
-  context.restore();
-  context.fillStyle = "#FFFFFF";
-  context.font = "800 34px sans-serif";
-  context.textAlign = "center";
-  context.fillText(overlay.venueBanner, 512, 181, 700);
-
-  if (isParentRelay && overlay.venueName) {
-    fillRoundRect(context, 58, 254, 610, 66, 10, "rgba(255,255,255,0.88)");
-    context.fillStyle = "#20242A";
-    context.font = "900 31px sans-serif";
-    context.textAlign = "left";
-    context.fillText(overlay.venueName, 82, 287, 560);
-  }
-
-  if (isParentRelay && overlay.candidateNumber) {
-    fillRoundRect(context, 770, 360, 210, 326, 12, "#0B52C5");
-    context.fillStyle = "#DCE8FF";
-    context.font = "700 24px sans-serif";
-    context.textAlign = "center";
-    context.fillText("当前叫号", 875, 408, 170);
+  // 家长双线接力体的现场招牌、叫号屏与手机邮件由 GPT Image 2 直接融入照片。
+  // 其他买家 C 封面继续使用确定性的网页叠层。
+  if (!isParentRelay) {
+    context.save();
+    context.shadowColor = "rgba(0,0,0,0.28)";
+    context.shadowBlur = 18;
+    fillRoundRect(context, 132, 138, 760, 86, 8, overlay.accentColor);
+    context.restore();
     context.fillStyle = "#FFFFFF";
-    context.font = "900 72px sans-serif";
-    context.fillText(overlay.candidateNumber, 875, 492, 170);
-    context.font = "700 22px sans-serif";
-    context.fillText("请到", 875, 572, 170);
-    context.font = "800 28px sans-serif";
-    context.fillText(overlay.queueRoom || "终面会场", 875, 624, 170);
-  }
+    context.font = "800 34px sans-serif";
+    context.textAlign = "center";
+    context.fillText(overlay.venueBanner, 512, 181, 700);
 
-  context.save();
-  const emailX = isParentRelay ? 50 : 92;
-  const emailY = isParentRelay ? 500 : 400;
-  const emailWidth = isParentRelay ? 620 : 710;
-  context.translate(emailX, emailY);
-  context.rotate(-0.065);
-  context.shadowColor = "rgba(0,0,0,0.34)";
-  context.shadowBlur = 30;
-  fillRoundRect(context, 0, 0, emailWidth, 405, 18, "#FFFFFF");
-  context.shadowBlur = 0;
-  fillRoundRect(context, 0, 0, emailWidth, 16, 8, overlay.accentColor);
-  context.textAlign = "left";
-  context.fillStyle = "#1F2937";
-  context.font = "800 31px sans-serif";
-  context.fillText(overlay.emailSender, 42, 65, emailWidth - 90);
-  context.fillStyle = "#6B7280";
-  context.font = "500 22px sans-serif";
-  context.fillText("recruiting@••••••.com", 42, 105);
-  context.fillStyle = overlay.accentColor;
-  context.font = "800 34px sans-serif";
-  context.fillText(overlay.emailSubject, 42, 164, emailWidth - 90);
-  context.strokeStyle = "#E5E7EB";
-  context.lineWidth = 2;
-  context.beginPath();
-  context.moveTo(42, 198);
-  context.lineTo(emailWidth - 42, 198);
-  context.stroke();
-  context.fillStyle = "#374151";
-  context.font = "600 24px sans-serif";
-  overlay.emailRows.slice(0, 4).forEach((row, index) => {
-    context.fillText(row, 42, 238 + index * 40, emailWidth - 100);
-  });
-  fillRoundRect(context, emailWidth - 200, 338, 155, 42, 8, "#F3F4F6");
-  context.fillStyle = "#6B7280";
-  context.font = "700 19px sans-serif";
-  context.textAlign = "center";
-  context.fillText("关键内容已隐去", emailWidth - 122, 359, 145);
-  context.restore();
+    context.save();
+    const emailWidth = 710;
+    context.translate(92, 400);
+    context.rotate(-0.065);
+    context.shadowColor = "rgba(0,0,0,0.34)";
+    context.shadowBlur = 30;
+    fillRoundRect(context, 0, 0, emailWidth, 405, 18, "#FFFFFF");
+    context.shadowBlur = 0;
+    fillRoundRect(context, 0, 0, emailWidth, 16, 8, overlay.accentColor);
+    context.textAlign = "left";
+    context.fillStyle = "#1F2937";
+    context.font = "800 31px sans-serif";
+    context.fillText(overlay.emailSender, 42, 65, emailWidth - 90);
+    context.fillStyle = "#6B7280";
+    context.font = "500 22px sans-serif";
+    context.fillText("recruiting@••••••.com", 42, 105);
+    context.fillStyle = overlay.accentColor;
+    context.font = "800 34px sans-serif";
+    context.fillText(overlay.emailSubject, 42, 164, emailWidth - 90);
+    context.strokeStyle = "#E5E7EB";
+    context.lineWidth = 2;
+    context.beginPath();
+    context.moveTo(42, 198);
+    context.lineTo(emailWidth - 42, 198);
+    context.stroke();
+    context.fillStyle = "#374151";
+    context.font = "600 24px sans-serif";
+    overlay.emailRows.slice(0, 4).forEach((row, index) => {
+      context.fillText(row, 42, 238 + index * 40, emailWidth - 100);
+    });
+    fillRoundRect(context, emailWidth - 200, 338, 155, 42, 8, "#F3F4F6");
+    context.fillStyle = "#6B7280";
+    context.font = "700 19px sans-serif";
+    context.textAlign = "center";
+    context.fillText("关键内容已隐去", emailWidth - 122, 359, 145);
+    context.restore();
+  }
 
   const gradient = context.createLinearGradient(0, 850, 0, 1536);
   gradient.addColorStop(0, "rgba(10, 12, 16, 0)");
@@ -1420,11 +1399,11 @@ export default function XiaohongshuNotesPage() {
                     </div>
                     <div className="mt-1 text-xs leading-5 text-ink-500">
                       {chosenDraft.structure_name === PARENT_RELAY_STRUCTURE_NAME
-                        ? "系统会从正文提取老二招聘现场与老大Offer结果，生成野生招聘现场底图，再稳定叠加招牌、叫号屏、脱敏邮件和橙红描边黄底大字。"
+                        ? "系统会从正文提取老二招聘现场与老大Offer结果，由 GPT Image 2 把招牌、叫号屏和手机里的脱敏邮件直接融入野生现场；网页只叠加橙红描边黄底大字与演绎标识。"
                         : "仅此方向开放。系统生成野生招聘现场底图，再稳定叠加企业招牌、脱敏Offer邮件卡片和橙红描边黄底大字。"}
                     </div>
                     <div className="mt-1 text-xs leading-5 text-ink-400">
-                      系统叠加虚构企业招聘招牌、脱敏情景Offer邮件和大字标题，并保留“情景演绎 / 示意图”标识。
+                      家长双线接力体不再使用巨型悬浮邮件卡；现场文字和Offer邮件会跟随建筑、横幅、电子屏与手机透视自然生成。
                     </div>
                   </div>
                   <div className="flex flex-wrap gap-2">
@@ -2006,17 +1985,21 @@ function BuyerCCoverPreview({
         className="object-cover"
       />
 
-      <div
-        className="absolute left-[13%] right-[13%] top-[9%] rounded-sm px-2 py-1.5 text-center text-[9px] font-extrabold tracking-wide text-white shadow-lg md:text-xs"
-        style={{ backgroundColor: overlay.accentColor }}
-      >
-        {overlay.venueBanner}
-      </div>
-      <div className="absolute right-[6%] top-[17%] max-w-[44%] rounded-sm bg-white/90 px-2 py-1 text-right text-[8px] font-black leading-tight shadow md:text-[10px]" style={{ color: overlay.accentColor }}>
-        {overlay.companyLine}
-      </div>
+      {!isParentRelay && (
+        <>
+          <div
+            className="absolute left-[13%] right-[13%] top-[9%] rounded-sm px-2 py-1.5 text-center text-[9px] font-extrabold tracking-wide text-white shadow-lg md:text-xs"
+            style={{ backgroundColor: overlay.accentColor }}
+          >
+            {overlay.venueBanner}
+          </div>
+          <div className="absolute right-[6%] top-[17%] max-w-[44%] rounded-sm bg-white/90 px-2 py-1 text-right text-[8px] font-black leading-tight shadow md:text-[10px]" style={{ color: overlay.accentColor }}>
+            {overlay.companyLine}
+          </div>
+        </>
+      )}
 
-      {isParentRelay && overlay.candidateNumber && (
+      {!isParentRelay && overlay.candidateNumber && (
         <div className="absolute right-[5%] top-[27%] w-[22%] rounded-md bg-blue-700 px-1.5 py-2 text-center text-white shadow-xl">
           <div className="text-[7px] font-semibold text-blue-100 md:text-[9px]">当前叫号</div>
           <div className="mt-0.5 text-xl font-black leading-none md:text-3xl">{overlay.candidateNumber}</div>
@@ -2025,22 +2008,24 @@ function BuyerCCoverPreview({
         </div>
       )}
 
-      <div className={`absolute -rotate-[4deg] overflow-hidden rounded-md bg-white shadow-2xl ${isParentRelay ? "left-[5%] top-[34%] w-[60%]" : "left-[7%] top-[27%] w-[72%]"}`}>
-        <div className="h-1.5" style={{ backgroundColor: overlay.accentColor }} />
-        <div className="p-2.5 md:p-3">
-          <div className="text-[9px] font-extrabold text-slate-800 md:text-xs">{overlay.emailSender}</div>
-          <div className="text-[7px] text-slate-400 md:text-[9px]">recruiting@••••••.com</div>
-          <div className="mt-1.5 border-b border-slate-200 pb-1.5 text-[10px] font-black md:text-sm" style={{ color: overlay.accentColor }}>
-            {overlay.emailSubject}
-          </div>
-          <div className="mt-1.5 space-y-0.5 text-[7px] leading-tight text-slate-600 md:text-[9px]">
-            {overlay.emailRows.map((row) => <div key={row}>{row}</div>)}
-          </div>
-          <div className="mt-1.5 inline-flex rounded bg-slate-100 px-1.5 py-0.5 text-[6px] font-bold text-slate-500 md:text-[8px]">
-            关键内容已隐去
+      {!isParentRelay && (
+        <div className="absolute left-[7%] top-[27%] w-[72%] -rotate-[4deg] overflow-hidden rounded-md bg-white shadow-2xl">
+          <div className="h-1.5" style={{ backgroundColor: overlay.accentColor }} />
+          <div className="p-2.5 md:p-3">
+            <div className="text-[9px] font-extrabold text-slate-800 md:text-xs">{overlay.emailSender}</div>
+            <div className="text-[7px] text-slate-400 md:text-[9px]">recruiting@••••••.com</div>
+            <div className="mt-1.5 border-b border-slate-200 pb-1.5 text-[10px] font-black md:text-sm" style={{ color: overlay.accentColor }}>
+              {overlay.emailSubject}
+            </div>
+            <div className="mt-1.5 space-y-0.5 text-[7px] leading-tight text-slate-600 md:text-[9px]">
+              {overlay.emailRows.map((row) => <div key={row}>{row}</div>)}
+            </div>
+            <div className="mt-1.5 inline-flex rounded bg-slate-100 px-1.5 py-0.5 text-[6px] font-bold text-slate-500 md:text-[8px]">
+              关键内容已隐去
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
       <div className="absolute inset-0 bg-gradient-to-b from-transparent via-transparent to-black/65" />
       <div className="absolute left-3 top-3 rounded bg-black/75 px-2 py-1 text-[8px] font-bold text-white md:text-[10px]">

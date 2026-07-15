@@ -155,14 +155,14 @@ export function buildParentRelayImagePrompt(
 ) {
   const composition =
     variant === "结果对照版"
-      ? "采用略低机位的侧后方抓拍，成年孩子正在跨进玻璃门；前景左侧为系统叠加Offer邮件卡预留约30%无遮挡空间，右侧蓝色叫号屏区域清楚，建筑入口与人流形成真实透视。"
-      : "采用家长站在后方约5米处的广角手机抓拍；成年孩子位于中下部偏右，完整背影和走路动作清楚，入口人流、折叠椅与签到桌丰富但不抢主体，前景左侧为系统叠加Offer邮件卡预留约25%无遮挡空间。";
-  const scene = `${facts.venueName}的${facts.venueDetail}招聘入口，普通公共建筑玻璃门、米灰色石墙、灰色折叠椅、签到桌、矿泉水、自然求职者人流，墙面上方有空白建筑招牌区，入口上方有一条无字红色横幅，人物右侧有一块无字蓝色电子叫号屏。`;
+      ? `家长站在入口外的近景手机抓拍：画面左下前景自然出现家长单手拿着的手机，手机约占画面宽度28%，屏幕打开一封来自“${facts.offerCompany}”的邮件，主题为“录用通知”，可读到“${facts.offerCity}${facts.offerRole}”“年薪 ${facts.offerSalary}”，姓名、邮箱和编号用灰色马赛克遮住；手机之后的中景里，成年孩子正跨进玻璃门，形成“老大Offer结果＋老二当前招聘现场”的真实景深关系。`
+      : `家长站在孩子身后约5米处的广角手机抓拍：成年孩子位于中下部偏右，正拿着${facts.handheldItems}走向玻璃门；画面左边缘带到家长半个肩膀和一只拿手机的手，手机屏幕里小幅显示来自“${facts.offerCompany}”的脱敏录用邮件，但不抢主体；入口人流、折叠椅和签到桌形成自然现场层次。`;
+  const scene = `${facts.venueName}的${facts.venueDetail}招聘入口，普通公共建筑玻璃门、米灰色石墙、灰色折叠椅、临时签到桌、矿泉水和自然求职者人流。建筑石墙上真实安装“${facts.venueName}”金属字；入口上方真实悬挂红底白字横幅“${facts.recruitmentEvent}”；门内右侧电子屏自然显示“当前叫号 ${facts.candidateNumber} / 请到 ${facts.queueRoom}”。这些文字属于现场本身，要顺着墙面、布料和屏幕的透视、光线与遮挡自然存在，不能像网页贴纸。`;
   const visualStyle =
-    "中国留学生家长视角的高质量写实手机纪实摄影，自然午后光线，轻微手持倾斜，构图不完全对称，曝光不完全均匀，边缘可有被截断的成年人路人；像家长在孩子进场前一秒临时拍下，不要影棚光、商业广告片质感、电影滤镜或过度精修。";
-  const imagePrompt = `Use case: ads-marketing。Asset type: 小红书2:3竖版首图底图。根据“家长双线接力体”文章生成野生招聘现场抓拍。场景：${scene} 主体：一名二十多岁的中国${facts.candidateGender}留学生，穿${facts.candidateClothing}，背对镜头走向会场，手拿${facts.handheldItems}，不露脸、不摆拍。${composition} ${visualStyle} 画面必须为后续系统叠加“${facts.recruitmentEvent}”招聘横幅、“当前叫号 ${facts.candidateNumber} / ${facts.queueRoom}”叫号屏、${facts.offerCompany}脱敏Offer邮件和底部两行大标题预留清楚、互不遮挡的空间。画面本身不要生成任何文字、汉字、字母、数字、Logo、邮件、证件或水印。所有人物必须为成年人。`;
+    "中国留学生家长视角的普通手机纪实摄影，像真实家长临时从口袋里掏出手机拍下：26mm广角感、自然午后光、轻微手抖和倾斜、自动曝光略不均匀、普通手机HDR、轻微JPEG压缩，画面边缘可以截断成年路人，现场略乱但可信。不要影棚光、商业广告片、电影滤镜、夸张景深、完美对称或过度精修。";
+  const imagePrompt = `Use case: ads-marketing。Asset type: 小红书2:3竖版完整首图。根据“家长双线接力体”文章，生成一张所有元素已经融入同一光线、同一透视和同一现场的野生招聘现场抓拍。场景：${scene} 主体：一名二十多岁的中国${facts.candidateGender}留学生，穿${facts.candidateClothing}，背对镜头走向会场，手拿${facts.handheldItems}，不露脸、不摆拍。${composition} ${visualStyle} 现场文字、招聘横幅、叫号屏和手机里的脱敏Offer邮件必须直接生成在照片对应物体上，大小克制、符合透视，不得做成漂浮UI或后贴海报。画面底部约22%保留相对干净的地面或深色背景，供系统最后叠加两行标题“${facts.headlineLines[0]} / ${facts.headlineLines[1]}”，图片本身不要生成这两行大标题。除指定的现场文字和脱敏邮件外，不要添加其他文字、Logo、印章、二维码或水印。所有人物必须为成年人。`;
   const negativePrompt =
-    "不要任何文字、汉字、字母、数字、标题、Logo或水印；不要真实企业或学校标识；不要Offer、合同、邮件、印章、编号、邮箱或证件；不要AI感人脸、正脸特写、摆拍、奢华会场、空白展厅、未成年人、卡通、畸形手部、过度电影感";
+    "不要悬浮白色邮件卡、巨大Offer面板、巨大蓝色叫号卡、网页UI拼贴、PPT模板、几何海报排版、空白红横幅、空白电子屏；不要真实企业Logo、印章、二维码、完整姓名、完整邮箱或可识别编号；不要正脸特写、摆拍、奢华会场、空白展厅、未成年人、卡通、畸形手部、过度电影感；不要在图片内生成底部两行大标题";
 
   return {
     imageLabel: PARENT_RELAY_IMAGE_LABEL,

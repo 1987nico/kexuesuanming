@@ -63,7 +63,7 @@ export function buildCoverBrief(input: CoverBriefInput): CoverBrief {
         visualStyle: relayPrompt.visualStyle,
         negativePrompt: relayPrompt.negativePrompt,
         imagePrompt: relayPrompt.imagePrompt,
-        overlayGuidance: `文章已自动提取为“老二招聘现场＋老大Offer邮件”同框结构；系统会叠加“${overlay.venueBanner}”、叫号屏、脱敏Offer邮件、橙红描边黄底两行大字，并标注“${relayPrompt.imageLabel}”。`,
+        overlayGuidance: `文章已自动提取为“老二招聘现场＋老大Offer邮件”同框结构；GPT Image 2 会把“${overlay.venueBanner}”、叫号屏和手机里的脱敏Offer邮件直接融入现场，系统只稳定叠加橙红描边黄底两行大字与演绎标识，并标注“${relayPrompt.imageLabel}”。`,
         overlay,
         imageLabel: relayPrompt.imageLabel,
       };
