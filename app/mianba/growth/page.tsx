@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import MianbaLogoutButton from "@/app/mianba/MianbaLogoutButton";
 import type {
   ContentDraft,
@@ -200,6 +200,9 @@ function latestSourceForMethod(sources: TopicSourceSnapshot[], methodId: TitleMe
     .sort((a, b) => b.collected_at.localeCompare(a.collected_at))[0];
 }
 
+const workspaceKey = (businessLine: GrowthBusinessLine, persona: GrowthPersona) =>
+  `${businessLine}:${persona}`;
+
 export default function GrowthPage() {
   const [businessLine, setBusinessLine] = useState<GrowthBusinessLine>("overseas_student");
   const [persona, setPersona] = useState<GrowthPersona>("buyer");
@@ -221,40 +224,94 @@ export default function GrowthPage() {
   const [personaOpen, setPersonaOpen] = useState(false);
   const [personaEditing, setPersonaEditing] = useState(false);
   const [businessEditOpen, setBusinessEditOpen] = useState(false);
+  const workspaceCache = useRef(new Map<string, BootstrapData>());
+  const workspaceRequests = useRef(new Map<string, Promise<BootstrapData>>());
+  const activeWorkspace = useRef(workspaceKey("overseas_student", "buyer"));
+  const prefetchStarted = useRef(false);
 
-  const load = useCallback(async (nextBusinessLine: GrowthBusinessLine, nextPersona: GrowthPersona) => {
+  const applyWorkspaceData = useCallback((next: BootstrapData | null) => {
+    setData(next);
+    setForm(next?.account ? accountForm(next.account) : { ...emptyAccount });
+    setVariants([]);
+    setActiveTopic(null);
+    setChosen(next?.currentDrafts?.find((draft) => draft.status === "ready") || null);
+    setTitleEdits({});
+    setSavingTitleId(null);
+    setExploreOpen({ native: false, benchmark: false });
+    setSourceEditorMethod(null);
+    setSource(emptySource);
+    setReviewDraft(null);
+    setReviewValues(emptyReview());
+    setReviewBaseline(emptyReview());
+    setPersonaOpen(false);
+    setPersonaEditing(false);
+    setBusinessEditOpen(false);
+  }, []);
+
+  const fetchWorkspace = useCallback((nextBusinessLine: GrowthBusinessLine, nextPersona: GrowthPersona) => {
+    const key = workspaceKey(nextBusinessLine, nextPersona);
+    const existing = workspaceRequests.current.get(key);
+    if (existing) return existing;
+    const request = requestJSON<BootstrapData>(
+      `/api/growth/bootstrap?businessLine=${nextBusinessLine}&persona=${nextPersona}`,
+    ).finally(() => workspaceRequests.current.delete(key));
+    workspaceRequests.current.set(key, request);
+    return request;
+  }, []);
+
+  const load = useCallback(async (
+    nextBusinessLine: GrowthBusinessLine,
+    nextPersona: GrowthPersona,
+    force = false,
+  ) => {
+    const key = workspaceKey(nextBusinessLine, nextPersona);
+    activeWorkspace.current = key;
+    const cached = workspaceCache.current.get(key);
+    if (cached && !force) {
+      applyWorkspaceData(cached);
+      setBusy(null);
+      return;
+    }
+    if (!cached) applyWorkspaceData(null);
     setBusy("load");
     setMessage("");
     try {
-      const next = await requestJSON<BootstrapData>(
-        `/api/growth/bootstrap?businessLine=${nextBusinessLine}&persona=${nextPersona}`,
-      );
-      setData(next);
-      setForm(next.account ? accountForm(next.account) : { ...emptyAccount });
-      setVariants([]);
-      setActiveTopic(null);
-      setChosen(next.currentDrafts.find((draft) => draft.status === "ready") || null);
-      setTitleEdits({});
-      setSavingTitleId(null);
-      setExploreOpen({ native: false, benchmark: false });
-      setSourceEditorMethod(null);
-      setSource(emptySource);
-      setReviewDraft(null);
-      setReviewValues(emptyReview());
-      setReviewBaseline(emptyReview());
-      setPersonaOpen(false);
-      setPersonaEditing(false);
-      setBusinessEditOpen(false);
+      const next = await fetchWorkspace(nextBusinessLine, nextPersona);
+      workspaceCache.current.set(key, next);
+      if (activeWorkspace.current === key) applyWorkspaceData(next);
+
+      if (!prefetchStarted.current) {
+        prefetchStarted.current = true;
+        const remaining = GROWTH_BUSINESS_LINES.flatMap((line) =>
+          GROWTH_PERSONAS.map((view) => ({ line, view })))
+          .filter((item) => workspaceKey(item.line, item.view) !== key);
+        void (async () => {
+          for (const item of remaining) {
+            const backgroundKey = workspaceKey(item.line, item.view);
+            if (workspaceCache.current.has(backgroundKey)) continue;
+            try {
+              const background = await fetchWorkspace(item.line, item.view);
+              workspaceCache.current.set(backgroundKey, background);
+            } catch {
+              // 后台预取失败不影响当前页面；切换时会自动重试。
+            }
+          }
+        })();
+      }
     } catch (error) {
-      setMessage((error as Error).message);
+      if (activeWorkspace.current === key) setMessage((error as Error).message);
     } finally {
-      setBusy(null);
+      if (activeWorkspace.current === key) setBusy(null);
     }
-  }, []);
+  }, [applyWorkspaceData, fetchWorkspace]);
 
   useEffect(() => {
     void load(businessLine, persona);
   }, [businessLine, persona, load]);
+
+  useEffect(() => {
+    if (data) workspaceCache.current.set(workspaceKey(businessLine, persona), data);
+  }, [businessLine, data, persona]);
 
   const businessDefinition = GROWTH_BUSINESS_DEFINITIONS[businessLine];
   const runs = useMemo(() => ({
@@ -277,13 +334,17 @@ export default function GrowthPage() {
 
   function switchBusiness(next: GrowthBusinessLine) {
     if (next === businessLine) return;
-    setData(null);
+    const key = workspaceKey(next, persona);
+    activeWorkspace.current = key;
+    applyWorkspaceData(workspaceCache.current.get(key) ?? null);
     setBusinessLine(next);
   }
 
   function switchPersona(next: GrowthPersona) {
     if (next === persona) return;
-    setData(null);
+    const key = workspaceKey(businessLine, next);
+    activeWorkspace.current = key;
+    applyWorkspaceData(workspaceCache.current.get(key) ?? null);
     setPersona(next);
   }
 
@@ -360,7 +421,7 @@ export default function GrowthPage() {
           published_at: new Date(source.published_at).toISOString(),
         }),
       });
-      await load(businessLine, persona);
+      await load(businessLine, persona, true);
       setMessage(`${result.validation.message}；${result.usable ? "已进入近期可用池" : "当前不参与标题生成"}。`);
     } catch (error) {
       setMessage((error as Error).message);
@@ -384,7 +445,7 @@ export default function GrowthPage() {
         method: "PATCH",
         body: JSON.stringify({ accountId: data.account.id, verified_by_operator: verified }),
       });
-      await load(businessLine, persona);
+      await load(businessLine, persona, true);
       setMessage(`${result.validation.message}；${result.usable ? "可参与生成" : "不参与生成"}。`);
     } catch (error) {
       setMessage((error as Error).message);
@@ -487,7 +548,7 @@ export default function GrowthPage() {
         method: "POST",
         body: JSON.stringify({ draft }),
       });
-      await load(businessLine, persona);
+      await load(businessLine, persona, true);
       setChosen(result.draft);
       setMessage("已选定最终正文；开放标签会在后台只依据这个版本生成。");
     } catch (error) {
@@ -504,7 +565,7 @@ export default function GrowthPage() {
         method: "POST",
         body: JSON.stringify({ published_at: new Date(publishedAt).toISOString() }),
       });
-      await load(businessLine, persona);
+      await load(businessLine, persona, true);
       setMessage("已记录实际发布时间，这篇内容已进入单篇复盘；满24小时后可保存复盘数据。");
     } catch (error) {
       setMessage((error as Error).message);
@@ -566,7 +627,7 @@ export default function GrowthPage() {
         { method: existing ? "PATCH" : "POST", body: JSON.stringify(payload) },
       );
       setReviewDraft(null);
-      await load(businessLine, persona);
+      await load(businessLine, persona, true);
       setMessage(`复盘已保存；本次更新：${result.changedFields.join("、") || "无指标变化"}。`);
     } catch (error) {
       setMessage((error as Error).message);
@@ -583,17 +644,13 @@ export default function GrowthPage() {
         method: "POST",
         body: JSON.stringify({ accountId: data.account.id, snapshot: true }),
       });
-      await load(businessLine, persona);
+      await load(businessLine, persona, true);
       setMessage("已保存固定周期快照；实时汇总不会覆盖上一周期。");
     } catch (error) {
       setMessage((error as Error).message);
     } finally {
       setBusy(null);
     }
-  }
-
-  if (busy === "load" && !data) {
-    return <main className="mx-auto max-w-6xl p-8 text-center text-slate-500">正在载入增长系统…</main>;
   }
 
   return (
@@ -625,8 +682,7 @@ export default function GrowthPage() {
           <div className="mb-6 rounded-2xl border border-[#ead7b5] bg-[#fffaf0] px-5 py-3 text-sm">{message}</div>
         )}
 
-        {data && (
-          <div className="space-y-6">
+        <div className="space-y-6">
             <Section
               number="0"
               title="先选业务定位"
@@ -670,7 +726,7 @@ export default function GrowthPage() {
                 </div>
                 {businessEditOpen && (
                   <div className="mt-5 rounded-xl bg-slate-50 p-4 text-sm leading-6 text-slate-600">
-                    本地预览沿用线上两条业务母定位。本轮可检查信息结构；正式编辑仍走现有业务定位保存接口，不写生产数据。
+                    两条业务母定位彼此独立；调整后只更新当前业务，不影响另一条业务的人设、标题和复盘数据。
                   </div>
                 )}
               </div>
@@ -710,7 +766,7 @@ export default function GrowthPage() {
             >
               <div className="rounded-2xl bg-slate-50 p-4">
                 <div className="text-xs font-medium text-slate-500">一句话人设</div>
-                <div className="mt-2 text-lg font-semibold">{form.one_liner || "尚未生成"}</div>
+                <div className="mt-2 min-h-7 text-lg font-semibold">{form.one_liner || (busy === "load" ? "—" : "尚未生成")}</div>
                 <div className="mt-4 flex flex-wrap gap-2">
                   <SecondaryButton onClick={() => setPersonaOpen((open) => !open)}>
                     {personaOpen ? "收起人设" : "展开人设"}
@@ -720,7 +776,7 @@ export default function GrowthPage() {
                 </div>
               </div>
 
-              {personaOpen && data.account && (
+              {personaOpen && data?.account && (
                 <div className="mt-5">
                   {personaEditing ? (
                     <div className="grid gap-4 md:grid-cols-2">
@@ -796,7 +852,7 @@ export default function GrowthPage() {
               )}
             </Section>
 
-            {data.account && (
+            {data?.account && (
               <>
                 <Section
                   number="3"
@@ -917,8 +973,7 @@ export default function GrowthPage() {
                 </Section>
               </>
             )}
-          </div>
-        )}
+        </div>
       </div>
 
       {reviewDraft && (

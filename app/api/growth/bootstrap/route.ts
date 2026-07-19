@@ -53,11 +53,16 @@ export async function GET(req: Request) {
   // 工作台隔离：操作者只取「自己的或未归属」账号；管理员不限
   const ownerScope = guard.auth.role === "admin" ? undefined : guard.auth.user.id;
   const account = await store.getLatestAccountByPersona(DEFAULT_TENANT_ID, persona, ownerScope, businessLine);
-  const plan = account ? await store.getLatestPlan(account.id) : null;
-  const runs = account ? await store.listRuns(account.id) : [];
-  const drafts = account ? await store.listDrafts(account.id) : [];
+  // 人设确定后，计划、选题、正文和复盘彼此独立，并行读取以缩短切换等待。
+  const [plan, runs, drafts, reviewList] = account
+    ? await Promise.all([
+      store.getLatestPlan(account.id),
+      store.listRuns(account.id),
+      store.listDrafts(account.id),
+      store.listReviewsByAccount(account.id),
+    ])
+    : [null, [], [], []] as const;
   // 以笔记为单元：返回每篇笔记对应的复盘（draftId -> review），供历史查看
-  const reviewList = account ? await store.listReviewsByAccount(account.id) : [];
   const reviews: Record<string, (typeof reviewList)[number]> = {};
   for (const review of reviewList) {
     if (!reviews[review.draft_id]) reviews[review.draft_id] = review;
