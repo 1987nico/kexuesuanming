@@ -59,9 +59,33 @@ function matchesOwner(account: GrowthAccount, ownerUserId?: string) {
   return account.owner_user_id === ownerUserId || account.owner_user_id == null;
 }
 
+export function inferGrowthBusinessLine(account: GrowthAccount): GrowthBusinessLine {
+  if (account.business_line) return account.business_line;
+
+  const legacyText = [
+    account.name,
+    account.target_user,
+    account.core_problem,
+    account.account_value,
+    account.trust_source,
+    account.one_liner,
+    account.follow_reason,
+    ...(account.content_directions ?? []),
+    ...Object.values(account.persona_specific ?? {}),
+  ].filter(Boolean).join(" ").toLowerCase();
+
+  const overseasSignals = ["留学生", "留学", "回国求职", "海外秋招", "秋招陪跑", "offer"];
+  const executiveSignals = ["中高管", "高管", "职业决策", "事业方向", "职业参谋", "管理层转型"];
+  const overseasScore = overseasSignals.filter((signal) => legacyText.includes(signal)).length;
+  const executiveScore = executiveSignals.filter((signal) => legacyText.includes(signal)).length;
+
+  if (overseasScore > executiveScore) return "overseas_student";
+  return "executive";
+}
+
 function matchesBusinessLine(account: GrowthAccount, businessLine?: GrowthBusinessLine) {
   if (!businessLine) return true;
-  return (account.business_line ?? "executive") === businessLine;
+  return inferGrowthBusinessLine(account) === businessLine;
 }
 
 function defaultBusinessSettings(tenantId: string): BusinessSettings {

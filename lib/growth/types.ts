@@ -183,7 +183,7 @@ export interface GrowthAccount {
   id: string;
   tenant_id: string;
   owner_user_id?: string | null;
-  /** 旧账号未保存该字段时按中高管业务兼容。 */
+  /** 旧账号未保存该字段时根据人设内容兼容识别业务线。 */
   business_line?: GrowthBusinessLine;
   persona: GrowthPersona;
   name: string;
