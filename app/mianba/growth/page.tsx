@@ -644,9 +644,22 @@ export default function GrowthPage() {
         method: "POST",
         body: JSON.stringify({ draft }),
       });
-      await load(businessLine, persona, true);
+      setVariants([]);
       setChosen(result.draft);
-      setMessage("已选定最终正文；开放标签会在后台只依据这个版本生成。");
+      setData((current) => current ? {
+        ...current,
+        currentDrafts: [
+          result.draft,
+          ...current.currentDrafts.filter((item) => item.id !== result.draft.id),
+        ],
+        runs: current.runs.map((item) => item.id === result.draft.run_id
+          ? { ...item, status: "ready", draft: result.draft }
+          : item),
+      } : current);
+      setMessage("已选定最终正文；下方已显示复制标题和复制正文按钮。");
+      window.setTimeout(() => {
+        document.getElementById("selected-final-draft")?.scrollIntoView({ behavior: "smooth", block: "start" });
+      }, 0);
     } catch (error) {
       setMessage((error as Error).message);
     } finally {
@@ -1137,7 +1150,7 @@ export default function GrowthPage() {
                   )}
 
                   {chosen && (
-                    <div className="mt-7 border-t border-slate-200 pt-6">
+                    <div id="selected-final-draft" className="scroll-mt-24 mt-7 border-t border-slate-200 pt-6">
                       <h3 className="text-lg font-semibold">已选最终正文</h3>
                       <p className="mt-1 text-sm text-slate-500">发布前只做来源、身份、兑现、合规四项硬校验。</p>
                       <div className="mt-4">
