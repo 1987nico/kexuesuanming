@@ -27,6 +27,21 @@ export interface GrowthBusinessDefinition {
   personas: Record<GrowthPersona, { role: string; description: string }>;
 }
 
+/**
+ * 两条业务各自独立的母定位。产品页面允许编辑这些业务事实，
+ * 三种内容视角在生成或重新生成人设时共同继承当前业务的母定位。
+ */
+export interface GrowthBusinessPosition {
+  business_line: GrowthBusinessLine;
+  service_category: string;
+  target_user: string;
+  core_problem: string;
+  main_offer: string;
+  differentiation: string;
+  trust_source: string;
+  compliance_redline: string;
+}
+
 export const GROWTH_BUSINESS_DEFINITIONS: Record<GrowthBusinessLine, GrowthBusinessDefinition> = {
   overseas_student: {
     label: "留学生求职辅导",
@@ -630,6 +645,8 @@ export interface BusinessSettings {
   tenant_id: string;
   report_lite_price: string; // 初步诊断报告价格（字符串，允许写「199」或「199 元」等）
   report_deep_price: string; // 深度诊断报告价格
+  /** 两条业务母定位独立保存；旧设置没有该字段时使用系统默认值。 */
+  business_positions?: Partial<Record<GrowthBusinessLine, GrowthBusinessPosition>>;
   updated_at: string;
 }
 

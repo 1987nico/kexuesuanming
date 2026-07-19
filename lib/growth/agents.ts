@@ -1,5 +1,6 @@
 import type {
   GrowthBusinessLine,
+  GrowthBusinessPosition,
   GrowthPersona,
   MethodGenerationMode,
   RawBodyTag,
@@ -80,6 +81,20 @@ export function mianbaBusiness(prices: ReportPrices, businessLine: GrowthBusines
 `.trim();
 }
 
+function businessPositionBlock(position?: GrowthBusinessPosition) {
+  if (!position) return "";
+  return `
+【当前业务母定位｜以下内容优先于系统默认业务描述】
+- 你是什么（品类）：${position.service_category}
+- 主营服务：${position.main_offer}
+- 目标用户：${position.target_user}
+- 核心问题：${position.core_problem}
+- 有何不同：${position.differentiation}
+- 何以见得（信任来源）：${position.trust_source}
+- 合规红线：${position.compliance_redline}
+`.trim();
+}
+
 export const GROWTH_SYSTEM_PROMPT = `
 你是「小红书内容工厂 V3.1：方法探索与有效咨询版」。
 
@@ -116,6 +131,7 @@ export function buildAccountPlanUserPrompt(input: {
   coreProblem?: string;
   trustSource?: string;
   reportPrices: ReportPrices;
+  businessPosition?: GrowthBusinessPosition;
 }) {
   const persona = input.persona ?? "expert";
   const businessLine = input.businessLine ?? "executive";
@@ -144,6 +160,7 @@ export function buildAccountPlanUserPrompt(input: {
 请以总经理 V3 身份，为这个账号生成账号定位卡和 30 天实验计划。
 
 ${mianbaBusiness(input.reportPrices, businessLine)}
+${businessPositionBlock(input.businessPosition)}
 【本视角怎么用面霸君业务】${mianbaUsage[persona]}
 
 ${personaGuide(persona)}

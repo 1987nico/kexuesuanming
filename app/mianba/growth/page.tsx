@@ -6,6 +6,7 @@ import type {
   ContentDraft,
   GrowthAccount,
   GrowthBusinessLine,
+  GrowthBusinessPosition,
   GrowthPersona,
   GrowthPlan,
   GrowthReview,
@@ -18,6 +19,7 @@ import type {
   TopicSourceSnapshot,
   WeeklyReviewResult,
 } from "@/lib/growth/types";
+import { DEFAULT_BUSINESS_POSITIONS } from "@/lib/growth/businessPosition";
 import {
   GROWTH_BUSINESS_DEFINITIONS,
   GROWTH_BUSINESS_LINES,
@@ -33,6 +35,8 @@ import {
 
 interface BootstrapData {
   businessLine: GrowthBusinessLine;
+  businessPosition: GrowthBusinessPosition;
+  businessPositions: Record<GrowthBusinessLine, GrowthBusinessPosition>;
   account: GrowthAccount | null;
   plan: GrowthPlan | null;
   runs: GrowthRun[];
@@ -224,6 +228,9 @@ export default function GrowthPage() {
   const [personaOpen, setPersonaOpen] = useState(false);
   const [personaEditing, setPersonaEditing] = useState(false);
   const [businessEditOpen, setBusinessEditOpen] = useState(false);
+  const [businessPositionForm, setBusinessPositionForm] = useState<GrowthBusinessPosition>(
+    DEFAULT_BUSINESS_POSITIONS.overseas_student,
+  );
   const workspaceCache = useRef(new Map<string, BootstrapData>());
   const workspaceRequests = useRef(new Map<string, Promise<BootstrapData>>());
   const activeWorkspace = useRef(workspaceKey("overseas_student", "buyer"));
@@ -246,6 +253,7 @@ export default function GrowthPage() {
     setPersonaOpen(false);
     setPersonaEditing(false);
     setBusinessEditOpen(false);
+    if (next?.businessPosition) setBusinessPositionForm(next.businessPosition);
   }, []);
 
   const fetchWorkspace = useCallback((nextBusinessLine: GrowthBusinessLine, nextPersona: GrowthPersona) => {
@@ -314,6 +322,7 @@ export default function GrowthPage() {
   }, [businessLine, data, persona]);
 
   const businessDefinition = GROWTH_BUSINESS_DEFINITIONS[businessLine];
+  const businessPosition = data?.businessPosition ?? DEFAULT_BUSINESS_POSITIONS[businessLine];
   const runs = useMemo(() => ({
     default: data?.runs.find((run) => run.generation_mode === "default"),
     explore: data?.runs.find((run) => run.generation_mode === "explore"),
@@ -336,6 +345,9 @@ export default function GrowthPage() {
     if (next === businessLine) return;
     const key = workspaceKey(next, persona);
     activeWorkspace.current = key;
+    setBusinessPositionForm(
+      workspaceCache.current.get(key)?.businessPosition ?? DEFAULT_BUSINESS_POSITIONS[next],
+    );
     applyWorkspaceData(workspaceCache.current.get(key) ?? null);
     setBusinessLine(next);
   }
@@ -368,6 +380,41 @@ export default function GrowthPage() {
       setForm(accountForm(result.account));
       setPersonaOpen(true);
       setMessage("人设已合并更新，视角专属字段、高级业务事实与历史字段均已保留。");
+    } catch (error) {
+      setMessage((error as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function saveBusinessPosition() {
+    setBusy("business-position");
+    setMessage("");
+    try {
+      const result = await requestJSON<{ position: GrowthBusinessPosition }>(
+        "/api/growth/business-position",
+        {
+          method: "PUT",
+          body: JSON.stringify(businessPositionForm),
+        },
+      );
+      const position = result.position;
+      for (const [key, cached] of workspaceCache.current.entries()) {
+        if (!key.startsWith(`${businessLine}:`)) continue;
+        workspaceCache.current.set(key, {
+          ...cached,
+          businessPosition: position,
+          businessPositions: { ...cached.businessPositions, [businessLine]: position },
+        });
+      }
+      setData((current) => current ? {
+        ...current,
+        businessPosition: position,
+        businessPositions: { ...current.businessPositions, [businessLine]: position },
+      } : current);
+      setBusinessPositionForm(position);
+      setBusinessEditOpen(false);
+      setMessage("业务定位已保存。三种视角下次生成或重新生成人设时会共同继承，另一条业务不受影响。");
     } catch (error) {
       setMessage((error as Error).message);
     } finally {
@@ -691,6 +738,7 @@ export default function GrowthPage() {
               <div className="grid gap-4 md:grid-cols-2">
                 {GROWTH_BUSINESS_LINES.map((item) => {
                   const definition = GROWTH_BUSINESS_DEFINITIONS[item];
+                  const position = data?.businessPositions?.[item] ?? DEFAULT_BUSINESS_POSITIONS[item];
                   const active = item === businessLine;
                   return (
                     <button
@@ -703,8 +751,8 @@ export default function GrowthPage() {
                         <div className="text-lg font-semibold">{definition.label}</div>
                         {active && <span className="rounded-full bg-slate-900 px-3 py-1 text-xs text-white">当前业务</span>}
                       </div>
-                      <div className="mt-2 text-sm text-slate-600">{definition.summary}</div>
-                      <div className="mt-2 text-xs leading-5 text-slate-500">服务：{definition.service}</div>
+                      <div className="mt-2 text-sm text-slate-600">{position.service_category}</div>
+                      <div className="mt-2 text-xs leading-5 text-slate-500">服务：{position.main_offer}</div>
                     </button>
                   );
                 })}
@@ -715,18 +763,75 @@ export default function GrowthPage() {
                   <div>
                     <div className="text-xs font-semibold tracking-wider text-slate-500">当前业务母定位</div>
                     <h3 className="mt-2 text-xl font-semibold">{businessDefinition.label}</h3>
-                    <p className="mt-2 text-sm text-slate-600">{businessDefinition.target}</p>
+                    <p className="mt-2 text-sm text-slate-600">{businessPosition.target_user}</p>
                   </div>
-                  <SecondaryButton onClick={() => setBusinessEditOpen((open) => !open)}>调整业务定位</SecondaryButton>
+                  <SecondaryButton onClick={() => {
+                    setBusinessPositionForm(businessPosition);
+                    setBusinessEditOpen((open) => !open);
+                  }}>
+                    {businessEditOpen ? "收起设置" : "调整业务定位"}
+                  </SecondaryButton>
                 </div>
                 <div className="mt-5 grid gap-4 md:grid-cols-3">
-                  <MotherFact label="你是什么（品类）" value={businessDefinition.category} />
-                  <MotherFact label="有何不同" value={businessDefinition.difference} />
-                  <MotherFact label="何以见得（信任来源）" value={businessDefinition.trust} />
+                  <MotherFact label="你是什么（品类）" value={businessPosition.service_category} />
+                  <MotherFact label="有何不同" value={businessPosition.differentiation} />
+                  <MotherFact label="何以见得（信任来源）" value={businessPosition.trust_source} />
                 </div>
                 {businessEditOpen && (
-                  <div className="mt-5 rounded-xl bg-slate-50 p-4 text-sm leading-6 text-slate-600">
-                    两条业务母定位彼此独立；调整后只更新当前业务，不影响另一条业务的人设、标题和复盘数据。
+                  <div className="mt-5 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                    <div className="grid gap-4 md:grid-cols-2">
+                      <TextInput
+                        label="你是什么（品类）"
+                        value={businessPositionForm.service_category}
+                        onChange={(value) => setBusinessPositionForm({ ...businessPositionForm, service_category: value })}
+                      />
+                      <TextInput
+                        label="主营服务"
+                        value={businessPositionForm.main_offer}
+                        onChange={(value) => setBusinessPositionForm({ ...businessPositionForm, main_offer: value })}
+                      />
+                      <TextArea
+                        label="目标用户"
+                        value={businessPositionForm.target_user}
+                        onChange={(value) => setBusinessPositionForm({ ...businessPositionForm, target_user: value })}
+                      />
+                      <TextArea
+                        label="核心问题"
+                        value={businessPositionForm.core_problem}
+                        onChange={(value) => setBusinessPositionForm({ ...businessPositionForm, core_problem: value })}
+                      />
+                      <TextArea
+                        label="有何不同"
+                        value={businessPositionForm.differentiation}
+                        onChange={(value) => setBusinessPositionForm({ ...businessPositionForm, differentiation: value })}
+                      />
+                      <TextArea
+                        label="何以见得（信任来源）"
+                        value={businessPositionForm.trust_source}
+                        onChange={(value) => setBusinessPositionForm({ ...businessPositionForm, trust_source: value })}
+                      />
+                      <div className="md:col-span-2">
+                        <TextArea
+                          label="合规红线"
+                          value={businessPositionForm.compliance_redline}
+                          onChange={(value) => setBusinessPositionForm({ ...businessPositionForm, compliance_redline: value })}
+                        />
+                      </div>
+                    </div>
+                    <div className="mt-4 flex flex-wrap items-center gap-3">
+                      <PrimaryButton disabled={Boolean(busy)} onClick={saveBusinessPosition}>
+                        {busy === "business-position" ? "保存中…" : "保存业务定位"}
+                      </PrimaryButton>
+                      <SecondaryButton onClick={() => {
+                        setBusinessPositionForm(businessPosition);
+                        setBusinessEditOpen(false);
+                      }}>
+                        取消
+                      </SecondaryButton>
+                      <span className="text-xs leading-5 text-slate-500">
+                        保存后作为三种视角的共同生成依据；已有内容不覆盖，另一条业务不受影响。
+                      </span>
+                    </div>
                   </div>
                 )}
               </div>

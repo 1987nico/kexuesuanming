@@ -26,6 +26,7 @@ import type {
   ContentDraft,
   GrowthAccount,
   GrowthBusinessLine,
+  GrowthBusinessPosition,
   GrowthLearningBrief,
   GrowthPersona,
   GrowthPlan,
@@ -136,6 +137,7 @@ export async function generateAccountAndPlan(input: {
   regenerateAccountId?: string;
   createdAt?: string;
   reportPrices?: ReportPrices;
+  businessPosition?: GrowthBusinessPosition;
 }): Promise<{ account: GrowthAccount; plan: GrowthPlan; usage?: Record<string, unknown> }> {
   const tenantId = input.tenantId ?? DEFAULT_TENANT_ID;
   const persona = input.persona ?? "expert";
@@ -171,7 +173,7 @@ export async function generateAccountAndPlan(input: {
     tone_style: data.tone_style || "具体、克制、有判断、有下一步。",
     filter_words: Array.isArray(data.filter_words) ? data.filter_words.slice(0, 8) : [],
     avoid_expressions: Array.isArray(data.avoid_expressions) ? data.avoid_expressions.slice(0, 8) : ["逆袭", "暴富", "包成功"],
-    compliance_redline: asText(data.compliance_redline) || "不夸大、不虚构、不诱导互动、不违规导流。",
+    compliance_redline: asText(data.compliance_redline) || input.businessPosition?.compliance_redline || "不夸大、不虚构、不诱导互动、不违规导流。",
     private_domain: asText(data.private_domain),
     persona_specific: mergePersonaSpecific(persona, data.persona_specific),
     created_at: input.createdAt || timestamp,

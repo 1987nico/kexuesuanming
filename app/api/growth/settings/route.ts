@@ -33,8 +33,9 @@ export async function PUT(req: Request) {
   }
 
   const store = growthStore();
+  const current = await store.getBusinessSettings(DEFAULT_TENANT_ID);
   const settings = {
-    tenant_id: DEFAULT_TENANT_ID,
+    ...current,
     report_lite_price: parsed.data.report_lite_price.trim(),
     report_deep_price: parsed.data.report_deep_price.trim(),
     updated_at: new Date().toISOString(),

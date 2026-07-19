@@ -14,6 +14,10 @@ import { growthPreviewEnabled } from "@/lib/growth/previewFixture";
 import { methodsForPersona } from "@/lib/growth/methods";
 import { sourceIsUsable } from "@/lib/growth/validation";
 import { isMethodWeeklyReview } from "@/lib/growth/reviewLearning";
+import {
+  businessPositionsFromSettings,
+  resolveBusinessPosition,
+} from "@/lib/growth/businessPosition";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -52,7 +56,11 @@ export async function GET(req: Request) {
   const store = growthStore();
   // 工作台隔离：操作者只取「自己的或未归属」账号；管理员不限
   const ownerScope = guard.auth.role === "admin" ? undefined : guard.auth.user.id;
-  const account = await store.getLatestAccountByPersona(DEFAULT_TENANT_ID, persona, ownerScope, businessLine);
+  const [account, settings] = await Promise.all([
+    store.getLatestAccountByPersona(DEFAULT_TENANT_ID, persona, ownerScope, businessLine),
+    store.getBusinessSettings(DEFAULT_TENANT_ID),
+  ]);
+  const businessPositions = businessPositionsFromSettings(settings);
   // 人设确定后，计划、选题、正文和复盘彼此独立，并行读取以缩短切换等待。
   const [plan, runs, drafts, reviewList] = account
     ? await Promise.all([
@@ -83,6 +91,8 @@ export async function GET(req: Request) {
   return NextResponse.json({
     persona,
     businessLine,
+    businessPosition: businessPositions[businessLine],
+    businessPositions,
     account,
     plan,
     runs,
@@ -132,9 +142,14 @@ export async function POST(req: Request) {
   }
 
   const settings = await store.getBusinessSettings(DEFAULT_TENANT_ID);
+  const businessPosition = resolveBusinessPosition(settings, parsed.data.businessLine);
   const { account, plan, usage } = await generateAccountAndPlan({
     tenantId: DEFAULT_TENANT_ID,
     ...parsed.data,
+    targetUser: parsed.data.targetUser || businessPosition.target_user,
+    coreProblem: parsed.data.coreProblem || businessPosition.core_problem,
+    trustSource: parsed.data.trustSource || businessPosition.trust_source,
+    businessPosition,
     createdAt,
     reportPrices: { lite: settings.report_lite_price, deep: settings.report_deep_price },
   });
