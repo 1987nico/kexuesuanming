@@ -117,6 +117,11 @@ export interface TopicSourceSnapshot {
   link_status: "accessible" | "restricted" | "invalid";
   verified_by_operator?: boolean;
   freshness: "within_72h" | "day_4_to_7" | "historical";
+  /** 来源为运营手工补充，或由每日职业榜接口自动发现。 */
+  source_provider?: "manual" | "redfox_daily";
+  /** 自动来源对应的榜单日期与原始排名，便于证明时效和避免重复请求。 */
+  rank_date?: string;
+  rank_position?: number;
 }
 
 export interface ValidationCheck {

@@ -9,6 +9,7 @@ import {
   buildWeeklyReviewResult,
   isWeeklyReviewStale,
 } from "@/lib/growth/reviewLearning";
+import { ensureRecentTopicSources } from "@/lib/growth/sourceDiscovery";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -45,8 +46,15 @@ export async function POST(req: Request) {
   }
 
   const store = growthStore();
-  const account = await store.getAccount(parsed.data.accountId);
+  let account = await store.getAccount(parsed.data.accountId);
   if (!account) return NextResponse.json({ error: "account_not_found" }, { status: 404 });
+
+  // 生成选题前先按需调用真实的每日职业榜；当天已校验完整则直接复用，避免重复扣费。
+  const discovered = await ensureRecentTopicSources(account);
+  if (discovered.account !== account) {
+    account = discovered.account;
+    await store.saveAccount(account);
+  }
 
   const notes = await store.listDrafts(account.id);
   const reviews = await store.listReviewsByAccount(account.id);
@@ -113,7 +121,13 @@ export async function POST(req: Request) {
     });
   }
 
-  return NextResponse.json({ run, newTopics: topics, unavailableMethods });
+  return NextResponse.json({
+    run,
+    newTopics: topics,
+    unavailableMethods,
+    topicSources: account.topic_sources ?? [],
+    sourceRefresh: discovered.summary,
+  });
 }
 
 export async function PATCH(req: Request) {

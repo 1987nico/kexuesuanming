@@ -504,21 +504,31 @@ export default function GrowthPage() {
   async function generateTopics(mode: MethodGenerationMode, group?: TitleMethodGroup) {
     if (!data?.account) return;
     setBusy(`topics-${mode}`);
+    setMessage("正在调用小红书职业榜API获取近期笔记，并生成标题…");
     if (group) setExploreOpen((current) => ({ ...current, [group]: true }));
     try {
-      const result = await requestJSON<{ run: GrowthRun; unavailableMethods: GrowthRun["unavailable_methods"] }>(
+      const result = await requestJSON<{
+        run: GrowthRun;
+        unavailableMethods: GrowthRun["unavailable_methods"];
+        topicSources: TopicSourceSnapshot[];
+        sourceRefresh: {
+          status: "cached" | "refreshed" | "unavailable" | "failed";
+          message: string;
+        };
+      }>(
         "/api/growth/topics",
         { method: "POST", body: JSON.stringify({ accountId: data.account.id, generationMode: mode }) },
       );
       setData((current) => current ? {
         ...current,
+        account: current.account ? { ...current.account, topic_sources: result.topicSources } : current.account,
         runs: [result.run, ...current.runs.filter((run) => run.id !== result.run.id)],
       } : current);
       setVariants([]);
       setActiveTopic(null);
       setChosen(null);
       setTitleEdits({});
-      setMessage(`已生成${result.run.topic_pool.length}个标题；${result.unavailableMethods?.length || 0}个方法因来源不足暂停。`);
+      setMessage(`${result.sourceRefresh.message} 已生成${result.run.topic_pool.length}个标题；${result.unavailableMethods?.length || 0}个方法因来源不足暂停。`);
     } catch (error) {
       setMessage((error as Error).message);
     } finally {
@@ -1332,7 +1342,10 @@ function MethodSlot({
                 <SourceStatus status={source.link_status} verified={source.verified_by_operator} />
               </div>
               <div className="mt-2 text-xs leading-5 text-slate-500">
-                {source.platform} · {new Date(source.published_at).toLocaleDateString("zh-CN")} · {sourceAge(source)} · {source.heat_snapshot}
+                {source.source_provider === "redfox_daily"
+                  ? `真实热榜API · ${source.rank_date || "当日"}榜${source.rank_position ? `第${source.rank_position}` : ""}`
+                  : source.platform}
+                {" · "}{new Date(source.published_at).toLocaleDateString("zh-CN")} · {sourceAge(source)} · {source.heat_snapshot}
               </div>
               <div className="mt-2 flex flex-wrap gap-3 text-xs">
                 <a className="text-[#9a6b24] underline" href={source.original_url} target="_blank" rel="noreferrer">原链接</a>

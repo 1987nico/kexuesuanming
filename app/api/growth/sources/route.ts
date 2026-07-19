@@ -41,6 +41,7 @@ export async function POST(req: Request) {
     original_url: parsed.data.original_url, published_at: parsed.data.published_at,
     heat_snapshot: parsed.data.heat_snapshot, collected_at: validation.checked_at,
     migration_note: parsed.data.migration_note,
+    source_provider: "manual",
     verified_by_operator: validation.link_status === "accessible" ? true : parsed.data.verified_by_operator,
     link_status: validation.link_status, freshness: freshness(parsed.data.published_at),
   };
