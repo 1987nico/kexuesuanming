@@ -593,7 +593,7 @@ export default function GrowthPage() {
   }
 
   if (busy === "load" && !data) {
-    return <main className="mx-auto max-w-6xl p-8 text-center text-slate-500">正在载入本地脱敏预览…</main>;
+    return <main className="mx-auto max-w-6xl p-8 text-center text-slate-500">正在载入增长系统…</main>;
   }
 
   return (
@@ -1393,6 +1393,10 @@ function ReviewRow({ draft, review, onOpen }: { draft: ContentDraft; review?: Gr
 }
 
 function WeeklyReview({ review }: { review: WeeklyReviewResult }) {
+  if (!Array.isArray(review.by_method) || !review.decision) return null;
+  const promotionSuggestions = Array.isArray(review.promotion_suggestions)
+    ? review.promotion_suggestions
+    : [];
   return (
     <div className="mt-5">
       <div className="rounded-2xl border border-slate-200 p-4 text-sm leading-7">
@@ -1436,11 +1440,11 @@ function WeeklyReview({ review }: { review: WeeklyReviewResult }) {
         );
       })}
 
-      {review.promotion_suggestions.length > 0 && (
+      {promotionSuggestions.length > 0 && (
         <div className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm">
           <b>探索晋升建议（需人工确认）</b>
           <ul className="mt-2 list-disc space-y-1 pl-5">
-            {review.promotion_suggestions.map((item) => <li key={item.method_id}>{item.method_label}：{item.reason}</li>)}
+            {promotionSuggestions.map((item) => <li key={item.method_id}>{item.method_label}：{item.reason}</li>)}
           </ul>
         </div>
       )}

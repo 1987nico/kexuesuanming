@@ -13,6 +13,7 @@ import { isVisionConfigured } from "@/lib/llm/router";
 import { growthPreviewEnabled } from "@/lib/growth/previewFixture";
 import { methodsForPersona } from "@/lib/growth/methods";
 import { sourceIsUsable } from "@/lib/growth/validation";
+import { isMethodWeeklyReview } from "@/lib/growth/reviewLearning";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -61,7 +62,9 @@ export async function GET(req: Request) {
   for (const review of reviewList) {
     if (!reviews[review.draft_id]) reviews[review.draft_id] = review;
   }
-  const weeklyReview = account?.weekly_review ?? account?.stage_review ?? null;
+  const storedWeeklyReview = account?.weekly_review ?? account?.stage_review;
+  // 旧版按 A/B/C 方向生成的周复盘仅保留在历史数据中，不能交给 v3.2 方法表渲染。
+  const weeklyReview = isMethodWeeklyReview(storedWeeklyReview) ? storedWeeklyReview : null;
   const historicalDrafts = drafts.filter((draft) => draft.schema_version === "legacy_v1" || !draft.schema_version);
   const currentDrafts = drafts.filter((draft) => draft.schema_version === "method_v3_2");
   const validReviewDraftIds = new Set(reviewList.filter((review) => review.sample?.strategy_eligible).map((review) => review.draft_id));

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ContentDraft, GrowthAccount, GrowthReview, GrowthReviewMetrics, TitleMethodId } from "./types";
-import { buildLearningBrief, buildWeeklyReviewResult, canonicalizeReviews, computeDerivedMetrics, evaluateReviewSample, getReviewAvailability } from "./reviewLearning";
+import { buildLearningBrief, buildWeeklyReviewResult, canonicalizeReviews, computeDerivedMetrics, evaluateReviewSample, getReviewAvailability, isMethodWeeklyReview, isWeeklyReviewStale } from "./reviewLearning";
 
 const NOW = new Date("2026-07-19T12:00:00.000Z");
 const account: GrowthAccount = { id: "account", tenant_id: "mianbajun", persona: "expert", name: "面霸君", target_user: "中高管", core_problem: "职业方向", account_value: "判断框架", trust_source: "真实咨询", not_doing: "不做泛流量", hypotheses: [], created_at: "2026-06-01T00:00:00.000Z", updated_at: NOW.toISOString() };
@@ -45,6 +45,16 @@ describe("有效样本口径", () => {
 });
 
 describe("方法与开放标签复盘", () => {
+  it("旧版方向周复盘不会进入 v3.2 方法界面", () => {
+    const legacyWeekly = {
+      generated_at: NOW.toISOString(),
+      by_direction: [],
+      decision: { summary: "旧版方向结论" },
+    };
+    expect(isMethodWeeklyReview(legacyWeekly)).toBe(false);
+    expect(isWeeklyReviewStale(legacyWeekly as never, [])).toBe(true);
+  });
+
   it("legacy samples never enter the new method baseline", () => {
     const legacy = { ...draft(99), schema_version: "legacy_v1" as const, eligible_for_method_learning: false };
     const weekly = buildWeeklyReviewResult({ account, notes: [legacy], reviews: [review(legacy, 99)], at: NOW });

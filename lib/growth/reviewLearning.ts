@@ -218,8 +218,21 @@ export function buildWeeklyReviewResult(input: { account: GrowthAccount; notes: 
   };
 }
 
+export function isMethodWeeklyReview(value: unknown): value is WeeklyReviewResult {
+  if (!value || typeof value !== "object") return false;
+  const review = value as Partial<WeeklyReviewResult>;
+  return Boolean(
+    review.decision
+    && typeof review.decision === "object"
+    && typeof review.generated_at === "string"
+    && Array.isArray(review.by_method)
+    && Array.isArray(review.by_tag)
+    && Array.isArray(review.promotion_suggestions),
+  );
+}
+
 export function isWeeklyReviewStale(weekly: WeeklyReviewResult | undefined, reviews: GrowthReview[]) {
-  if (!weekly) return true;
+  if (!isMethodWeeklyReview(weekly)) return true;
   const latest = canonicalizeReviews(reviews)[0];
   return Boolean(latest && reviewTimestamp(latest).localeCompare(weekly.generated_at) > 0);
 }
