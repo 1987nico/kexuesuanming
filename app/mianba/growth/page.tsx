@@ -1504,12 +1504,7 @@ function MethodSlot({
               />
             </label>
             <p className="mt-2 text-sm leading-6 text-slate-600">正文承诺：{topic.title_promise}</p>
-            <div className="mt-4 flex flex-wrap gap-2">
-              <CopyButton
-                text={currentTitle}
-                label="复制标题"
-                copiedLabel="标题已复制"
-              />
+            <div className="mt-4">
               {active ? (
                 <div className="inline-flex min-h-10 items-center rounded-xl bg-slate-900 px-4 text-sm font-semibold text-white">已选择</div>
               ) : (
@@ -1641,8 +1636,8 @@ function FinalDraft({
         {draft.validation_checks.map((check) => <Check key={check.key} check={check} />)}
       </div>
       <div className="mt-5 rounded-2xl border border-[#ead7b5] bg-[#fffaf1] p-4">
-        <div className="font-semibold text-slate-900">复制到小红书</div>
-        <p className="mt-1 text-xs leading-5 text-slate-600">小红书的标题和正文是两个输入框，按顺序点两次即可发布。</p>
+        <div className="font-semibold text-slate-900">最终正文已选定，复制到小红书</div>
+        <p className="mt-1 text-xs leading-5 text-slate-600">按顺序复制标题和最终正文；未选中的正文版本不会提供发布复制入口。</p>
         <div className="mt-3 grid gap-2 sm:grid-cols-2">
           <CopyButton
             text={draft.title}
@@ -1652,16 +1647,19 @@ function FinalDraft({
           />
           <CopyButton
             text={bodyWithHashtags}
-            label="2　复制正文＋话题"
+            label="2　复制正文（含话题）"
             copiedLabel="正文已复制"
             primary
           />
         </div>
-        <div className="mt-3 flex flex-wrap gap-2 border-t border-[#ead7b5] pt-3">
-          {hashtagsText && <CopyButton text={hashtagsText} label="单独复制话题" copiedLabel="话题已复制" />}
-          <CopyButton text={draft.cover_text} label="复制封面句" copiedLabel="封面句已复制" />
-          <CopyButton text={packageText} label="复制完整发布包" copiedLabel="发布包已复制" />
-        </div>
+        <details className="mt-3 border-t border-[#ead7b5] pt-3 text-sm text-slate-600">
+          <summary className="cursor-pointer py-1 font-medium">更多复制选项</summary>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {hashtagsText && <CopyButton text={hashtagsText} label="单独复制话题" copiedLabel="话题已复制" />}
+            <CopyButton text={draft.cover_text} label="复制封面句" copiedLabel="封面句已复制" />
+            <CopyButton text={packageText} label="复制完整发布包" copiedLabel="发布包已复制" />
+          </div>
+        </details>
       </div>
       <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-slate-500">
         <span>内部复盘：</span>
