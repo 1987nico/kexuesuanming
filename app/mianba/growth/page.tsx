@@ -236,6 +236,7 @@ export default function GrowthPage() {
   const [personaOpen, setPersonaOpen] = useState(false);
   const [personaEditing, setPersonaEditing] = useState(false);
   const [businessEditOpen, setBusinessEditOpen] = useState(false);
+  const [visibleStep, setVisibleStep] = useState("0");
   const [businessPositionForm, setBusinessPositionForm] = useState<GrowthBusinessPosition>(
     DEFAULT_BUSINESS_POSITIONS.overseas_student,
   );
@@ -263,6 +264,7 @@ export default function GrowthPage() {
     setPersonaOpen(false);
     setPersonaEditing(false);
     setBusinessEditOpen(false);
+    setVisibleStep("0");
     if (next?.businessPosition) setBusinessPositionForm(next.businessPosition);
   }, []);
 
@@ -331,6 +333,20 @@ export default function GrowthPage() {
     if (data) workspaceCache.current.set(workspaceKey(businessLine, persona), data);
   }, [businessLine, data, persona]);
 
+  useEffect(() => {
+    const sections = [...document.querySelectorAll<HTMLElement>("section[data-step]")];
+    if (!sections.length || typeof IntersectionObserver === "undefined") return;
+    const observer = new IntersectionObserver((entries) => {
+      const visible = entries
+        .filter((entry) => entry.isIntersecting)
+        .sort((a, b) => Math.abs(a.boundingClientRect.top) - Math.abs(b.boundingClientRect.top))[0];
+      const step = (visible?.target as HTMLElement | undefined)?.dataset.step;
+      if (step) setVisibleStep(step);
+    }, { rootMargin: "-90px 0px -65% 0px", threshold: 0 });
+    for (const section of sections) observer.observe(section);
+    return () => observer.disconnect();
+  }, [businessLine, data?.account?.id, persona]);
+
   const businessDefinition = GROWTH_BUSINESS_DEFINITIONS[businessLine];
   const businessPosition = data?.businessPosition ?? DEFAULT_BUSINESS_POSITIONS[businessLine];
   const runs = useMemo(() => ({
@@ -354,15 +370,6 @@ export default function GrowthPage() {
     ["0", "业务定位"], ["1", "三家视角"], ["2", "人设"], ["3", "选题"],
     ["4", "正文"], ["5", "单篇复盘"], ["6", "周复盘"],
   ] as const;
-  const currentStep = data?.weeklyReview
-    ? "6"
-    : reviewDrafts.length
-      ? "5"
-      : selectedTopic || activeTopic || variants.length || chosen
-        ? "4"
-        : data?.account
-          ? "3"
-          : "0";
 
   function switchBusiness(next: GrowthBusinessLine) {
     if (next === businessLine) return;
@@ -776,9 +783,9 @@ export default function GrowthPage() {
               <a
                 key={number}
                 href={`#growth-step-${number}`}
-                aria-current={currentStep === number ? "step" : undefined}
+                aria-current={visibleStep === number ? "step" : undefined}
                 className={`flex min-h-10 items-center rounded-xl px-3 text-sm font-medium transition ${
-                  currentStep === number
+                  visibleStep === number
                     ? "bg-slate-900 text-white"
                     : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
                 }`}
