@@ -1504,7 +1504,12 @@ function MethodSlot({
               />
             </label>
             <p className="mt-2 text-sm leading-6 text-slate-600">正文承诺：{topic.title_promise}</p>
-            <div className="mt-4">
+            <div className="mt-4 flex flex-wrap gap-2">
+              <CopyButton
+                text={currentTitle}
+                label="复制标题"
+                copiedLabel="标题已复制"
+              />
               {active ? (
                 <div className="inline-flex min-h-10 items-center rounded-xl bg-slate-900 px-4 text-sm font-semibold text-white">已选择</div>
               ) : (
@@ -1608,7 +1613,9 @@ function FinalDraft({
   onPublish: (draft: ContentDraft, publishedAt: string) => void;
 }) {
   const [publishedAt, setPublishedAt] = useState(asLocalDateTime(draft.published_at));
-  const packageText = `${draft.title}\n\n${draft.body}\n\n${draft.hashtags.join(" ")}`;
+  const hashtagsText = draft.hashtags.join(" ");
+  const bodyWithHashtags = hashtagsText ? `${draft.body}\n\n${hashtagsText}` : draft.body;
+  const packageText = `${draft.title}\n\n${bodyWithHashtags}`;
   const feedback = `标题：${draft.title}\n方法：${draft.method_label}\n承诺：${draft.title_promise}\n复盘重点：${draft.review_points.join("、")}`;
   const publishable = draft.validation_checks.length === 4 && draft.validation_checks.every((check) => check.status === "passed");
   return (
@@ -1633,10 +1640,32 @@ function FinalDraft({
       <div className="mt-5 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
         {draft.validation_checks.map((check) => <Check key={check.key} check={check} />)}
       </div>
-      <div className="mt-5 flex flex-wrap gap-2">
-        <CopyButton text={draft.cover_text} label="复制封面" />
-        <CopyButton text={feedback} label="复制反馈" />
-        <CopyButton text={packageText} label="复制完整发布包" />
+      <div className="mt-5 rounded-2xl border border-[#ead7b5] bg-[#fffaf1] p-4">
+        <div className="font-semibold text-slate-900">复制到小红书</div>
+        <p className="mt-1 text-xs leading-5 text-slate-600">小红书的标题和正文是两个输入框，按顺序点两次即可发布。</p>
+        <div className="mt-3 grid gap-2 sm:grid-cols-2">
+          <CopyButton
+            text={draft.title}
+            label="1　复制标题"
+            copiedLabel="标题已复制"
+            primary
+          />
+          <CopyButton
+            text={bodyWithHashtags}
+            label="2　复制正文＋话题"
+            copiedLabel="正文已复制"
+            primary
+          />
+        </div>
+        <div className="mt-3 flex flex-wrap gap-2 border-t border-[#ead7b5] pt-3">
+          {hashtagsText && <CopyButton text={hashtagsText} label="单独复制话题" copiedLabel="话题已复制" />}
+          <CopyButton text={draft.cover_text} label="复制封面句" copiedLabel="封面句已复制" />
+          <CopyButton text={packageText} label="复制完整发布包" copiedLabel="发布包已复制" />
+        </div>
+      </div>
+      <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-slate-500">
+        <span>内部复盘：</span>
+        <CopyButton text={feedback} label="复制反馈" copiedLabel="反馈已复制" compact />
       </div>
       <div className="mt-5 flex flex-col gap-3 rounded-2xl bg-slate-50 p-4 sm:flex-row sm:items-end">
         <TextInput label="实际发布时间" type="datetime-local" value={publishedAt} onChange={setPublishedAt} />
@@ -1839,16 +1868,53 @@ function Badge({ children }: { children: React.ReactNode }) {
   return <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600">{children}</span>;
 }
 
-function CopyButton({ text, label }: { text: string; label: string }) {
-  const [copied, setCopied] = useState(false);
+function CopyButton({
+  text,
+  label,
+  copiedLabel = "已复制",
+  primary = false,
+  compact = false,
+}: {
+  text: string;
+  label: string;
+  copiedLabel?: string;
+  primary?: boolean;
+  compact?: boolean;
+}) {
+  const [state, setState] = useState<"idle" | "copied" | "failed">("idle");
+
+  async function copyText() {
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const textarea = document.createElement("textarea");
+        textarea.value = text;
+        textarea.style.position = "fixed";
+        textarea.style.opacity = "0";
+        document.body.appendChild(textarea);
+        textarea.select();
+        const copied = document.execCommand("copy");
+        textarea.remove();
+        if (!copied) throw new Error("copy_failed");
+      }
+      setState("copied");
+      window.setTimeout(() => setState("idle"), 1600);
+    } catch {
+      setState("failed");
+      window.setTimeout(() => setState("idle"), 2000);
+    }
+  }
+
   return (
-    <SecondaryButton onClick={async () => {
-      await navigator.clipboard.writeText(text);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1200);
-    }}>
-      {copied ? "已复制" : label}
-    </SecondaryButton>
+    <button
+      type="button"
+      disabled={!text}
+      onClick={copyText}
+      className={`${compact ? "min-h-9 px-3 py-1.5 text-xs" : "min-h-11 px-4 py-2.5 text-sm"} rounded-xl border font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${primary ? "border-slate-900 bg-slate-900 text-white hover:bg-slate-800" : "border-slate-300 bg-white text-slate-800 hover:border-slate-400"}`}
+    >
+      {state === "copied" ? copiedLabel : state === "failed" ? "复制失败，请重试" : label}
+    </button>
   );
 }
 
