@@ -1,29 +1,17 @@
 import { llmJSON } from "@/lib/llm/router";
 import {
   buildAccountPlanUserPrompt,
+  buildBodyTagUserPrompt,
   buildDraftUserPrompt,
   buildReviewUserPrompt,
   buildStageReviewUserPrompt,
+  buildTagMergeUserPrompt,
   buildTopicPoolUserPrompt,
   GROWTH_SYSTEM_PROMPT,
+  type AccountContext,
+  type ReportPrices,
 } from "./agents";
-import type {
-  ContentDraft,
-  GrowthAccount,
-  GrowthDirection,
-  GrowthLearningBrief,
-  GrowthPersona,
-  GrowthPlan,
-  GrowthPlanWeek,
-  GrowthReview,
-  GrowthReviewMetrics,
-  GrowthRun,
-  WeeklyReviewResult,
-  TopicCandidate,
-} from "./types";
-import { countPublishChars, enforceDraftCompliance, normalizeTags } from "./validation";
-import { PERSONA_SPECIFIC_FIELDS, DEFAULT_BUSINESS_SETTINGS } from "./types";
-import type { AccountContext, ReportPrices } from "./agents";
+import { methodsForPersona, type TitleMethodDefinition } from "./methods";
 import {
   buildReviewBenchmarks,
   buildWeeklyReviewResult,
@@ -34,15 +22,54 @@ import {
   normalizeExperimentVariable,
   resolvePublishedAt,
 } from "./reviewLearning";
+import type {
+  ContentDraft,
+  GrowthAccount,
+  GrowthBusinessLine,
+  GrowthLearningBrief,
+  GrowthPersona,
+  GrowthPlan,
+  GrowthReview,
+  GrowthReviewMetrics,
+  GrowthRun,
+  MethodGenerationMode,
+  RawBodyTag,
+  TagMergeSuggestion,
+  TitleMethodId,
+  TopicCandidate,
+  TopicSourceSnapshot,
+  WeeklyReviewResult,
+} from "./types";
+import {
+  DEFAULT_BUSINESS_SETTINGS,
+  GROWTH_BUSINESS_LINE_VALUES,
+  PERSONA_SPECIFIC_FIELDS,
+} from "./types";
+import {
+  countPublishChars,
+  enforceDraftCompliance,
+  normalizeTags,
+  sourceIsUsable,
+  validateDraftHardChecks,
+  validateTopicCandidate,
+} from "./validation";
 
 const DEFAULT_TENANT_ID = "mianbajun";
+const now = () => new Date().toISOString();
+const id = () => crypto.randomUUID();
+
+function asText(value: unknown) {
+  if (typeof value === "string") return value.trim();
+  if (Array.isArray(value)) return value.filter((item) => typeof item === "string").join("\n").trim();
+  return "";
+}
 
 function accountContext(account: GrowthAccount): AccountContext {
   return {
+    businessLine: GROWTH_BUSINESS_LINE_VALUES[account.business_line ?? "executive"],
     toneStyle: account.tone_style,
     filterWords: account.filter_words,
     avoidExpressions: account.avoid_expressions,
-    contentDirections: account.content_directions,
     personaSpecific: account.persona_specific,
     notDoing: account.not_doing,
     complianceRedline: account.compliance_redline,
@@ -50,179 +77,58 @@ function accountContext(account: GrowthAccount): AccountContext {
   };
 }
 
-// 模型有时把本应是字符串的字段返回成数组，这里统一安全转成字符串（数组用换行拼接）
-function asText(value: unknown): string {
-  if (typeof value === "string") return value.trim();
-  if (Array.isArray(value)) {
-    return value
-      .filter((v) => typeof v === "string" && v.trim())
-      .map((v) => String(v).trim())
-      .join("\n");
-  }
-  return "";
-}
-
-// 只保留当前视角合法的字段 key，用模型返回值填充，缺失或非法值留空
 function mergePersonaSpecific(persona: GrowthPersona, raw: unknown): Record<string, string> {
   const source = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
-  return Object.fromEntries(
-    PERSONA_SPECIFIC_FIELDS[persona].map((field) => {
-      return [field.key, asText(source[field.key])];
-    }),
-  );
+  return Object.fromEntries(PERSONA_SPECIFIC_FIELDS[persona].map((field) => [field.key, asText(source[field.key])]));
 }
 
-function now() {
-  return new Date().toISOString();
+function resultUsage(result: any) {
+  return {
+    provider: result.raw.provider,
+    model: result.raw.model,
+    input_tokens: result.raw.usage?.inputTokens,
+    output_tokens: result.raw.usage?.outputTokens,
+  };
 }
-
-function id() {
-  return crypto.randomUUID();
-}
-
-function safeScore(value: unknown, fallback = 8) {
-  const n = Number(value);
-  if (!Number.isFinite(n)) return fallback;
-  return Math.max(1, Math.min(10, Math.round(n)));
-}
-
-function fallbackWeeks(): GrowthPlanWeek[] {
-  return [
-    {
-      week: 1,
-      theme: "定位基线",
-      goal: "三方向都发，先验证账号写给谁。",
-      content_mix: "方向 A 2 篇，方向 B 2 篇，方向 C 1-2 篇。",
-      decision_rule: "看收藏、评论质量、主页访问和关注理由，不用单篇爆款下结论。",
-    },
-    {
-      week: 2,
-      theme: "方向二测",
-      goal: "保留更有反馈的方向，换标题、封面或结构二测。",
-      content_mix: "表现较好的 2 个方向各 2-3 篇，剩余 1 篇机动。",
-      decision_rule: "判断方向有效还是标题偶然有效。",
-    },
-    {
-      week: 3,
-      theme: "模板沉淀",
-      goal: "形成系列化表达，沉淀标题、封面、正文结构。",
-      content_mix: "主方向 3 篇，副方向 2 篇，故事/信任资产 1 篇。",
-      decision_rule: "看读者是否理解账号会持续解决什么问题。",
-    },
-    {
-      week: 4,
-      theme: "放大决策",
-      goal: "确定下一阶段主攻方向。",
-      content_mix: "主方向 4 篇，副方向 1-2 篇，复盘/信任资产 1 篇。",
-      decision_rule: "选出主方向、副方向、信任资产方向和暂停清单。",
-    },
-  ];
-}
-
-function pick<T>(arr: T[]): T {
-  return arr[Math.floor(Math.random() * arr.length)];
-}
-
-// 小红书选题标题规则：含标点不超过 20 字。做兜底裁剪，保证入库标题一定合规。
-const TITLE_MAX_CHARS = 20;
 
 export function enforceTitleLimit(raw: string): string {
-  let title = String(raw ?? "").trim();
-  // 去掉用分隔符外挂的副标题（｜ | —— - · 等），只保留主标题
-  title = title.split(/\s*[|｜]\s*|\s*[—-]{2,}\s*|\s+·\s+/)[0].trim();
-  const chars = Array.from(title);
-  if (chars.length <= TITLE_MAX_CHARS) return title;
-  // 仍超长则按字符裁剪，并去掉裁剪处末尾的孤立标点
-  return chars
-    .slice(0, TITLE_MAX_CHARS)
-    .join("")
-    .replace(/[，。、；：,;:!！?？…\-—·（(【\[《]+$/u, "")
-    .trim();
+  let title = String(raw ?? "").trim().split(/\s*[|｜]\s*|\s*[—-]{2,}\s*|\s+·\s+/)[0].trim();
+  if (Array.from(title).length <= 20) return title;
+  title = Array.from(title).slice(0, 20).join("");
+  return title.replace(/[，。、；：,;:!！?？…\-—·（(【\[《]+$/u, "").trim();
 }
 
-interface FallbackAccountFields {
-  target_user: string;
-  core_problem: string;
-  account_value: string;
-  one_liner: string;
-  follow_reason: string;
-}
-
-const FALLBACK_ACCOUNT_VARIANTS: Record<GrowthPersona, FallbackAccountFields[]> = {
-  merchant: [
-    {
-      target_user: "想找靠谱服务、怕被割韭菜的中小企业主",
-      core_problem: "选服务商时信息不对称，不知道谁真能交付",
-      account_value: "用真实交付案例和判断标准，帮客户挑对、买对",
-      one_liner: "帮你把钱花在真能交付的服务上",
-      follow_reason: "持续拆解怎么识别靠谱服务商与交付标准",
-    },
-    {
-      target_user: "预算有限但想做出效果的品牌/门店负责人",
-      core_problem: "投入产出算不清，怕花钱听不到响",
-      account_value: "把服务拆成可验证的小步骤，先看效果再放大",
-      one_liner: "先做小验证，再决定要不要加投入",
-      follow_reason: "持续记录真实客户的投入产出复盘",
-    },
-    {
-      target_user: "正在从接单转向做品牌的经营者",
-      core_problem: "只会接单，做不出可复购的产品和信任",
-      account_value: "把一次性服务升级成有复购的产品体系",
-      one_liner: "从接单到做出会复购的产品",
-      follow_reason: "持续拆解产品化和客户信任的搭建",
-    },
-  ],
-  buyer: [
-    {
-      target_user: "和我一样正卡在职业十字路口的普通职场人",
-      core_problem: "想换方向又不敢动，身边没人能真正聊、只能自己扛",
-      account_value: "一个真人真实记录自己的困惑、求助和一点点想通的过程",
-      one_liner: "34岁想换方向，边迷茫边记录",
-      follow_reason: "想看一个普通人怎么从迷茫里慢慢走出来",
-    },
-    {
-      target_user: "在纠结要不要裸辞/搞副业、又怕家里不支持的人",
-      core_problem: "每天都在'再忍忍'和'干脆不干了'之间反复横跳",
-      account_value: "把自己纠结、试错、踩坑的真实过程摊开来说",
-      one_liner: "副业和裸辞之间反复纠结的一个普通人",
-      follow_reason: "想找个同样在纠结的人一起搭伙、互相打气",
-    },
-    {
-      target_user: "被裁或被优化后、正在重新找方向的中年职场人",
-      core_problem: "离开平台才发现不知道自己还能干啥、值多少钱",
-      account_value: "真实记录一个被裁的人怎么重新找回方向感",
-      one_liner: "被裁之后，我在重新找方向",
-      follow_reason: "想看看同样处境的人后来都怎么走出来的",
-    },
-  ],
-  expert: [
-    {
-      target_user: "认可专业判断、可能来咨询的同行与客户",
-      core_problem: "缺的不是信息，而是能落地的判断和方法",
-      account_value: "用方法论密度和真实案例建立专业信任",
-      one_liner: "把复杂问题拆成能落地的判断",
-      follow_reason: "持续输出可复用的判断框架和方法",
-    },
-    {
-      target_user: "想系统提升、不满足于碎片知识的从业者",
-      core_problem: "学了很多却串不成体系，用不起来",
-      account_value: "把零散经验整理成可迁移的体系和清单",
-      one_liner: "帮你把碎片经验变成体系",
-      follow_reason: "持续沉淀行业方法论和体系化拆解",
-    },
-    {
-      target_user: "遇到具体难题、需要专业判断的决策者",
-      core_problem: "关键决策上缺一个真正懂行的判断",
-      account_value: "针对真实难题给出结构化判断和取舍",
-      one_liner: "关键决策前，先听一个懂行的判断",
-      follow_reason: "持续拆解真实难题的判断过程",
-    },
-  ],
+const EXECUTIVE_FALLBACK_ACCOUNT: Record<GrowthPersona, { target: string; problem: string; value: string; one: string; follow: string }> = {
+  buyer: { target: "正卡在职业十字路口的中高管", problem: "想换方向又不敢动，不知道经验能否迁移", value: "真实记录中高管重新判断职业路径的过程", one: "陪中高管看清下一条路", follow: "持续看见真实的职业选择与验证过程" },
+  expert: { target: "需要专业判断的中高管与决策者", problem: "信息很多，但缺少能落地的取舍判断", value: "用结构化方法拆解职业选择与转型胜率", one: "把复杂职业问题拆成可行动的判断", follow: "持续获得可复用的职业决策框架" },
+  merchant: { target: "正在比较职业咨询服务的中高管", problem: "不知道服务是否适配、能交付什么", value: "公开服务对象、交付边界和真实判断机制", one: "先判断适配，再决定是否购买", follow: "持续了解职业咨询如何交付与验证" },
 };
+
+const OVERSEAS_STUDENT_FALLBACK_ACCOUNT: typeof EXECUTIVE_FALLBACK_ACCOUNT = {
+  buyer: { target: "正在海外读书、临近毕业且卡在求职选择中的留学生与家长", problem: "回国还是留当地、选行业还是选城市，缺少可验证的决策依据", value: "真实记录留学生从求职焦虑到获得有效反馈的验证过程", one: "陪娃闯秋招的留学生家长真实记录", follow: "持续看见留学生求职路径的验证与调整" },
+  expert: { target: "需要求职定位和路径判断的留学生及毕业生", problem: "信息很多但不知道自己的背景适配哪些岗位、该先验证哪条路径", value: "用结构化方法拆解留学生求职定位、岗位匹配和行动优先级", one: "把留学生求职拆成可验证的选择", follow: "持续获得留学生求职定位与路径判断框架" },
+  merchant: { target: "正在比较留学生求职规划服务的学生与家长", problem: "不知道服务是否适配、具体交付什么、能否解决当前求职卡点", value: "公开服务对象、交付边界和真实求职判断机制", one: "先判断求职服务适配，再决定是否购买", follow: "持续了解留学生求职服务如何交付和验证" },
+};
+
+function fallbackAccount(businessLine: GrowthBusinessLine, persona: GrowthPersona) {
+  return businessLine === "overseas_student"
+    ? OVERSEAS_STUDENT_FALLBACK_ACCOUNT[persona]
+    : EXECUTIVE_FALLBACK_ACCOUNT[persona];
+}
+
+function fallbackWeeks() {
+  return [
+    { week: 1, theme: "方法基线", goal: "建立默认方法的有效咨询基线。", content_mix: "按当前视角默认方法生成并人工选择。", decision_rule: "不用单篇爆款下结论。" },
+    { week: 2, theme: "方法二测", goal: "复测有咨询信号的方法。", content_mix: "默认方法为主，按需探索。", decision_rule: "判断效果能否复现。" },
+    { week: 3, theme: "模板沉淀", goal: "沉淀标题与正文兑现模板。", content_mix: "正文只跟随标题承诺。", decision_rule: "按有效咨询解释过程指标。" },
+    { week: 4, theme: "方法组合", goal: "形成下一阶段方法组合。", content_mix: "提高有证据的方法复测频率。", decision_rule: "30篇前只描述数据，探索方法只能人工晋升。" },
+  ];
+}
 
 export async function generateAccountAndPlan(input: {
   tenantId?: string;
   persona?: GrowthPersona;
+  businessLine?: GrowthBusinessLine;
   accountName: string;
   targetUser?: string;
   coreProblem?: string;
@@ -232,738 +138,416 @@ export async function generateAccountAndPlan(input: {
   reportPrices?: ReportPrices;
 }): Promise<{ account: GrowthAccount; plan: GrowthPlan; usage?: Record<string, unknown> }> {
   const tenantId = input.tenantId ?? DEFAULT_TENANT_ID;
-  const persona: GrowthPersona = input.persona ?? "expert";
-  const reportPrices: ReportPrices = input.reportPrices ?? {
-    lite: DEFAULT_BUSINESS_SETTINGS.report_lite_price,
-    deep: DEFAULT_BUSINESS_SETTINGS.report_deep_price,
-  };
-  const fallback = pick(FALLBACK_ACCOUNT_VARIANTS[persona]);
-  const timestamp = now();
-  let payload: any = null;
+  const persona = input.persona ?? "expert";
+  const businessLine = input.businessLine ?? "executive";
+  const fallback = fallbackAccount(businessLine, persona);
+  const reportPrices = input.reportPrices ?? { lite: DEFAULT_BUSINESS_SETTINGS.report_lite_price, deep: DEFAULT_BUSINESS_SETTINGS.report_deep_price };
+  let payload: any;
   let usage: Record<string, unknown> | undefined;
-
   try {
-    const result = await llmJSON<any>({
-      system: GROWTH_SYSTEM_PROMPT,
-      user: buildAccountPlanUserPrompt({ ...input, persona, reportPrices }),
-      maxTokens: 3000,
-      temperature: 0.4,
-    });
+    const result = await llmJSON<any>({ system: GROWTH_SYSTEM_PROMPT, user: buildAccountPlanUserPrompt({ ...input, persona, reportPrices }), maxTokens: 3000, temperature: 0.4 });
     payload = result.data;
-    usage = {
-      provider: result.raw.provider,
-      model: result.raw.model,
-      input_tokens: result.raw.usage?.inputTokens,
-      output_tokens: result.raw.usage?.outputTokens,
-    };
+    usage = resultUsage(result);
   } catch (error) {
-    console.warn("[growth] account plan fallback:", (error as Error).message);
+    console.warn("[growth] account fallback:", (error as Error).message);
   }
-
-  const accountData = payload?.account ?? {};
+  const data = payload?.account ?? {};
+  const timestamp = now();
   const accountId = input.regenerateAccountId || id();
   const account: GrowthAccount = {
     id: accountId,
     tenant_id: tenantId,
+    business_line: businessLine,
     persona,
     name: input.accountName,
-    target_user: accountData.target_user || input.targetUser || fallback.target_user,
-    core_problem: accountData.core_problem || input.coreProblem || fallback.core_problem,
-    account_value: accountData.account_value || fallback.account_value,
-    trust_source:
-      accountData.trust_source ||
-      input.trustSource ||
-      "来自真实经营、客户和内容增长实践。",
-    not_doing: accountData.not_doing || "不做泛职场鸡汤，不承诺收益，不追无意义爆款。",
-    hypotheses:
-      Array.isArray(accountData.hypotheses) && accountData.hypotheses.length
-        ? accountData.hypotheses.slice(0, 5)
-        : [
-            "目标客户痛点诊断能吸引更准的人群。",
-            "工具/清单型内容能带来收藏和主页访问。",
-            "创始人过程记录能形成信任锚点。",
-          ],
-    one_liner: accountData.one_liner || fallback.one_liner,
-    follow_reason: accountData.follow_reason || fallback.follow_reason,
-    content_directions:
-      Array.isArray(accountData.content_directions) && accountData.content_directions.length
-        ? accountData.content_directions.slice(0, 3)
-        : ["A 目标客户痛点诊断", "B 可收藏工具/清单", "C 创始人故事/过程记录"],
-    tone_style: accountData.tone_style || "具体、克制、有判断、有下一步，不鸡汤。",
-    filter_words: Array.isArray(accountData.filter_words) ? accountData.filter_words.slice(0, 8) : [],
-    avoid_expressions: Array.isArray(accountData.avoid_expressions)
-      ? accountData.avoid_expressions.slice(0, 8)
-      : ["逆袭", "暴富", "月入X万", "包成功"],
-    compliance_redline: asText(accountData.compliance_redline) || "不承诺收益、不玄学、客户匿名、不用泛焦虑换阅读。",
-    private_domain: asText(accountData.private_domain),
-    persona_specific: mergePersonaSpecific(persona, accountData.persona_specific),
+    target_user: data.target_user || input.targetUser || fallback.target,
+    core_problem: data.core_problem || input.coreProblem || fallback.problem,
+    account_value: data.account_value || fallback.value,
+    trust_source: data.trust_source || input.trustSource || "来自真实客户咨询、职业决策和交付实践。",
+    not_doing: data.not_doing || "不做泛职场鸡汤，不承诺结果，不用互动换资料。",
+    hypotheses: Array.isArray(data.hypotheses) ? data.hypotheses.slice(0, 5) : ["具体处境比泛焦虑更能带来有效咨询。"],
+    one_liner: data.one_liner || fallback.one,
+    follow_reason: data.follow_reason || fallback.follow,
+    tone_style: data.tone_style || "具体、克制、有判断、有下一步。",
+    filter_words: Array.isArray(data.filter_words) ? data.filter_words.slice(0, 8) : [],
+    avoid_expressions: Array.isArray(data.avoid_expressions) ? data.avoid_expressions.slice(0, 8) : ["逆袭", "暴富", "包成功"],
+    compliance_redline: asText(data.compliance_redline) || "不夸大、不虚构、不诱导互动、不违规导流。",
+    private_domain: asText(data.private_domain),
+    persona_specific: mergePersonaSpecific(persona, data.persona_specific),
     created_at: input.createdAt || timestamp,
     updated_at: timestamp,
   };
-
   const plan: GrowthPlan = {
-    id: id(),
-    tenant_id: tenantId,
-    account_id: accountId,
-    title: payload?.plan?.title || "30 天起号实验计划",
+    id: id(), tenant_id: tenantId, account_id: accountId,
+    title: payload?.plan?.title || "30天方法验证计划",
     weeks: Array.isArray(payload?.plan?.weeks) ? payload.plan.weeks.slice(0, 4) : fallbackWeeks(),
-    created_at: timestamp,
-    updated_at: timestamp,
+    created_at: timestamp, updated_at: timestamp,
   };
-
   return { account, plan, usage };
 }
 
-export async function generateTopicPool(input: {
-  tenantId?: string;
-  account: GrowthAccount;
-  planId?: string;
-  week?: number;
-  recentSignals?: string;
-  learningBrief?: GrowthLearningBrief;
-}): Promise<{ run: GrowthRun; usage?: Record<string, unknown> }> {
-  const tenantId = input.tenantId ?? input.account.tenant_id;
-  const week = Math.max(1, Math.min(4, input.week ?? 1));
-  const timestamp = now();
-  let payload: any = null;
-  let usage: Record<string, unknown> | undefined;
-
-  try {
-    const result = await llmJSON<any>({
-      system: GROWTH_SYSTEM_PROMPT,
-      user: buildTopicPoolUserPrompt({
-        week,
-        persona: input.account.persona,
-        targetUser: input.account.target_user,
-        coreProblem: input.account.core_problem,
-        recentSignals: input.learningBrief ? formatLearningBrief(input.learningBrief) : input.recentSignals,
-        context: accountContext(input.account),
-      }),
-      maxTokens: 5000,
-      temperature: 0.55,
-    });
-    payload = result.data;
-    usage = {
-      provider: result.raw.provider,
-      model: result.raw.model,
-      input_tokens: result.raw.usage?.inputTokens,
-      output_tokens: result.raw.usage?.outputTokens,
-    };
-  } catch (error) {
-    console.warn("[growth] topic pool fallback:", (error as Error).message);
+function freshestSources(account: GrowthAccount) {
+  const result = new Map<TitleMethodId, TopicSourceSnapshot>();
+  for (const source of [...(account.topic_sources ?? [])].sort((a, b) => b.collected_at.localeCompare(a.collected_at))) {
+    if (!result.has(source.method_id) && sourceIsUsable(source)) result.set(source.method_id, source);
   }
-
-  const topics = normalizeTopics(payload?.topics);
-  const run: GrowthRun = {
-    id: id(),
-    tenant_id: tenantId,
-    account_id: input.account.id,
-    plan_id: input.planId,
-    status: "draft",
-    week,
-    objective: payload?.objective || "本轮先验证目标客户是否认同账号判断。",
-    experiment_hypothesis:
-      payload?.experiment_hypothesis || "方向 A 的诊断型内容更容易带来精准评论和主页访问。",
-    topic_pool: topics.length ? topics : fallbackTopics(input.account),
-    learning_trace: input.learningBrief?.trace,
-    created_at: timestamp,
-    updated_at: timestamp,
-  };
-  return { run, usage };
+  return result;
 }
 
-export async function generateDraft(input: {
-  tenantId?: string;
-  account: GrowthAccount;
-  run: GrowthRun;
-  selectedTopicId?: string;
-  learningBrief?: GrowthLearningBrief;
-}): Promise<{ run: GrowthRun; draft: ContentDraft; usage?: Record<string, unknown> }> {
-  const topic =
-    input.run.topic_pool.find((candidate) => candidate.id === input.selectedTopicId) ||
-    input.run.topic_pool.find((candidate) => candidate.priority === "S") ||
-    input.run.topic_pool[0];
-  if (!topic) throw new Error("topic_pool_empty");
+const EXECUTIVE_FALLBACK_TITLES: Record<TitleMethodId, [string, string]> = {
+  traffic: ["这波热搜，中高管先别跟", "判断热点对职业选择的真实影响"],
+  human_pain: ["年薪百万，为何更不敢离职", "解释高收入中高管不敢离职的三层代价"],
+  tug_of_war: ["留在高位，还是重新定价？", "真实比较留任与转型两条路径"],
+  scarce_material: ["中高管转型路线图公开", "正文直接交付可执行的转型路线图"],
+  superlative: ["中高管最危险的一次跳槽", "说明高位跳槽最危险的条件与信号"],
+  contrarian: ["职位越高，转型未必越容易", "解释高职位增加转型难度的条件"],
+  nostalgia: ["十年前升职，如今可能是坑", "比较过去与当下升职价值的变化"],
+  inventory: ["中高管离职前查这5项", "逐项交付离职前必须检查的5项内容"],
+  same_product: ["中高管军师，先看适配", "迁移同类服务表达并说明适配边界"],
+  same_effect: ["这2条转型路怎么选？", "提供两条转型路径的比较标准"],
+  similar_audience: ["能转型的中高管都算胜率", "拆解中高管计算转型胜率的变量"],
+  same_outcome: ["争高位，不如争定价权", "解释职业定价权为何更接近终局"],
+  viral_framework: ["中高管缺的不是机会，是判断", "用爆款框架解释判断力的实际价值"],
+};
 
-  const timestamp = now();
-  let payload: any = null;
-  let usage: Record<string, unknown> | undefined;
+const OVERSEAS_STUDENT_FALLBACK_TITLES: Record<TitleMethodId, [string, string]> = {
+  traffic: ["这波缩招，留学生先别慌", "判断近期招聘变化对留学生求职的真实影响"],
+  human_pain: ["留学花百万，为何更不敢回国", "解释留学生在投入、身份和求职之间的真实压力"],
+  tug_of_war: ["留当地，还是回国求职？", "真实比较留当地与回国求职两条路径"],
+  scarce_material: ["留学生求职路线图公开", "正文直接交付可执行的留学生求职路线图"],
+  superlative: ["留学生最危险的一次海投", "说明无定位海投最危险的条件与后果"],
+  contrarian: ["学历越高，求职未必越容易", "解释高学历不能自动换来岗位匹配的条件"],
+  nostalgia: ["五年前海归，如今不再稀缺", "比较过去与当下海归求职优势的变化"],
+  inventory: ["留学生投简历前查这5项", "逐项交付投递前必须检查的5项内容"],
+  same_product: ["留学生求职参谋，先看适配", "迁移同类服务表达并说明适配边界"],
+  same_effect: ["这2条求职路怎么选？", "提供两条求职路径的比较标准"],
+  similar_audience: ["能上岸的留学生都算匹配度", "拆解留学生计算岗位匹配度的变量"],
+  same_outcome: ["争名企，不如争职业起点", "解释可积累的职业起点为何更接近终局"],
+  viral_framework: ["留学生缺的不是投递，是定位", "用爆款框架解释求职定位的实际价值"],
+};
 
-  try {
-    const result = await llmJSON<any>({
-      system: GROWTH_SYSTEM_PROMPT,
-      user: buildDraftUserPrompt({
-        persona: input.account.persona,
-        context: accountContext(input.account),
-        targetUser: topic.target_user,
-        trustSource: input.account.trust_source,
-        direction: topic.direction,
-        contentType: topic.content_type,
-        title: topic.title,
-        testVariable: topic.test_variable,
-        expectedSignal: topic.expected_signal,
-        followReason: topic.follow_reason,
-        learningGuidance: input.learningBrief ? formatLearningBrief(input.learningBrief) : undefined,
-      }),
-      maxTokens: 3500,
-      temperature: 0.65,
-    });
-    payload = result.data;
-    usage = {
-      provider: result.raw.provider,
-      model: result.raw.model,
-      input_tokens: result.raw.usage?.inputTokens,
-      output_tokens: result.raw.usage?.outputTokens,
-    };
-  } catch (error) {
-    console.warn("[growth] draft fallback:", (error as Error).message);
-  }
-
-  const hashtags = normalizeTags(payload?.hashtags || ["#中高层转型", "#第二曲线", "#小红书运营"]);
-  const title = enforceTitleLimit(payload?.title || topic.title);
-  const body =
-    payload?.body ||
-    `如果你已经在公司里做出成绩，但离开这个位置后，客户、预算和信任还会不会跟着你走？\n\n先别急着做个人 IP，也别急着追爆款。先判断三件事：\n\n1. 你现在的价值，是岗位给的，还是市场愿意单独为你付费？\n2. 你手里有没有能被目标客户理解的具体成果？\n3. 你发出的内容，是在吸引目标客户，还是只吸引泛职场围观？\n\n这篇先验证一个变量：${topic.test_variable}。\n\n我会继续记录，一个成熟职场人怎么把经验变成市场上的资产。`;
-
-  const rawDraft: ContentDraft = {
-    id: id(),
-    tenant_id: input.tenantId ?? input.account.tenant_id,
-    account_id: input.account.id,
-    run_id: input.run.id,
-    status: "ready",
-    direction: topic.direction,
-    content_type: topic.content_type,
-    test_variable: topic.test_variable,
-    expected_signal: topic.expected_signal,
-    title,
-    alternative_titles: (Array.isArray(payload?.alternative_titles)
-      ? payload.alternative_titles.slice(0, 3)
-      : [`${topic.title}，先看这张表`, "别急着发内容，先判断目标客户", "公司外议价权，先看 5 个信号"]
-    ).map((t: string) => enforceTitleLimit(t)),
-    target_user: payload?.target_user || topic.target_user,
-    cover_text: payload?.cover_text || topic.hook,
-    body,
-    hashtags,
-    comment_prompt:
-      payload?.comment_prompt || "你现在更像公司里的能人，还是市场上的资产？",
-    word_count: countPublishChars(title, body, hashtags),
-    follow_reason: payload?.follow_reason || topic.follow_reason,
-    trust_anchor: payload?.trust_anchor || input.account.trust_source,
-    review_points: Array.isArray(payload?.review_points)
-      ? payload.review_points.slice(0, 5)
-      : ["收藏", "评论", "主页访问", "新增关注", "评论里是否出现目标用户信号"],
-    cover_suggestion:
-      payload?.cover_suggestion ||
-      "真实办公桌面，手写目标客户判断表，画面克制，有真实过程感。",
-    story_mode: asText(payload?.story_mode) || undefined,
-    pictorial_rate: asText(payload?.pictorial_rate) || undefined,
-    learning_trace: input.learningBrief?.trace,
-    created_at: timestamp,
-    updated_at: timestamp,
-  };
-
-  const draft = enforceDraftCompliance(rawDraft, enforceTitleLimit(topic.title));
-
-  const run: GrowthRun = {
-    ...input.run,
-    status: "ready",
-    selected_topic: topic,
-    draft,
-    learning_trace: input.learningBrief?.trace,
-    updated_at: timestamp,
-  };
-
-  return { run, draft, usage };
+function fallbackTitles(account: GrowthAccount) {
+  return account.business_line === "overseas_student"
+    ? OVERSEAS_STUDENT_FALLBACK_TITLES
+    : EXECUTIVE_FALLBACK_TITLES;
 }
 
-/**
- * 每点一次生成 N 个新选题（默认 2），排除已有标题，保证不重复。
- */
+function fallbackTopic(account: GrowthAccount, method: TitleMethodDefinition, mode: MethodGenerationMode, source?: TopicSourceSnapshot): TopicCandidate {
+  const [title, promise] = fallbackTitles(account)[method.id];
+  const isOverseas = account.business_line === "overseas_student";
+  const topic: TopicCandidate = {
+    id: id(), method_group: method.group, method_id: method.id, method_label: method.label, generation_mode: mode,
+    title: enforceTitleLimit(title), title_promise: promise, target_user: account.target_user, pain: account.core_problem,
+    hook: title, source_snapshot: source,
+    internal_insight_source: method.group === "native" && !method.sourceRequired ? account.trust_source : undefined,
+    origin_force: isOverseas ? "使用留学生熟悉的毕业、投递、回国或留当地求职场景。" : "使用中高管熟悉的职位、离职、跳槽或职业路径场景。",
+    conflict_judgement: isOverseas ? "把留学投入与真实岗位匹配之间的落差放到标题中。" : "把平台位置与市场定价之间的落差放到标题中。",
+    follow_reason: account.follow_reason || (isOverseas ? "持续获得留学生求职路径判断。" : "持续获得中高管职业决策判断。"),
+    test_variable: `${method.label}标题能否带来目标人群有效咨询`,
+    expected_signal: "出现具体处境、候选路径或决策冲突的站内咨询",
+    repeatable_angle: `可继续复测${method.label}方法`, broad_traffic_risk: 4, priority: "A",
+  };
+  topic.validation_checks = validateTopicCandidate(topic, account.persona);
+  return topic;
+}
+
+function normalizeTopics(raw: unknown, account: GrowthAccount, methods: TitleMethodDefinition[], mode: MethodGenerationMode, sources: Map<TitleMethodId, TopicSourceSnapshot>) {
+  const rows = Array.isArray(raw) ? raw : [];
+  const titles = fallbackTitles(account);
+  return methods.map((method) => {
+    const row = rows.find((item) => item?.method_id === method.id);
+    if (!row) return fallbackTopic(account, method, mode, sources.get(method.id));
+    const topic: TopicCandidate = {
+      ...fallbackTopic(account, method, mode, sources.get(method.id)),
+      title: enforceTitleLimit(row.title || titles[method.id][0]),
+      title_promise: asText(row.title_promise) || titles[method.id][1],
+      target_user: asText(row.target_user) || account.target_user,
+      pain: asText(row.pain) || account.core_problem,
+      hook: asText(row.hook) || asText(row.title),
+      origin_force: asText(row.origin_force), conflict_judgement: asText(row.conflict_judgement),
+      follow_reason: asText(row.follow_reason) || account.follow_reason || (account.business_line === "overseas_student" ? "持续获得留学生求职判断。" : "持续获得中高管职业判断。"),
+      test_variable: asText(row.test_variable) || `${method.label}标题入口`,
+      expected_signal: asText(row.expected_signal) || "有效咨询",
+      repeatable_angle: asText(row.repeatable_angle) || `复测${method.label}`,
+      broad_traffic_risk: Math.max(1, Math.min(10, Number(row.broad_traffic_risk) || 4)),
+      priority: ["S", "A", "B", "C"].includes(row.priority) ? row.priority : "A",
+    };
+    topic.validation_checks = validateTopicCandidate(topic, account.persona);
+    return topic;
+  });
+}
+
 export async function generateTopicBatch(input: {
   account: GrowthAccount;
   week?: number;
-  count?: number;
+  generationMode?: MethodGenerationMode;
   excludeTitles?: string[];
   recentSignals?: string;
   learningBrief?: GrowthLearningBrief;
-}): Promise<{ topics: TopicCandidate[]; usage?: Record<string, unknown> }> {
-  const week = Math.max(1, Math.min(4, input.week ?? 1));
-  const count = input.count ?? 2;
-  const excludeTitles = input.excludeTitles ?? [];
-  let payload: any = null;
+}): Promise<{ topics: TopicCandidate[]; unavailableMethods: GrowthRun["unavailable_methods"]; usage?: Record<string, unknown> }> {
+  const generationMode = input.generationMode ?? "default";
+  const expected = methodsForPersona(input.account.persona, generationMode, input.account.method_overrides);
+  const sources = freshestSources(input.account);
+  const methods = expected.filter((method) => !method.sourceRequired || sources.has(method.id));
+  const unavailableMethods = expected
+    .filter((method) => method.sourceRequired && !sources.has(method.id))
+    .map((method) => ({ method_id: method.id, method_label: method.label, reason: "暂无7天内母题，或热度快照/链接核验已超过24小时" }));
+  if (!methods.length) return { topics: [], unavailableMethods };
+  let payload: any;
   let usage: Record<string, unknown> | undefined;
-
   try {
     const result = await llmJSON<any>({
       system: GROWTH_SYSTEM_PROMPT,
       user: buildTopicPoolUserPrompt({
-        week,
-        persona: input.account.persona,
-        targetUser: input.account.target_user,
-        coreProblem: input.account.core_problem,
+        week: Math.max(1, Math.min(4, input.week ?? 1)), persona: input.account.persona,
+        targetUser: input.account.target_user, coreProblem: input.account.core_problem,
         recentSignals: input.learningBrief ? formatLearningBrief(input.learningBrief) : input.recentSignals,
-        count,
-        excludeTitles,
-        context: accountContext(input.account),
-      }),
-      maxTokens: 2000,
-      temperature: 0.75,
+        methods, generationMode,
+        sources: methods.map((method) => sources.get(method.id)).filter(Boolean) as TopicSourceSnapshot[],
+        excludeTitles: input.excludeTitles, context: accountContext(input.account),
+      }), maxTokens: 5000, temperature: 0.55,
     });
     payload = result.data;
-    usage = {
-      provider: result.raw.provider,
-      model: result.raw.model,
-      input_tokens: result.raw.usage?.inputTokens,
-      output_tokens: result.raw.usage?.outputTokens,
-    };
+    usage = resultUsage(result);
   } catch (error) {
-    console.warn("[growth] topic batch fallback:", (error as Error).message);
+    console.warn("[growth] topic fallback:", (error as Error).message);
   }
-
-  const excludeSet = new Set(excludeTitles.map((title) => title.trim()));
-  let topics = normalizeTopics(payload?.topics).filter((topic) => !excludeSet.has(topic.title.trim()));
-
-  if (topics.length < count) {
-    const backup = fallbackTopics(input.account).filter(
-      (topic) => !excludeSet.has(topic.title.trim()) && !topics.some((t) => t.title === topic.title)
-    );
-    topics = [...topics, ...backup];
-  }
-
-  if (input.learningBrief) {
-    topics = topics.map((topic) => ({
-      ...topic,
-      weekly_action: input.learningBrief?.trace.direction_action,
-      evidence: input.learningBrief?.trace.basis.join("；"),
-      learning_trace: input.learningBrief?.trace,
-    }));
-  }
-
-  return { topics: topics.slice(0, count), usage };
+  return { topics: normalizeTopics(payload?.topics, input.account, methods, generationMode, sources), unavailableMethods, usage };
 }
 
-/**
- * 先选题后生成正文：为指定选题生成 N 篇（默认 2）不重复正文，供 N 选 1。
- */
-export async function generateDraftVariants(input: {
-  tenantId?: string;
-  account: GrowthAccount;
-  run: GrowthRun;
-  topic: TopicCandidate;
-  count?: number;
-  excludeBodies?: string[];
-  learningBrief?: GrowthLearningBrief;
-}): Promise<{ drafts: ContentDraft[]; usage?: Record<string, unknown> }> {
-  const count = input.count ?? 2;
-  const experiment = input.learningBrief?.experiment_variable || normalizeExperimentVariable(input.topic.test_variable);
-  const experimentHints: Record<Exclude<typeof experiment, "title_cover">, string[]> = {
-    opening: ["只改变开头：用具体场景切入。", "只改变开头：用反常识判断切入。"],
-    audience_expression: ["只改变目标人群称呼：用身份筛选。", "只改变目标人群称呼：用处境筛选。"],
-    body_structure: ["只改变正文结构：采用诊断信号结构。", "只改变正文结构：采用问题-证据-行动结构。"],
-    evidence: ["只改变案例证据：使用具体场景和数字。", "只改变案例证据：使用对照和反例。"],
-    closing: ["只改变结尾：给读者一个自查动作。", "只改变结尾：给读者一个判断标准。"],
-    length: ["只改变篇幅，写150-300字精简版。", "只改变篇幅，写600-900字深度版。"],
+export async function generateTopicPool(input: {
+  tenantId?: string; account: GrowthAccount; planId?: string; week?: number;
+  recentSignals?: string; learningBrief?: GrowthLearningBrief; generationMode?: MethodGenerationMode;
+}) {
+  const generated = await generateTopicBatch(input);
+  const timestamp = now();
+  const run: GrowthRun = {
+    id: id(), tenant_id: input.tenantId ?? input.account.tenant_id, account_id: input.account.id,
+    plan_id: input.planId, status: "draft", week: input.week ?? 1,
+    objective: "用标题方法验证能否促成目标人群的有效咨询。",
+    experiment_hypothesis: "不同标题方法带来的有效咨询率存在差异。",
+    generation_mode: input.generationMode ?? "default", topic_pool: generated.topics,
+    unavailable_methods: generated.unavailableMethods, learning_trace: input.learningBrief?.trace,
+    created_at: timestamp, updated_at: timestamp,
   };
-  const drafts: ContentDraft[] = [];
-  const usedBodies = [...(input.excludeBodies ?? [])];
-  let usage: Record<string, unknown> | undefined;
+  return { run, usage: generated.usage };
+}
 
-  if (experiment === "title_cover") {
-    const single = await generateSingleDraft({
-      tenantId: input.tenantId,
-      account: input.account,
-      run: input.run,
-      topic: input.topic,
-      variantHint: "本轮只测试标题入口。正文、开头、结构、案例、结尾和篇幅必须固定。",
-      lengthHint: "正文采用中等篇幅，不要为了制造版本差异改变正文。",
-      excludeBodies: usedBodies,
-      learningBrief: input.learningBrief,
-    });
-    const candidateTitles = [...new Set([single.draft.title, ...single.draft.alternative_titles, input.topic.title])]
-      .map(enforceTitleLimit)
-      .filter(Boolean);
-    for (let index = 0; index < count; index++) {
-      const title = candidateTitles[index] || enforceTitleLimit(`${input.topic.title}${index + 1}`);
-      drafts.push({
-        ...single.draft,
-        id: index === 0 ? single.draft.id : id(),
-        title,
-        word_count: countPublishChars(title, single.draft.body, single.draft.hashtags),
-        learning_trace: input.learningBrief?.trace,
-        created_at: index === 0 ? single.draft.created_at : now(),
-        updated_at: now(),
-      });
-    }
-    return { drafts, usage: single.usage };
-  }
+const ctaType = (persona: GrowthPersona): ContentDraft["cta_type"] =>
+  persona === "buyer" ? "soft_bridge" : persona === "expert" ? "on_platform_consult" : "service_entry";
 
-  const hints = experimentHints[experiment];
-
-  for (let i = 0; i < count; i++) {
-    const single = await generateSingleDraft({
-      tenantId: input.tenantId,
-      account: input.account,
-      run: input.run,
-      topic: input.topic,
-      variantHint: `${hints[i % hints.length]} 其它变量必须与另一方案保持一致。`,
-      lengthHint: experiment === "length" ? hints[i % hints.length] : "正文统一控制在400-600字。",
-      lengthKind: experiment === "length" && i > 0 ? "long" : undefined,
-      excludeBodies: usedBodies,
-      learningBrief: input.learningBrief,
-    });
-    const draft = drafts[0]
-      ? {
-          ...single.draft,
-          title: drafts[0].title,
-          cover_text: drafts[0].cover_text,
-          target_user: drafts[0].target_user,
-          hashtags: drafts[0].hashtags,
-          word_count: countPublishChars(drafts[0].title, single.draft.body, drafts[0].hashtags),
-        }
-      : single.draft;
-    drafts.push(draft);
-    usedBodies.push(draft.body);
-    if (single.usage) usage = single.usage;
-  }
-
-  return { drafts, usage };
+function fallbackBody(topic: TopicCandidate, long: boolean, cta: ContentDraft["cta_type"], businessLine: GrowthBusinessLine) {
+  const numeric = topic.title.match(/(?:^|\D)(\d{1,2})(?=\D|$)/)?.[1];
+  const count = numeric ? Math.max(1, Math.min(10, Number(numeric))) : /清单|路线图|资料|盘点|表|步骤/.test(topic.title) ? 3 : 0;
+  const items = businessLine === "overseas_student"
+    ? ["把专业背景与目标岗位要求逐项对齐", "写清回国与留当地两条路径的最小验证动作", "确认签证、时间线与招聘周期", "用真实岗位反馈校准求职定位", "准备能被验证的项目与实习证据", "核对目标行业的入场门槛", "找到三位真实从业者访谈", "记录拒绝反馈而非只看成功案例", "先投递小样本验证简历版本", "到期后按证据调整路径"]
+    : ["把可迁移能力与平台资源分开", "写清每条候选路径的最小验证动作", "提前设定失败成本与停止条件", "确认家庭现金流能承受的验证周期", "用真实市场反馈校准职业定价", "核对目标行业的进入门槛", "准备能被验证的成果证据", "找到第一批真实访谈对象", "记录反对证据而非只找支持", "到期后按证据作出取舍"];
+  const list = count ? `\n\n${items.slice(0, count).map((item, index) => `${index + 1}. ${item}`).join("\n")}` : "";
+  const judgement = businessLine === "overseas_student"
+    ? "学校、专业和留学投入，都可能让人误判自己的岗位匹配度。真正要看的，是目标岗位是否认可你的经历、技能和可验证成果。"
+    : "职位、收入和平台资源，都可能让人误判自己的市场价格。真正要看的，是离开当前岗位后，哪些能力、成果和客户信任仍能被单独识别。";
+  const core = `${topic.target_user}先看这里：${topic.title_promise}。\n\n${judgement}${list}`;
+  const detail = long ? "\n\n执行时不要一次验证所有假设。先选成本最低、最能推翻自己判断的一项，约定一个观察周期，再用访谈、试做或真实付费反馈判断。没有证据之前，保留选择权比急着表态更重要。" : "";
+  const closing = cta === "soft_bridge" ? "\n\n先把这些变量写下来，再看哪条路值得迈出第一步。" : cta === "on_platform_consult" ? "\n\n如果你卡在两条具体路径之间，可在站内补充当前职位、候选方向和最担心的冲突，先做适配判断。" : "\n\n如果你的处境已经具体，可从站内服务入口提交职位、候选路径和决策冲突，先确认服务是否适配。";
+  return `${core}${detail}${closing}`;
 }
 
 async function generateSingleDraft(input: {
-  tenantId?: string;
-  account: GrowthAccount;
-  run: GrowthRun;
-  topic: TopicCandidate;
-  variantHint?: string;
-  lengthHint?: string;
-  lengthKind?: "short" | "long";
-  excludeBodies?: string[];
-  learningBrief?: GrowthLearningBrief;
-}): Promise<{ draft: ContentDraft; usage?: Record<string, unknown> }> {
-  const topic = input.topic;
-  const timestamp = now();
-  let payload: any = null;
+  tenantId?: string; account: GrowthAccount; run: GrowthRun; topic: TopicCandidate;
+  bodyVersion: "short" | "long"; excludeBodies?: string[]; learningBrief?: GrowthLearningBrief;
+}) {
+  let payload: any;
   let usage: Record<string, unknown> | undefined;
-
+  const cta = ctaType(input.account.persona);
   try {
     const result = await llmJSON<any>({
       system: GROWTH_SYSTEM_PROMPT,
       user: buildDraftUserPrompt({
-        persona: input.account.persona,
-        targetUser: topic.target_user,
-        trustSource: input.account.trust_source,
-        direction: topic.direction,
-        contentType: topic.content_type,
-        title: topic.title,
-        testVariable: topic.test_variable,
-        expectedSignal: topic.expected_signal,
-        followReason: topic.follow_reason,
-        variantHint: [input.variantHint, input.lengthHint].filter(Boolean).join(" "),
+        persona: input.account.persona, context: accountContext(input.account),
+        targetUser: input.topic.target_user, trustSource: input.account.trust_source,
+        methodId: input.topic.method_id, methodLabel: input.topic.method_label,
+        generationMode: input.topic.generation_mode, title: input.topic.title,
+        titlePromise: input.topic.title_promise, testVariable: input.topic.test_variable,
+        expectedSignal: input.topic.expected_signal, followReason: input.topic.follow_reason,
+        variantHint: input.bodyVersion === "short" ? "写150—300字短版。" : "写600—900字长版。",
         learningGuidance: input.learningBrief ? formatLearningBrief(input.learningBrief) : undefined,
-        excludeBodies: input.excludeBodies,
-        context: accountContext(input.account),
-      }),
-      maxTokens: input.lengthKind === "long" ? 3500 : 1800,
-      temperature: 0.7,
+        excludeBodies: input.excludeBodies, ctaType: cta,
+      }), maxTokens: input.bodyVersion === "long" ? 3500 : 1800, temperature: 0.65,
     });
     payload = result.data;
-    usage = {
-      provider: result.raw.provider,
-      model: result.raw.model,
-      input_tokens: result.raw.usage?.inputTokens,
-      output_tokens: result.raw.usage?.outputTokens,
-    };
+    usage = resultUsage(result);
   } catch (error) {
-    console.warn("[growth] draft variant fallback:", (error as Error).message);
+    console.warn("[growth] draft fallback:", (error as Error).message);
   }
-
-  const hashtags = normalizeTags(payload?.hashtags || ["#中高层转型", "#第二曲线", "#小红书运营"]);
-  const title = enforceTitleLimit(payload?.title || topic.title);
-  const shortFallback = `围绕「${topic.title}」，先验证一个变量：${topic.test_variable}。\n\n最锋利的判断：别急着做，先看你现在的价值是岗位给的，还是市场愿意单独为你付费。\n\n3 个信号：\n1. 有没有能被目标客户理解的具体成果？\n2. 你的内容在吸引目标客户，还是只吸引泛围观？\n3. 离开这个位置，客户还会不会找你？`;
-  const longFallback = `围绕「${topic.title}」，本篇先验证一个变量：${topic.test_variable}。\n\n先说一个反常识判断：很多人以为自己缺的是流量，其实缺的是“市场愿意单独为你付费的理由”。\n\n一、先自查三件事\n1. 你现在的价值，是岗位给的，还是市场愿意单独为你付费？\n2. 你手里有没有能被目标客户理解的具体成果（案例、数字、可复用方法）？\n3. 你发出的内容，是在吸引目标客户，还是只吸引泛围观？\n\n二、怎么把经验变成可被购买的表达\n把你做过的判断拆成“别人可以照着用”的清单和标准，而不是只讲故事。每一篇只讲清楚一个判断，并给出下一步动作。\n\n三、下一步\n先用一篇内容测试：目标客户看完，会不会主动来问。如果会，说明方向成立；如果只有点赞没有咨询，就换角度。\n\n我会继续记录，一个成熟职场人怎么把经验变成市场上可被信任、可被定价的资产。`;
-  const body = payload?.body || (input.lengthKind === "long" ? longFallback : shortFallback);
-
-  const rawDraft: ContentDraft = {
-    id: id(),
-    tenant_id: input.tenantId ?? input.account.tenant_id,
-    account_id: input.account.id,
-    run_id: input.run.id,
-    status: "draft",
-    direction: topic.direction,
-    content_type: topic.content_type,
-    test_variable: topic.test_variable,
-    expected_signal: topic.expected_signal,
-    title,
-    alternative_titles: (Array.isArray(payload?.alternative_titles)
-      ? payload.alternative_titles.slice(0, 3)
-      : [`${topic.title}，先看这张表`, "别急着发内容，先判断目标客户"]
-    ).map((t: string) => enforceTitleLimit(t)),
-    target_user: payload?.target_user || topic.target_user,
-    cover_text: payload?.cover_text || topic.hook,
-    body,
-    hashtags,
-    comment_prompt: payload?.comment_prompt || "你现在更像公司里的能人，还是市场上的资产？",
+  const title = enforceTitleLimit(payload?.title || input.topic.title);
+  const businessLine = input.account.business_line ?? "executive";
+  const body = asText(payload?.body) || fallbackBody(input.topic, input.bodyVersion === "long", cta, businessLine);
+  const hashtags = normalizeTags(Array.isArray(payload?.hashtags) ? payload.hashtags : businessLine === "overseas_student" ? ["#留学生求职", "#海归求职", "#职业规划"] : ["#中高管", "#职业转型", "#职业决策"]);
+  const timestamp = now();
+  const raw: ContentDraft = {
+    id: id(), tenant_id: input.tenantId ?? input.account.tenant_id, account_id: input.account.id,
+    run_id: input.run.id, status: "draft", business_line: GROWTH_BUSINESS_LINE_VALUES[businessLine], method_group: input.topic.method_group,
+    method_id: input.topic.method_id, method_label: input.topic.method_label,
+    generation_mode: input.topic.generation_mode, title_promise: input.topic.title_promise,
+    source_snapshot: input.topic.source_snapshot, selected_body_version: input.bodyVersion,
+    raw_body_tags: [], tagging_status: "pending", canonical_tag_ids: [], cta_type: cta, validation_checks: [],
+    schema_version: "method_v3_2", method_attribution_status: "confirmed", eligible_for_method_learning: true,
+    test_variable: input.topic.test_variable, expected_signal: input.topic.expected_signal, title,
+    alternative_titles: (Array.isArray(payload?.alternative_titles) ? payload.alternative_titles : [input.topic.title]).slice(0, 3).map(enforceTitleLimit),
+    target_user: asText(payload?.target_user) || input.topic.target_user,
+    cover_text: asText(payload?.cover_text) || input.topic.hook, body, hashtags,
+    comment_prompt: asText(payload?.comment_prompt) || "你现在卡在哪两条具体路径之间？",
     word_count: countPublishChars(title, body, hashtags),
-    follow_reason: payload?.follow_reason || topic.follow_reason,
-    trust_anchor: payload?.trust_anchor || input.account.trust_source,
-    review_points: Array.isArray(payload?.review_points)
-      ? payload.review_points.slice(0, 5)
-      : ["收藏", "评论", "主页访问", "新增关注", "评论里是否出现目标用户信号"],
-    cover_suggestion: payload?.cover_suggestion || "真实办公桌面，手写目标客户判断表，画面克制。",
-    story_mode: asText(payload?.story_mode) || undefined,
-    pictorial_rate: asText(payload?.pictorial_rate) || undefined,
-    learning_trace: input.learningBrief?.trace,
-    created_at: timestamp,
-    updated_at: timestamp,
+    follow_reason: asText(payload?.follow_reason) || input.topic.follow_reason,
+    trust_anchor: asText(payload?.trust_anchor) || input.account.trust_source,
+    review_points: Array.isArray(payload?.review_points) ? payload.review_points.slice(0, 5) : ["有效咨询", "主页访问", "收藏", "分享"],
+    cover_suggestion: asText(payload?.cover_suggestion) || "用真实职业场景和标题核心冲突做封面。",
+    learning_trace: input.learningBrief?.trace, created_at: timestamp, updated_at: timestamp,
   };
-
-  const draft = enforceDraftCompliance(rawDraft, enforceTitleLimit(topic.title));
+  let draft = enforceDraftCompliance(raw, input.topic.title);
+  draft = { ...draft, validation_checks: validateDraftHardChecks(draft, input.account.persona) };
   return { draft, usage };
 }
 
+export async function generateDraftVariants(input: {
+  tenantId?: string; account: GrowthAccount; run: GrowthRun; topic: TopicCandidate;
+  count?: number; excludeBodies?: string[]; learningBrief?: GrowthLearningBrief;
+}) {
+  const short = await generateSingleDraft({ ...input, bodyVersion: "short" });
+  const long = await generateSingleDraft({ ...input, bodyVersion: "long", excludeBodies: [...(input.excludeBodies ?? []), short.draft.body] });
+  return { drafts: [short.draft, long.draft], usage: long.usage || short.usage };
+}
+
+export async function generateDraft(input: {
+  tenantId?: string; account: GrowthAccount; run: GrowthRun;
+  selectedTopicId?: string; learningBrief?: GrowthLearningBrief;
+}) {
+  const topic = input.run.topic_pool.find((item) => item.id === input.selectedTopicId) || input.run.topic_pool[0];
+  if (!topic) throw new Error("topic_pool_empty");
+  const generated = await generateSingleDraft({ ...input, topic, bodyVersion: "short" });
+  const run: GrowthRun = { ...input.run, status: "ready", selected_topic: topic, draft: generated.draft, updated_at: now() };
+  return { run, draft: generated.draft, usage: generated.usage };
+}
+
+export async function generateOpenBodyTags(draft: ContentDraft): Promise<{
+  tags: RawBodyTag[]; status: ContentDraft["tagging_status"]; usage?: Record<string, unknown>;
+}> {
+  try {
+    const bodyVersion = draft.selected_body_version || "selected";
+    const result = await llmJSON<any>({
+      system: GROWTH_SYSTEM_PROMPT,
+      user: buildBodyTagUserPrompt({ title: draft.title, body: draft.body, bodyVersion }),
+      maxTokens: 500, temperature: 0.25,
+    });
+    const rows = Array.isArray(result.data?.tags) ? result.data.tags : [];
+    const tags = rows.slice(0, 2).map((row: any) => ({
+      id: id(), text: asText(row.text).slice(0, 8), reason: asText(row.reason),
+      generated_at: now(), body_version: bodyVersion, active: true,
+    })).filter((tag: RawBodyTag) => tag.text.length >= 2 && tag.reason && !/(六步|VRIN|PrinciplesYou|面霸君|199|6999|诊断报告)/i.test(tag.text));
+    return { tags, status: tags.length ? "tagged" : "unclassified", usage: resultUsage(result) };
+  } catch (error) {
+    console.warn("[growth] body tagging skipped:", (error as Error).message);
+    return { tags: [], status: "unclassified" };
+  }
+}
+
+export async function generateTagMergeSuggestions(rawTags: Array<{ text: string; draftId: string; title: string }>) {
+  if (new Set(rawTags.map((item) => item.text)).size < 2) return { suggestions: [] as TagMergeSuggestion[] };
+  try {
+    const result = await llmJSON<any>({ system: GROWTH_SYSTEM_PROMPT, user: buildTagMergeUserPrompt({ rawTags }), maxTokens: 1800, temperature: 0.25 });
+    const suggestions: TagMergeSuggestion[] = (Array.isArray(result.data?.suggestions) ? result.data.suggestions : [])
+      .filter((row: any) => Array.isArray(row.member_tags) && new Set(row.member_tags).size >= 2)
+      .map((row: any) => ({
+        id: id(), proposed_name: asText(row.proposed_name).slice(0, 12), definition: asText(row.definition),
+        member_tags: [...new Set<string>(row.member_tags.map(String))],
+        representative_draft_ids: Array.isArray(row.representative_draft_ids) ? row.representative_draft_ids.map(String) : [],
+        status: "pending", created_at: now(),
+      }));
+    return { suggestions, usage: resultUsage(result) };
+  } catch (error) {
+    console.warn("[growth] tag merge skipped:", (error as Error).message);
+    return { suggestions: [] as TagMergeSuggestion[] };
+  }
+}
+
 export async function reviewDraft(input: {
-  tenantId?: string;
-  draft: ContentDraft;
-  metrics: GrowthReviewMetrics;
-  existingReview?: GrowthReview | null;
-  notes?: ContentDraft[];
-  reviews?: GrowthReview[];
+  tenantId?: string; draft: ContentDraft; metrics: GrowthReviewMetrics;
+  existingReview?: GrowthReview | null; notes?: ContentDraft[]; reviews?: GrowthReview[];
 }): Promise<{ review: GrowthReview; usage?: Record<string, unknown> }> {
   const timestamp = now();
-  const publishedAt = resolvePublishedAt(input.draft, input.metrics);
-  const metrics: GrowthReviewMetrics = {
-    ...input.metrics,
-    published_at: publishedAt,
-    snapshot_at: input.metrics.snapshot_at || timestamp,
-  };
+  const metrics: GrowthReviewMetrics = { ...input.metrics, published_at: resolvePublishedAt(input.draft, input.metrics), snapshot_at: input.metrics.snapshot_at || timestamp };
   const derived = computeDerivedMetrics(metrics);
   metrics.ctr = derived.ctr;
-  const sample = evaluateReviewSample(metrics, publishedAt, new Date(timestamp));
+  const sample = evaluateReviewSample(metrics, metrics.published_at, new Date(timestamp));
   const benchmarks = buildReviewBenchmarks(input.draft, input.notes || [input.draft], input.reviews || []);
-  const preliminaryEntry = diagnoseEntry(metrics, benchmarks);
-  let payload: any = null;
+  const preliminary = diagnoseEntry(metrics, benchmarks);
+  let payload: any;
   let usage: Record<string, unknown> | undefined;
-
   try {
     const result = await llmJSON<any>({
       system: GROWTH_SYSTEM_PROMPT,
-      user: buildReviewUserPrompt({
-        title: input.draft.title,
-        direction: input.draft.direction,
-        contentType: input.draft.content_type,
-        testVariable: input.draft.test_variable,
-        metrics: { metrics, derived, sample, benchmarks, preliminary_entry: preliminaryEntry },
-      }),
-      maxTokens: 2000,
-      temperature: 0.35,
+      user: buildReviewUserPrompt({ title: input.draft.title, methodLabel: input.draft.method_label || "历史未分类",
+        generationMode: input.draft.generation_mode || "default", rawTags: (input.draft.raw_body_tags || []).filter((tag) => tag.active !== false),
+        testVariable: input.draft.test_variable, metrics: { metrics, derived, sample, benchmarks, preliminary } }),
+      maxTokens: 2000, temperature: 0.35,
     });
     payload = result.data;
-    usage = {
-      provider: result.raw.provider,
-      model: result.raw.model,
-      input_tokens: result.raw.usage?.inputTokens,
-      output_tokens: result.raw.usage?.outputTokens,
-    };
+    usage = resultUsage(result);
   } catch (error) {
     console.warn("[growth] review fallback:", (error as Error).message);
   }
-
-  const allowedClassifications = new Set([
-    "scale",
-    "retest",
-    "weak_entry",
-    "weak_conversion",
-    "wrong_audience",
-    "pause",
-  ]);
-  const fallbackClassification =
-    preliminaryEntry.performance === "strong_aligned"
-      ? "scale"
-      : preliminaryEntry.performance === "strong_entry_weak_delivery"
-        ? "weak_conversion"
-        : preliminaryEntry.performance === "weak_entry_strong_content"
-          ? "weak_entry"
-          : "retest";
-  const classification = allowedClassifications.has(payload?.classification)
-    ? payload.classification
-    : fallbackClassification;
-  const entryDiagnosis = diagnoseEntry(
-    metrics,
-    benchmarks,
-    asText(payload?.title_pattern) || "待继续验证的标题结构",
-    asText(payload?.primary_audience) || input.draft.target_user,
-    asText(payload?.primary_keyword) || "无",
-  );
-  const nextVariable = asText(payload?.next_variable) || "下一篇优先只改标题/封面入口。";
-
+  const allowed = new Set(["scale", "retest", "weak_entry", "weak_conversion", "wrong_audience", "pause"]);
+  const classification = allowed.has(payload?.classification) ? payload.classification : "retest";
+  const entry = diagnoseEntry(metrics, benchmarks, asText(payload?.title_pattern) || input.draft.method_label, asText(payload?.primary_audience) || input.draft.target_user, asText(payload?.primary_keyword) || "无");
+  const nextVariable = asText(payload?.next_variable) || "下一篇只改变一个变量。";
   const review: GrowthReview = {
-    id: input.existingReview?.id || input.draft.id,
-    tenant_id: input.tenantId ?? input.draft.tenant_id,
-    draft_id: input.draft.id,
-    metrics,
-    derived_metrics: derived,
-    sample,
-    entry_diagnosis: entryDiagnosis,
-    classification,
-    entry_judgement:
-      asText(payload?.entry_judgement) ||
-      (entryDiagnosis.performance === "insufficient"
-        ? "可比较样本不足，先记录标题结构，不急着下结论。"
-        : "已按点击率与内容兑现情况完成入口判断。"),
-    body_judgement: asText(payload?.body_judgement) || "继续结合观看时长、收藏和分享判断正文是否接住标题。",
-    conversion_judgement: asText(payload?.conversion_judgement) || "继续观察新增关注和有效咨询。",
-    compliance_judgement: asText(payload?.compliance_judgement) || "未发现新增合规结论，仍以发布前扫描结果为准。",
-    value_judgement:
-      asText(payload?.value_judgement) || asText(payload?.body_judgement) || "看收藏和分享是否出现价值信号。",
-    follow_judgement:
-      asText(payload?.follow_judgement) || asText(payload?.conversion_judgement) || "看新增关注和有效咨询是否出现。",
-    audience_judgement: payload?.audience_judgement || "需要继续观察评论里是否出现目标用户信号。",
-    next_variable: nextVariable,
-    manager_instruction: payload?.manager_instruction || "保留二测，不要直接放大。",
-    topic_instruction: payload?.topic_instruction || "继续围绕同一目标用户补 2 个不同入口。",
-    writer_instruction: payload?.writer_instruction || "强化开头筛选词和结尾关注理由。",
+    id: input.existingReview?.id || input.draft.id, tenant_id: input.tenantId ?? input.draft.tenant_id,
+    draft_id: input.draft.id, metrics, derived_metrics: derived, sample, entry_diagnosis: entry,
+    classification, entry_judgement: asText(payload?.entry_judgement) || "继续以真实数据判断标题入口。",
+    body_judgement: asText(payload?.body_judgement) || "检查正文是否兑现标题承诺。",
+    conversion_judgement: asText(payload?.conversion_judgement) || "以有效咨询作为北极星。",
+    compliance_judgement: asText(payload?.compliance_judgement) || "以发布前硬校验为准。",
+    value_judgement: asText(payload?.value_judgement) || "观察收藏与分享。",
+    follow_judgement: asText(payload?.follow_judgement) || "观察有效咨询。",
+    audience_judgement: asText(payload?.audience_judgement) || "观察是否出现目标用户。",
+    next_variable: nextVariable, manager_instruction: asText(payload?.manager_instruction) || "单篇只作为证据。",
+    topic_instruction: asText(payload?.topic_instruction) || "围绕同一目标用户继续验证。",
+    writer_instruction: asText(payload?.writer_instruction) || "正文严格兑现标题承诺。",
     experiment_variable: normalizeExperimentVariable(asText(payload?.experiment_variable) || nextVariable),
-    learning_version: `single-${timestamp}`,
-    created_at: input.existingReview?.created_at || timestamp,
-    updated_at: timestamp,
+    learning_version: `single-${timestamp}`, created_at: input.existingReview?.created_at || timestamp, updated_at: timestamp,
   };
-
   return { review, usage };
 }
 
-/**
- * 周复盘：单篇复盘是证据层，本函数只在方向层做策略判断。
- */
 export async function stageReview(input: {
-  account: GrowthAccount;
-  notes: ContentDraft[];
-  reviews: GrowthReview[];
+  account: GrowthAccount; notes: ContentDraft[]; reviews: GrowthReview[]; previous?: WeeklyReviewResult;
 }): Promise<{ result: WeeklyReviewResult; usage?: Record<string, unknown> }> {
   const deterministic = buildWeeklyReviewResult(input);
-  let decision: Record<string, unknown> | null = null;
+  let decision: Record<string, unknown> | undefined;
   let usage: Record<string, unknown> | undefined;
   try {
     const result = await llmJSON<Record<string, unknown>>({
       system: GROWTH_SYSTEM_PROMPT,
-      user: buildStageReviewUserPrompt({
-        targetUser: input.account.target_user,
-        directions: input.account.content_directions,
-        aggregate: deterministic.by_direction,
-      }),
-      maxTokens: 1200,
-      temperature: 0.4,
+      user: buildStageReviewUserPrompt({ targetUser: input.account.target_user, methodAggregate: deterministic.by_method, tagAggregate: deterministic.by_tag, eligibleTotal: deterministic.eligible_total || 0 }),
+      maxTokens: 1200, temperature: 0.35,
     });
     decision = result.data;
-    usage = {
-      provider: result.raw.provider,
-      model: result.raw.model,
-      input_tokens: result.raw.usage?.inputTokens,
-      output_tokens: result.raw.usage?.outputTokens,
-    };
+    usage = resultUsage(result);
   } catch (error) {
     console.warn("[growth] stage review fallback:", (error as Error).message);
   }
-
+  const text = (key: string, fallback: string) => asText(decision?.[key]) || fallback;
   const result: WeeklyReviewResult = {
     ...deterministic,
     decision: {
       ...deterministic.decision,
-      // 方向动作由服务器证据门槛决定，模型只负责解释和提炼表达模式。
-      scale_direction: deterministic.decision.scale_direction,
-      pause_direction: deterministic.decision.pause_direction,
-      next_focus: deterministic.decision.next_focus,
-      reusable_pattern: asText(decision?.reusable_pattern) || deterministic.decision.reusable_pattern,
-      summary: asText(decision?.summary) || deterministic.decision.summary,
-      strategic_hypothesis:
-        asText(decision?.strategic_hypothesis) || deterministic.decision.strategic_hypothesis,
-      title_patterns_to_repeat:
-        Array.isArray(decision?.title_patterns_to_repeat) && decision.title_patterns_to_repeat.length
-          ? decision.title_patterns_to_repeat.map(String).slice(0, 6)
-          : deterministic.decision.title_patterns_to_repeat,
-      title_patterns_to_avoid:
-        Array.isArray(decision?.title_patterns_to_avoid) && decision.title_patterns_to_avoid.length
-          ? decision.title_patterns_to_avoid.map(String).slice(0, 6)
-          : deterministic.decision.title_patterns_to_avoid,
-      body_patterns_to_repeat:
-        Array.isArray(decision?.body_patterns_to_repeat) && decision.body_patterns_to_repeat.length
-          ? decision.body_patterns_to_repeat.map(String).slice(0, 6)
-          : deterministic.decision.body_patterns_to_repeat,
+      reusable_pattern: text("reusable_pattern", deterministic.decision.reusable_pattern),
+      summary: text("summary", deterministic.decision.summary),
+      strategic_hypothesis: text("strategic_hypothesis", deterministic.decision.strategic_hypothesis || ""),
+      title_patterns_to_repeat: Array.isArray(decision?.title_patterns_to_repeat) ? decision.title_patterns_to_repeat.map(String).slice(0, 6) : deterministic.decision.title_patterns_to_repeat,
+      title_patterns_to_avoid: Array.isArray(decision?.title_patterns_to_avoid) ? decision.title_patterns_to_avoid.map(String).slice(0, 6) : deterministic.decision.title_patterns_to_avoid,
+      body_patterns_to_repeat: Array.isArray(decision?.body_patterns_to_repeat) ? decision.body_patterns_to_repeat.map(String).slice(0, 6) : deterministic.decision.body_patterns_to_repeat,
     },
   };
   return { result, usage };
-}
-
-function normalizeTopics(topics: any): TopicCandidate[] {
-  if (!Array.isArray(topics)) return [];
-  return topics.slice(0, 18).map((topic, index) => ({
-    id: id(),
-    direction: topic.direction === "B" || topic.direction === "C" ? topic.direction : "A",
-    title: enforceTitleLimit(topic.title || `候选题 ${index + 1}`),
-    target_user: String(topic.target_user || "成熟职场人"),
-    pain: String(topic.pain || "不知道如何把经验转成市场资产"),
-    content_type:
-      topic.content_type === "tool" || topic.content_type === "story"
-        ? topic.content_type
-        : "diagnostic",
-    hook: String(topic.hook || topic.title || "先判断你的公司外议价权"),
-    origin_force: String(
-      topic.origin_force ||
-        `标题入口「${topic.title || `候选题 ${index + 1}`}」需要靠具体物件、角色、场景或动作承接原力；若这句仍偏抽象，请重新生成。`,
-    ),
-    conflict_judgement: String(
-      topic.conflict_judgement ||
-        "本批选题未返回冲突判断，请重新生成一批；新规则要求每题必须写清反常识、反预期或强落差。",
-    ),
-    follow_reason: String(topic.follow_reason || "账号会持续拆解成熟职场人的第二曲线判断。"),
-    test_variable: String(topic.test_variable || "标题入口是否能吸引目标用户"),
-    expected_signal: String(topic.expected_signal || "出现收藏、评论或主页访问"),
-    repeatable_angle: String(topic.repeatable_angle || "可延展成系列自查题"),
-    broad_traffic_risk: safeScore(topic.broad_traffic_risk, 4),
-    priority: ["S", "A", "B", "C"].includes(topic.priority) ? topic.priority : index < 3 ? "S" : "A",
-    scores: {
-      positioning: safeScore(topic.scores?.positioning),
-      pain_clarity: safeScore(topic.scores?.pain_clarity),
-      entry_strength: safeScore(topic.scores?.entry_strength),
-      follow_reason: safeScore(topic.scores?.follow_reason),
-      experiment_value: safeScore(topic.scores?.experiment_value),
-      repeatability: safeScore(topic.scores?.repeatability),
-    },
-  }));
-}
-
-function fallbackTopics(account: GrowthAccount): TopicCandidate[] {
-  const base = [
-    ["A", "公司外你还有议价权吗？看5个信号", "diagnostic"],
-    ["A", "年薪高的人，最怕没有市场价格", "diagnostic"],
-    ["B", "中高层做内容，先写目标客户判断表", "tool"],
-    ["B", "离开公司前，先盘个人资产负债表", "tool"],
-    ["C", "做过合伙人，才知道谁能真正上桌", "story"],
-    ["C", "从公司位置到市场位置，我先改了这件事", "story"],
-  ] as const;
-
-  return base.map(([direction, title, contentType], index) => ({
-    id: id(),
-    direction,
-    title: enforceTitleLimit(title),
-    target_user: account.target_user,
-    pain: account.core_problem,
-    content_type: contentType,
-    hook: title,
-    origin_force: "标题包含目标受众熟悉的具体角色、场景或资产词，不只用抽象概念做入口。",
-    conflict_judgement: "围绕公司内位置与市场外定价之间的落差，形成反预期冲突。",
-    follow_reason: "看完知道这个账号会持续拆解成熟职场人的市场化路径。",
-    test_variable: index < 2 ? "目标客户表达" : index < 4 ? "工具收藏价值" : "信任锚点",
-    expected_signal: "收藏、评论、主页访问或新增关注中至少出现一个正向信号。",
-    repeatable_angle: "可延展为同方向系列内容。",
-    broad_traffic_risk: 4,
-    priority: index < 3 ? "S" : "A",
-    scores: {
-      positioning: 8,
-      pain_clarity: 8,
-      entry_strength: 8,
-      follow_reason: 8,
-      experiment_value: 8,
-      repeatability: 8,
-    },
-  }));
 }

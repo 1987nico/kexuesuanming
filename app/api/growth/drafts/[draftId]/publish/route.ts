@@ -3,7 +3,7 @@ import { z } from "zod";
 import { logActivity } from "@/lib/auth/activity";
 import { requireMianbaApiAuth } from "@/lib/auth/mianba";
 import { growthStore } from "@/lib/growth/store";
-import { enforceDraftCompliance } from "@/lib/growth/validation";
+import { enforceDraftCompliance, hardChecksAllowPublishing, validateDraftHardChecks } from "@/lib/growth/validation";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -48,11 +48,21 @@ export async function POST(req: Request, { params }: { params: { draftId: string
     );
   }
 
+  const account = await store.getAccount(draft.account_id);
+  if (!account) return NextResponse.json({ error: "account_not_found" }, { status: 404 });
+  const isLegacy = checkedDraft.schema_version === "legacy_v1" || !checkedDraft.schema_version;
+  const validationChecks = isLegacy ? checkedDraft.validation_checks ?? [] : validateDraftHardChecks(checkedDraft, account.persona);
+  if (!isLegacy && !hardChecksAllowPublishing(validationChecks)) {
+    return NextResponse.json({ error: "hard_validation_blocked", message: "来源、身份、兑现或合规校验未通过，不能标记发布。", checks: validationChecks }, { status: 422 });
+  }
+
   const published = {
     ...checkedDraft,
+    validation_checks: validationChecks,
     owner_user_id: checkedDraft.owner_user_id ?? guard.auth.user.id,
     status: "published" as const,
     published_at: publishedAt,
+    distributed_at: publishedAt,
     updated_at: new Date().toISOString(),
   };
   await store.saveDraft(published);

@@ -56,7 +56,7 @@ export async function POST(req: Request) {
     notes,
     reviews,
     weekly: weeklyReview,
-    direction: topic.direction,
+    methodId: topic.method_id,
   });
 
   const { drafts, usage } = await generateDraftVariants({

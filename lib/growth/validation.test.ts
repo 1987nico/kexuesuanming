@@ -5,10 +5,63 @@ import {
   isPublishTextWithinLimit,
   normalizeTags,
   scanDraftCompliance,
+  sourceIsUsable,
+  hardChecksAllowPublishing,
+  validateDraftHardChecks,
 } from "./validation";
 import type { ContentDraft } from "./types";
+import { classifySourceStatus } from "./sourceValidation";
 
 describe("growth publish validation", () => {
+  function hardCheckDraft(body: string): ContentDraft {
+    const timestamp = "2026-07-19T00:00:00.000Z";
+    return {
+      id: "hard-check", tenant_id: "tenant", account_id: "account", run_id: "run", status: "ready",
+      business_line: "中高管职业决策", method_group: "native", method_id: "inventory", method_label: "盘点",
+      generation_mode: "default", title_promise: "交付5项离职检查", selected_body_version: "short", raw_body_tags: [],
+      tagging_status: "pending", canonical_tag_ids: [], cta_type: "on_platform_consult", validation_checks: [],
+      test_variable: "清单兑现", expected_signal: "有效咨询", title: "中高管离职前查这5项", alternative_titles: [],
+      target_user: "中高管", cover_text: "离职前查5项", body, hashtags: ["#中高管"], comment_prompt: "",
+      word_count: { title: 12, body_and_tags: body.length, total: body.length + 12, within_limit: true },
+      follow_reason: "职业判断", trust_anchor: "真实咨询", review_points: [], cover_suggestion: "办公桌",
+      created_at: timestamp, updated_at: timestamp,
+    };
+  }
+
+  it("classifies live source responses", () => {
+    expect(classifySourceStatus(200)).toBe("accessible");
+    expect(classifySourceStatus(302)).toBe("accessible");
+    expect(classifySourceStatus(403)).toBe("restricted");
+    expect(classifySourceStatus(429)).toBe("restricted");
+    expect(classifySourceStatus(404)).toBe("invalid");
+    expect(classifySourceStatus(410)).toBe("invalid");
+  });
+
+  it("blocks publishing when numeric promises are not matched exactly", () => {
+    const checks = validateDraftHardChecks(hardCheckDraft("中高管离职前先看这组冲突。\n1. 能力\n2. 现金流\n3. 市场\n4. 停止条件\n\n可在站内补充职位和路径。"), "expert");
+    expect(checks.find((item) => item.key === "fulfillment")?.status).not.toBe("passed");
+    expect(hardChecksAllowPublishing(checks)).toBe(false);
+  });
+
+  it("blocks publishing when more than one primary CTA is present", () => {
+    const checks = validateDraftHardChecks(hardCheckDraft("中高管离职前先看这组冲突。\n1. 能力\n2. 现金流\n3. 市场\n4. 停止条件\n5. 证据\n\n可在站内补充职位和路径。也可从服务入口提交处境和冲突。"), "expert");
+    expect(checks.find((item) => item.key === "compliance")?.status).toBe("blocked");
+    expect(hardChecksAllowPublishing(checks)).toBe(false);
+  });
+  it("对标来源同时要求7天内母题和24小时内快照", () => {
+    const at = new Date("2026-07-19T12:00:00.000Z");
+    const source = {
+      id: "source", method_id: "viral_framework" as const, platform: "小红书", author: "作者",
+      original_title: "原标题", original_url: "https://example.com/note",
+      published_at: "2026-07-16T12:00:00.000Z", heat_snapshot: "1000赞",
+      collected_at: "2026-07-19T08:00:00.000Z", link_status: "accessible" as const,
+      verified_by_operator: true, freshness: "within_72h" as const,
+    };
+    expect(sourceIsUsable(source, at)).toBe(true);
+    expect(sourceIsUsable({ ...source, collected_at: "2026-07-18T08:00:00.000Z" }, at)).toBe(false);
+    expect(sourceIsUsable({ ...source, published_at: "2026-07-10T12:00:00.000Z" }, at)).toBe(false);
+  });
+
   it("normalizes hashtags and keeps at most five", () => {
     expect(normalizeTags(["中高层转型", "#第二曲线", "小红书运营", "IP", "报告", "多余"])).toEqual([
       "#中高层转型",
@@ -91,6 +144,18 @@ describe("growth publish validation", () => {
       account_id: "account",
       run_id: "run",
       status: "draft",
+      business_line: "中高管职业决策",
+      method_group: "native",
+      method_id: "human_pain",
+      method_label: "行业人性痛点",
+      generation_mode: "default",
+      title_promise: "解释平台价值错觉",
+      selected_body_version: "short",
+      raw_body_tags: [],
+      tagging_status: "pending",
+      canonical_tag_ids: [],
+      cta_type: "on_platform_consult",
+      validation_checks: [],
       direction: "A",
       content_type: "diagnostic",
       test_variable: "平台价值",

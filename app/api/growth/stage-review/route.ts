@@ -11,6 +11,7 @@ const DEFAULT_TENANT_ID = "mianbajun";
 
 const bodySchema = z.object({
   accountId: z.string().min(1),
+  snapshot: z.boolean().default(true),
 });
 
 export async function POST(req: Request) {
@@ -30,12 +31,14 @@ export async function POST(req: Request) {
   const notes = await store.listDrafts(account.id);
   const reviews = await store.listReviewsByAccount(account.id);
 
-  const { result, usage } = await stageReview({ account, notes, reviews });
+  const snapshots = account.weekly_review_snapshots ?? [];
+  const { result, usage } = await stageReview({ account, notes, reviews, previous: snapshots.at(-1) });
   const updatedAt = new Date().toISOString();
   await store.saveAccount({
     ...account,
     weekly_review: result,
     stage_review: result,
+    weekly_review_snapshots: parsed.data.snapshot ? [...snapshots, result].slice(-12) : snapshots,
     updated_at: updatedAt,
   });
 
@@ -49,5 +52,5 @@ export async function POST(req: Request) {
     });
   }
 
-  return NextResponse.json({ result });
+  return NextResponse.json({ result, snapshotSaved: parsed.data.snapshot });
 }

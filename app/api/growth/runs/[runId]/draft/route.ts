@@ -52,7 +52,7 @@ export async function POST(req: Request, { params }: { params: { runId: string }
     notes,
     reviews,
     weekly: weeklyReview,
-    direction: selectedTopic?.direction,
+    methodId: selectedTopic?.method_id,
   });
 
   const result = await generateDraft({

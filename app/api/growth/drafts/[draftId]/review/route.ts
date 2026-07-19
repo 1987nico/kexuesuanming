@@ -32,6 +32,10 @@ const metricsSchema = z.object({
   comment_keywords: z.array(z.string()).optional(),
   private_messages: z.number().int().nonnegative().optional(),
   qualified_inquiries: z.number().int().nonnegative().optional(),
+  diagnosis_199_entries: z.number().int().nonnegative().optional(),
+  diagnosis_199_sales: z.number().int().nonnegative().optional(),
+  deep_6999_qualified: z.number().int().nonnegative().optional(),
+  deep_6999_sales: z.number().int().nonnegative().optional(),
   target_customer_quote: z.string().max(1000).optional(),
   traffic_sources: z
     .object({
@@ -53,12 +57,14 @@ const metricsSchema = z.object({
     .optional(),
 });
 
-export async function POST(req: Request, { params }: { params: { draftId: string } }) {
+const patchMetricsSchema = metricsSchema.partial();
+
+async function saveReview(req: Request, { params }: { params: { draftId: string } }, mode: "create" | "update") {
   const guard = await requireMianbaApiAuth();
   if ("response" in guard) return guard.response;
 
   const body = await req.json().catch(() => ({}));
-  const parsed = metricsSchema.safeParse(body);
+  const parsed = (mode === "update" ? patchMetricsSchema : metricsSchema).safeParse(body);
   if (!parsed.success) {
     return NextResponse.json({ error: "validation", issues: parsed.error.flatten() }, { status: 400 });
   }
@@ -70,7 +76,20 @@ export async function POST(req: Request, { params }: { params: { draftId: string
     return NextResponse.json({ error: "draft_not_published", message: "请先标记实际发布时间。" }, { status: 409 });
   }
 
-  const publishedAt = resolvePublishedAt(draft, parsed.data);
+  const existingReview = await store.getReviewByDraft(draft.id);
+  if (mode === "update" && !existingReview) {
+    return NextResponse.json({ error: "review_not_found", message: "这篇正文还没有复盘，请先使用首次复盘。" }, { status: 404 });
+  }
+  const changedFields = Object.keys(parsed.data).filter((key) => (parsed.data as Record<string, unknown>)[key] !== undefined);
+  const metricsInput = mode === "update"
+    ? { ...(existingReview?.metrics ?? {}), ...parsed.data }
+    : parsed.data;
+  const fullMetrics = metricsSchema.safeParse(metricsInput);
+  if (!fullMetrics.success) {
+    return NextResponse.json({ error: "incomplete_review", message: "历史复盘缺少必要指标，请补齐后再保存。", issues: fullMetrics.error.flatten() }, { status: 400 });
+  }
+
+  const publishedAt = resolvePublishedAt(draft, fullMetrics.data);
   const availability = getReviewAvailability(publishedAt);
   if (!availability.ready) {
     return NextResponse.json(
@@ -86,12 +105,11 @@ export async function POST(req: Request, { params }: { params: { draftId: string
 
   const notes = await store.listDrafts(draft.account_id);
   const existingReviews = await store.listReviewsByAccount(draft.account_id);
-  const existingReview = await store.getReviewByDraft(draft.id);
 
   const { review, usage } = await reviewDraft({
     tenantId: DEFAULT_TENANT_ID,
     draft,
-    metrics: { ...parsed.data, published_at: publishedAt, snapshot_at: new Date().toISOString() },
+    metrics: { ...fullMetrics.data, published_at: publishedAt, snapshot_at: new Date().toISOString() },
     existingReview,
     notes,
     reviews: existingReviews,
@@ -101,6 +119,9 @@ export async function POST(req: Request, { params }: { params: { draftId: string
   const reviewedDraft = {
     ...draft,
     status: "reviewed" as const,
+    original_post_url: fullMetrics.data.note_url || draft.original_post_url,
+    distributed_at: publishedAt,
+    is_paid_distribution: fullMetrics.data.promoted,
     updated_at: new Date().toISOString(),
   };
   await store.saveDraft(reviewedDraft);
@@ -120,7 +141,7 @@ export async function POST(req: Request, { params }: { params: { draftId: string
   let weeklyReview = account?.weekly_review ?? account?.stage_review ?? null;
   if (account) {
     const currentReviews = await store.listReviewsByAccount(account.id);
-    weeklyReview = buildWeeklyReviewResult({ account, notes, reviews: currentReviews });
+    weeklyReview = buildWeeklyReviewResult({ account, notes, reviews: currentReviews, previous: account.weekly_review_snapshots?.at(-1) });
     await store.saveAccount({
       ...account,
       weekly_review: weeklyReview,
@@ -139,5 +160,13 @@ export async function POST(req: Request, { params }: { params: { draftId: string
     });
   }
 
-  return NextResponse.json({ draft: reviewedDraft, review, weeklyReview });
+  return NextResponse.json({ draft: reviewedDraft, review, weeklyReview, changedFields });
+}
+
+export async function POST(req: Request, context: { params: { draftId: string } }) {
+  return saveReview(req, context, "create");
+}
+
+export async function PATCH(req: Request, context: { params: { draftId: string } }) {
+  return saveReview(req, context, "update");
 }

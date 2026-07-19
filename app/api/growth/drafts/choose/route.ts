@@ -1,95 +1,61 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireMianbaApiAuth } from "@/lib/auth/mianba";
+import { generateOpenBodyTags } from "@/lib/growth/runner";
 import { growthStore } from "@/lib/growth/store";
 import type { ContentDraft } from "@/lib/growth/types";
-import { enforceDraftCompliance } from "@/lib/growth/validation";
+import { enforceDraftCompliance, validateDraftHardChecks } from "@/lib/growth/validation";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+const DEFAULT_TENANT_ID = "mianbajun";
 
-const draftSchema = z.object({
-  id: z.string(),
-  tenant_id: z.string(),
-  account_id: z.string(),
-  run_id: z.string(),
-  status: z.enum(["draft", "ready", "published", "reviewed"]).optional(),
-  direction: z.enum(["A", "B", "C"]),
-  content_type: z.enum(["diagnostic", "tool", "story"]),
-  test_variable: z.string(),
-  expected_signal: z.string(),
-  title: z.string(),
-  alternative_titles: z.array(z.string()),
-  target_user: z.string(),
-  cover_text: z.string(),
-  body: z.string(),
-  hashtags: z.array(z.string()),
-  comment_prompt: z.string(),
-  word_count: z.object({
-    title: z.number(),
-    body_and_tags: z.number(),
-    total: z.number(),
-    within_limit: z.boolean(),
-  }),
-  follow_reason: z.string(),
-  trust_anchor: z.string(),
-  review_points: z.array(z.string()),
-  cover_suggestion: z.string(),
-  story_mode: z.string().optional(),
-  pictorial_rate: z.string().optional(),
-  compliance: z
-    .object({
-      status: z.enum(["passed", "rewritten", "blocked"]),
-      issues: z.array(z.string()),
-      checked_at: z.string(),
-    })
-    .optional(),
-  created_at: z.string(),
-  updated_at: z.string(),
+const bodySchema = z.object({
+  draft: z.object({
+    id: z.string(), tenant_id: z.string(), account_id: z.string(), run_id: z.string(), business_line: z.string(),
+    method_group: z.enum(["native", "benchmark"]),
+    method_id: z.enum(["traffic", "human_pain", "tug_of_war", "scarce_material", "superlative", "contrarian", "nostalgia", "inventory", "same_product", "same_effect", "similar_audience", "same_outcome", "viral_framework"]),
+    method_label: z.string(), generation_mode: z.enum(["default", "explore"]),
+    title_promise: z.string(), source_snapshot: z.any().optional(),
+    selected_body_version: z.enum(["short", "long", "selected"]),
+    raw_body_tags: z.array(z.any()).default([]), tagging_status: z.enum(["tagged", "unclassified", "pending"]).default("pending"),
+    canonical_tag_ids: z.array(z.string()).default([]), cta_type: z.enum(["soft_bridge", "on_platform_consult", "service_entry"]),
+    validation_checks: z.array(z.any()).default([]), test_variable: z.string(), expected_signal: z.string(),
+    title: z.string(), alternative_titles: z.array(z.string()), target_user: z.string(), cover_text: z.string(), body: z.string(),
+    hashtags: z.array(z.string()), comment_prompt: z.string(), word_count: z.any(), follow_reason: z.string(), trust_anchor: z.string(),
+    review_points: z.array(z.string()), cover_suggestion: z.string(), created_at: z.string(), updated_at: z.string(),
+  }).passthrough(),
 });
-
-const bodySchema = z.object({ draft: draftSchema });
 
 export async function POST(req: Request) {
   const guard = await requireMianbaApiAuth();
   if ("response" in guard) return guard.response;
-
-  const body = await req.json().catch(() => null);
-  const parsed = bodySchema.safeParse(body);
-  if (!parsed.success) {
-    return NextResponse.json({ error: "validation", issues: parsed.error.flatten() }, { status: 400 });
-  }
+  const parsed = bodySchema.safeParse(await req.json().catch(() => null));
+  if (!parsed.success) return NextResponse.json({ error: "validation", issues: parsed.error.flatten() }, { status: 400 });
 
   const store = growthStore();
   const run = await store.getRun(parsed.data.draft.run_id);
   if (!run) return NextResponse.json({ error: "run_not_found" }, { status: 404 });
+  const account = await store.getAccount(parsed.data.draft.account_id);
+  if (!account) return NextResponse.json({ error: "account_not_found" }, { status: 404 });
 
   const timestamp = new Date().toISOString();
-  const existingDraft = await store.getDraft(parsed.data.draft.id);
-  const draft = enforceDraftCompliance({
+  const existing = await store.getDraft(parsed.data.draft.id);
+  let draft = enforceDraftCompliance({
     ...parsed.data.draft,
-    owner_user_id: existingDraft?.owner_user_id ?? guard.auth.user.id,
+    owner_user_id: existing?.owner_user_id ?? guard.auth.user.id,
     status: "ready",
     updated_at: timestamp,
   } as ContentDraft);
-  if (draft.compliance?.status === "blocked") {
-    return NextResponse.json(
-      {
-        error: "compliance_blocked",
-        message: "正文仍包含小红书互动风险，请重新生成后再选定。",
-        issues: draft.compliance.issues,
-      },
-      { status: 422 },
-    );
+  draft = { ...draft, validation_checks: validateDraftHardChecks(draft, account.persona) };
+  if (draft.compliance?.status === "blocked" || draft.validation_checks.some((check) => check.status === "blocked")) {
+    return NextResponse.json({ error: "validation_blocked", message: "正文未通过发布硬校验，请修改后再选定。", issues: [...(draft.compliance?.issues ?? []), ...draft.validation_checks.filter((check) => check.status === "blocked").map((check) => check.message)] }, { status: 422 });
   }
-  await store.saveDraft(draft);
-  await store.saveRun({
-    ...run,
-    status: "ready",
-    selected_topic: run.topic_pool.find((topic) => topic.id === run.selected_topic?.id) ?? run.selected_topic,
-    draft,
-    updated_at: timestamp,
-  });
 
+  const tagging = await generateOpenBodyTags(draft);
+  draft = { ...draft, raw_body_tags: [...(existing?.raw_body_tags ?? []).map((tag) => ({ ...tag, active: false })), ...tagging.tags], tagging_status: tagging.status };
+  await store.saveDraft(draft);
+  await store.saveRun({ ...run, status: "ready", selected_topic: run.topic_pool.find((topic) => topic.method_id === draft.method_id), draft, updated_at: timestamp });
+  if (tagging.usage) await store.saveUsage({ tenant_id: DEFAULT_TENANT_ID, user_id: guard.auth.user.id, feature: "growth_text", ...tagging.usage, metadata: { action: "open_body_tags", draftId: draft.id } });
   return NextResponse.json({ draft });
 }

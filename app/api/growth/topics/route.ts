@@ -18,7 +18,16 @@ const DEFAULT_TENANT_ID = "mianbajun";
 const bodySchema = z.object({
   accountId: z.string().min(1),
   week: z.number().int().min(1).max(4).optional(),
-  count: z.number().int().min(1).max(4).optional(),
+  generationMode: z.enum(["default", "explore"]).optional(),
+});
+
+const updateTitleSchema = z.object({
+  runId: z.string().min(1),
+  topicId: z.string().min(1),
+  title: z.string().trim().min(1, "标题不能为空").refine(
+    (value) => Array.from(value).length <= 20,
+    "小红书标题不能超过20个字",
+  ),
 });
 
 function now() {
@@ -54,32 +63,18 @@ export async function POST(req: Request) {
   const learningBrief = buildLearningBrief({ account, notes, reviews, weekly: weeklyReview });
 
   const runs = await store.listRuns(account.id);
-  let run = runs[0] ?? null;
-  // 换一批：排除历史出现过的所有标题（含上一批），保证每次点都是新的。
+  const generationMode = parsed.data.generationMode ?? "default";
+  let run = runs.find((item) => item.generation_mode === generationMode) ?? null;
   const seenTitles = run
     ? Array.from(new Set([...(run.seen_titles ?? []), ...run.topic_pool.map((topic) => topic.title)]))
     : [];
 
-  const { topics: generatedTopics, usage } = await generateTopicBatch({
+  const { topics, unavailableMethods, usage } = await generateTopicBatch({
     account,
     week: parsed.data.week ?? run?.week ?? 1,
-    count: parsed.data.count ?? 2,
+    generationMode,
     excludeTitles: seenTitles,
     learningBrief,
-  });
-  const topics = generatedTopics.map((topic) => {
-    const direction = weeklyReview?.by_direction.find((item) => item.direction === topic.direction);
-    return {
-      ...topic,
-      weekly_action: direction?.action,
-      evidence: direction
-        ? `${direction.label}：近28天${direction.valid_count || 0}篇有效样本，当前建议${direction.action || "explore"}。`
-        : topic.evidence,
-      learning_trace: {
-        ...learningBrief.trace,
-        direction_action: direction?.action,
-      },
-    };
   });
 
   const timestamp = now();
@@ -91,9 +86,11 @@ export async function POST(req: Request) {
       account_id: account.id,
       status: "draft",
       week: parsed.data.week ?? 1,
-      objective: "每点一次换成 2 个新选题（不与历史重复）。",
-      experiment_hypothesis: "换一批看哪个方向/角度更值得写。",
+      objective: generationMode === "default" ? "按当前视角的默认方法各生成1个标题。" : "按当前视角的探索方法各生成1个标题。",
+      experiment_hypothesis: "用有效咨询率验证标题方法，而不是依赖主观评分。",
+      generation_mode: generationMode,
       topic_pool: topics,
+      unavailable_methods: unavailableMethods,
       seen_titles: nextSeen,
       learning_trace: learningBrief.trace,
       created_at: timestamp,
@@ -101,7 +98,7 @@ export async function POST(req: Request) {
     } satisfies GrowthRun;
   } else {
     // 用新选题替换整个列表，而不是累加。
-    run = { ...run, topic_pool: topics, seen_titles: nextSeen, learning_trace: learningBrief.trace, updated_at: timestamp };
+    run = { ...run, generation_mode: generationMode, topic_pool: topics, unavailable_methods: unavailableMethods, seen_titles: nextSeen, learning_trace: learningBrief.trace, updated_at: timestamp };
   }
 
   run.owner_user_id = run.owner_user_id ?? guard.auth.user.id;
@@ -112,9 +109,39 @@ export async function POST(req: Request) {
       user_id: guard.auth.user.id,
       feature: "growth_text",
       ...usage,
-      metadata: { action: "topic_batch", runId: run.id },
+      metadata: { action: "topic_batch", runId: run.id, generationMode },
     });
   }
 
-  return NextResponse.json({ run, newTopics: topics });
+  return NextResponse.json({ run, newTopics: topics, unavailableMethods });
+}
+
+export async function PATCH(req: Request) {
+  const guard = await requireMianbaApiAuth();
+  if ("response" in guard) return guard.response;
+
+  const parsed = updateTitleSchema.safeParse(await req.json().catch(() => ({})));
+  if (!parsed.success) {
+    return NextResponse.json({ error: "validation", issues: parsed.error.flatten() }, { status: 400 });
+  }
+
+  const store = growthStore();
+  const run = await store.getRun(parsed.data.runId);
+  if (!run) return NextResponse.json({ error: "run_not_found" }, { status: 404 });
+  const currentTopic = run.topic_pool.find((topic) => topic.id === parsed.data.topicId);
+  if (!currentTopic) return NextResponse.json({ error: "topic_not_found" }, { status: 404 });
+
+  const timestamp = now();
+  const topic = { ...currentTopic, title: parsed.data.title, updated_at: timestamp };
+  const updatedRun: GrowthRun = {
+    ...run,
+    owner_user_id: run.owner_user_id ?? guard.auth.user.id,
+    topic_pool: run.topic_pool.map((item) => item.id === topic.id ? topic : item),
+    selected_topic: run.selected_topic?.id === topic.id ? topic : run.selected_topic,
+    seen_titles: Array.from(new Set([...(run.seen_titles ?? []), topic.title])),
+    updated_at: timestamp,
+  };
+  await store.saveRun(updatedRun);
+
+  return NextResponse.json({ run: updatedRun, topic });
 }

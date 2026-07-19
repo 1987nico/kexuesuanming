@@ -1,4 +1,12 @@
-import type { ContentDraft, DraftCompliance } from "./types";
+import type {
+  ContentDraft,
+  DraftCompliance,
+  GrowthPersona,
+  TopicCandidate,
+  TopicSourceSnapshot,
+  ValidationCheck,
+} from "./types";
+import { methodApplicability, TITLE_METHOD_BY_ID } from "./methods";
 
 export function normalizeTags(tags: string[]) {
   return tags.map((tag) => (tag.startsWith("#") ? tag : `#${tag}`)).slice(0, 5);
@@ -188,4 +196,155 @@ export function enforceDraftCompliance(draft: ContentDraft, fallbackTitle?: stri
       checked_at: new Date().toISOString(),
     },
   };
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+export function sourceAgeDays(source: TopicSourceSnapshot, at = new Date()) {
+  const published = Date.parse(source.published_at);
+  if (!Number.isFinite(published)) return Number.POSITIVE_INFINITY;
+  return Math.max(0, (at.getTime() - published) / DAY_MS);
+}
+
+export function sourceIsUsable(source: TopicSourceSnapshot | undefined, at = new Date()) {
+  if (!source) return false;
+  const collected = Date.parse(source.collected_at);
+  const snapshotAgeMs = at.getTime() - collected;
+  return (
+    /^https?:\/\//i.test(source.original_url) &&
+    (source.link_status === "accessible" || (source.link_status === "restricted" && source.verified_by_operator === true)) &&
+    source.verified_by_operator === true &&
+    sourceAgeDays(source, at) <= 7 &&
+    Number.isFinite(collected) &&
+    snapshotAgeMs >= 0 &&
+    snapshotAgeMs <= DAY_MS
+  );
+}
+
+export function validateTopicCandidate(topic: TopicCandidate, persona: GrowthPersona): ValidationCheck[] {
+  const method = TITLE_METHOD_BY_ID[topic.method_id];
+  if (!method) {
+    return [
+      { key: "source", status: "needs_edit", message: "历史内容缺少标题方法与来源记录" },
+      { key: "identity", status: "needs_edit", message: "历史内容需要人工确认账号身份" },
+      { key: "fulfillment", status: topic.title_promise?.trim() ? "passed" : "needs_edit", message: topic.title_promise?.trim() ? `正文需兑现：${topic.title_promise}` : "历史内容缺少标题承诺" },
+      { key: "compliance", status: scanInteractionCompliance(topic.title, "title").length ? "blocked" : "passed", message: scanInteractionCompliance(topic.title, "title").length ? "标题含互动诱导或导流风险" : "标题未发现互动诱导风险" },
+    ];
+  }
+  const sourceRequired = method.sourceRequired;
+  const sourcePassed = !sourceRequired || sourceIsUsable(topic.source_snapshot);
+  const applicability = methodApplicability(persona, topic.method_id);
+  return [
+    {
+      key: "source",
+      status: sourcePassed ? "passed" : "blocked",
+      message: sourcePassed
+        ? sourceRequired
+          ? "近期母题、原链接和人工核验完整"
+          : "该原生方法不要求外部母题"
+        : "缺少7天内母题，或热度快照/链接核验已超过24小时",
+    },
+    {
+      key: "identity",
+      status: applicability === "disabled" ? "blocked" : "passed",
+      message:
+        applicability === "disabled"
+          ? "该方法不适合当前账号视角"
+          : `该方法属于当前视角的${applicability === "default" ? "默认" : "探索"}范围`,
+    },
+    {
+      key: "fulfillment",
+      status: topic.title_promise.trim() ? "passed" : "needs_edit",
+      message: topic.title_promise.trim() ? `正文需兑现：${topic.title_promise}` : "尚未说明正文要兑现什么",
+    },
+    {
+      key: "compliance",
+      status: scanInteractionCompliance(topic.title, "title").length ? "blocked" : "passed",
+      message: scanInteractionCompliance(topic.title, "title").length
+        ? "标题含互动诱导或站外导流风险"
+        : "标题未发现互动诱导风险",
+    },
+  ];
+}
+
+function promisedCount(title: string) {
+  const match = title.match(/(?:^|\D)(\d{1,2})(?=\D|$)/);
+  return match ? Number(match[1]) : undefined;
+}
+
+function numberedItemCount(body: string) {
+  const matches = body.match(/(?:^|\n)\s*(?:\d{1,2}[.、)]|[一二三四五六七八九十]+[、.])/g);
+  return matches?.length ?? 0;
+}
+
+function openingRespondsToTitle(draft: ContentDraft) {
+  const opening = draft.body.slice(0, 30).replace(/\s/g, "");
+  const identityTokens = ["中高管", "高管", "中层", "管理层", "总监", "负责人", "老板", "专家", "顾问", "留学生", "海归", "毕业生", "家长"];
+  const conflictTokens = ["离职", "留任", "转型", "跳槽", "重新定价", "两条路", "职业", "平台", "选择", "求职", "投递", "回国", "留当地", "岗位", "秋招"];
+  return identityTokens.some((token) => opening.includes(token)) && conflictTokens.some((token) => `${draft.title}${opening}`.includes(token));
+}
+
+function primaryCtaCount(body: string) {
+  const closing = body.slice(-180);
+  const units = closing.split(/[。！？!?；;\n]+/).map((item) => item.trim()).filter(Boolean);
+  return units.filter((item) => /站内|服务入口|提交.{0,20}(?:处境|职位|路径|冲突)|补充.{0,20}(?:处境|职位|路径|冲突)|先把.{0,20}(?:变量|路径|处境)/.test(item)).length;
+}
+
+export function validateDraftHardChecks(draft: ContentDraft, persona: GrowthPersona): ValidationCheck[] {
+  const topicLike: TopicCandidate = {
+    id: draft.id,
+    method_group: draft.method_group,
+    method_id: draft.method_id,
+    method_label: draft.method_label,
+    generation_mode: draft.generation_mode,
+    title: draft.title,
+    title_promise: draft.title_promise,
+    target_user: draft.target_user,
+    pain: "",
+    hook: draft.cover_text,
+    source_snapshot: draft.source_snapshot,
+    follow_reason: draft.follow_reason,
+    test_variable: draft.test_variable,
+    expected_signal: draft.expected_signal,
+    repeatable_angle: "",
+    broad_traffic_risk: 0,
+    priority: "A",
+  };
+  const topicChecks = validateTopicCandidate(topicLike, persona);
+  const issues = scanDraftCompliance(draft);
+  const count = promisedCount(draft.title);
+  const hasPromisedMaterial = /清单|路线图|资料|盘点|表|步骤/.test(draft.title);
+  const countFulfilled = count === undefined || numberedItemCount(draft.body) === count;
+  const materialFulfilled = !hasPromisedMaterial || numberedItemCount(draft.body) > 0 || draft.body.length >= 280;
+  const opensOnPromise = openingRespondsToTitle(draft);
+  const fulfillmentPassed = countFulfilled && materialFulfilled && opensOnPromise;
+  const ctaCount = primaryCtaCount(draft.body);
+
+  return topicChecks.map((check) => {
+    if (check.key === "compliance") {
+      return {
+        key: "compliance" as const,
+        status: issues.length || ctaCount !== 1 ? "blocked" as const : "passed" as const,
+        message: issues.length
+          ? [...new Set(issues.map((issue) => issue.message))].join("；")
+          : ctaCount !== 1
+            ? `正文需且只能保留一个主要承接动作，当前识别到${ctaCount}个`
+            : "未发现互动诱导或导流风险，且只有一个主要承接动作",
+      };
+    }
+    if (check.key === "fulfillment") {
+      return {
+        key: "fulfillment" as const,
+        status: fulfillmentPassed ? "passed" as const : "needs_edit" as const,
+        message: fulfillmentPassed
+          ? `正文已覆盖标题承诺：${draft.title_promise}`
+          : "正文尚未做到：数字逐项一致、资料/路线图实际交付、前30字回应人物与冲突",
+      };
+    }
+    return check;
+  });
+}
+
+export function hardChecksAllowPublishing(checks: ValidationCheck[]) {
+  return checks.length === 4 && checks.every((check) => check.status === "passed");
 }

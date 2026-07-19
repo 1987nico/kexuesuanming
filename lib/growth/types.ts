@@ -2,6 +2,62 @@ export type GrowthDirection = "A" | "B" | "C";
 
 export type GrowthPersona = "merchant" | "buyer" | "expert";
 
+export type GrowthBusinessLine = "executive" | "overseas_student";
+
+export const GROWTH_BUSINESS_LINES: GrowthBusinessLine[] = ["overseas_student", "executive"];
+
+export const GROWTH_BUSINESS_LINE_LABELS: Record<GrowthBusinessLine, string> = {
+  executive: "中高管业务",
+  overseas_student: "留学生业务",
+};
+
+export const GROWTH_BUSINESS_LINE_VALUES: Record<GrowthBusinessLine, string> = {
+  executive: "中高管职业决策",
+  overseas_student: "留学生求职辅导",
+};
+
+export interface GrowthBusinessDefinition {
+  label: string;
+  summary: string;
+  service: string;
+  target: string;
+  category: string;
+  difference: string;
+  trust: string;
+  personas: Record<GrowthPersona, { role: string; description: string }>;
+}
+
+export const GROWTH_BUSINESS_DEFINITIONS: Record<GrowthBusinessLine, GrowthBusinessDefinition> = {
+  overseas_student: {
+    label: "留学生求职辅导",
+    summary: "留学生回国求职方向规划与秋招陪跑",
+    service: "求职方向诊断＋目标岗位地图＋简历/面试辅导＋秋招陪跑",
+    target: "准备海外秋招或回国求职的留学生，以及关注孩子就业结果的家长",
+    category: "留学生回国求职方向规划与秋招陪跑",
+    difference: "先把方向、岗位和招聘节奏定清楚，再进入简历、面试与投递；不是只修改一份简历",
+    trust: "专业老师陪跑流程、匿名交付案例、真实招聘节点复盘与可验证的方法清单",
+    personas: {
+      merchant: { role: "求职辅导服务商", description: "明着经营，讲服务差异、交付过程、案例证据和选择标准。" },
+      buyer: { role: "留学生家长", description: "以家长第一人称记录孩子求职阶段、现场、变化和转折。" },
+      expert: { role: "留学生求职老师", description: "用岗位判断、招聘节奏和辅导方法建立专业信任。" },
+    },
+  },
+  executive: {
+    label: "中高管职业决策",
+    summary: "中高管职业与事业方向决策咨询",
+    service: "职业方向初步诊断报告＋深度决策报告＋咨询陪跑",
+    target: "35岁上下、正在转型换挡、裸辞、离开体制或考虑创业的中高管与成熟职场人",
+    category: "中高管职业与事业方向决策咨询",
+    difference: "把个人画像、市场机会、个人胜算、失败风险和90天验证放进同一套决策系统",
+    trust: "252题测评、六步决策漏斗、匿名交付样例与真人把关",
+    personas: {
+      merchant: { role: "职业决策服务商", description: "明着经营，讲产品、交付差异、案例证据和购买标准。" },
+      buyer: { role: "转型中的中高管", description: "以真人处境记录裸辞、转型、副业和重新找方向的过程。" },
+      expert: { role: "职业决策顾问", description: "用决策框架、市场判断和案例复盘建立专业权威。" },
+    },
+  },
+};
+
 export const GROWTH_PERSONAS: GrowthPersona[] = ["merchant", "buyer", "expert"];
 
 export const GROWTH_PERSONA_LABELS: Record<GrowthPersona, string> = {
@@ -12,7 +68,83 @@ export const GROWTH_PERSONA_LABELS: Record<GrowthPersona, string> = {
 
 export type ContentType = "diagnostic" | "tool" | "story";
 
+export type TitleMethodGroup = "native" | "benchmark";
+
+export type TitleMethodId =
+  | "traffic"
+  | "human_pain"
+  | "tug_of_war"
+  | "scarce_material"
+  | "superlative"
+  | "contrarian"
+  | "nostalgia"
+  | "inventory"
+  | "same_product"
+  | "same_effect"
+  | "similar_audience"
+  | "same_outcome"
+  | "viral_framework";
+
+export type MethodApplicability = "default" | "explore" | "disabled";
+export type MethodGenerationMode = Exclude<MethodApplicability, "disabled">;
+
+export interface TopicSourceSnapshot {
+  id: string;
+  method_id: TitleMethodId;
+  platform: string;
+  author: string;
+  original_title: string;
+  original_url: string;
+  published_at: string;
+  heat_snapshot: string;
+  collected_at: string;
+  migration_note?: string;
+  link_status: "accessible" | "restricted" | "invalid";
+  verified_by_operator?: boolean;
+  freshness: "within_72h" | "day_4_to_7" | "historical";
+}
+
+export interface ValidationCheck {
+  key: "source" | "identity" | "fulfillment" | "compliance";
+  status: "passed" | "needs_edit" | "blocked";
+  message: string;
+}
+
+export interface RawBodyTag {
+  id: string;
+  text: string;
+  reason: string;
+  generated_at: string;
+  body_version: "short" | "long" | "selected";
+  edited_by_operator?: boolean;
+  /** false 表示已被后续人工修正/重新归纳替代，但原始记录永久保留。 */
+  active?: boolean;
+  canonical_tag_id?: string;
+}
+
+export interface CanonicalBodyTag {
+  id: string;
+  name: string;
+  definition: string;
+  raw_tags: string[];
+  approved_at: string;
+}
+
+export interface TagMergeSuggestion {
+  id: string;
+  proposed_name: string;
+  definition: string;
+  member_tags: string[];
+  representative_draft_ids: string[];
+  status: "pending" | "approved" | "rejected";
+  created_at: string;
+  resolved_at?: string;
+}
+
 export type ContentStatus = "draft" | "ready" | "published" | "reviewed";
+
+export type GrowthSchemaVersion = "legacy_v1" | "method_v3_2";
+export type MethodAttributionStatus = "missing" | "confirmed";
 
 export type NoteDistributionStatus = "normal" | "limited" | "violation" | "deleted";
 
@@ -51,6 +183,8 @@ export interface GrowthAccount {
   id: string;
   tenant_id: string;
   owner_user_id?: string | null;
+  /** 旧账号未保存该字段时按中高管业务兼容。 */
+  business_line?: GrowthBusinessLine;
   persona: GrowthPersona;
   name: string;
   target_user: string;
@@ -62,6 +196,7 @@ export interface GrowthAccount {
   // 扩展字段（可选，向后兼容旧数据）
   one_liner?: string;
   follow_reason?: string;
+  /** 历史A/B/C定位，只读兼容；v3.1新流程不再写入或使用。 */
   content_directions?: string[];
   tone_style?: string;
   filter_words?: string[];
@@ -70,7 +205,13 @@ export interface GrowthAccount {
   private_domain?: string;
   // 视角专属字段：key -> value
   persona_specific?: Record<string, string>;
+  topic_sources?: TopicSourceSnapshot[];
+  method_overrides?: Partial<Record<TitleMethodId, MethodApplicability>>;
+  canonical_body_tags?: CanonicalBodyTag[];
+  tag_merge_suggestions?: TagMergeSuggestion[];
   weekly_review?: WeeklyReviewResult;
+  /** 固定周期快照。实时汇总不得覆盖这里的历史周期。 */
+  weekly_review_snapshots?: WeeklyReviewResult[];
   // 旧字段兼容：历史数据仍能打开，新代码统一写入 weekly_review。
   stage_review?: StageReviewResult;
   created_at: string;
@@ -97,6 +238,8 @@ export const PERSONA_SPECIFIC_FIELDS: Record<GrowthPersona, PersonaSpecificField
     { key: "struggle", label: "正在纠结的决策", placeholder: "例如：要不要裸辞、副业该不该做、转不转行" },
     { key: "growth_arc", label: "成长弧线/人设走向", placeholder: "从迷茫求助 → 边试边记录 → 找到方向" },
     { key: "bridge", label: "转化桥（转折帖怎么软出场）", placeholder: "例如：做了个职业测评/找人梳理后想通了，引导私信" },
+    { key: "case_mode", label: "历史案例呈现方式", placeholder: "例如：匿名第一人称复盘、关键节点对照" },
+    { key: "case_material", label: "历史案例素材", placeholder: "例如：可公开的角色、处境、行动与结果，不填写敏感身份" },
   ],
   expert: [
     { key: "expertise", label: "专业领域", placeholder: "例如：组织发展、职业决策" },
@@ -126,12 +269,21 @@ export interface GrowthPlanWeek {
 
 export interface TopicCandidate {
   id: string;
-  direction: GrowthDirection;
+  method_group: TitleMethodGroup;
+  method_id: TitleMethodId;
+  method_label: string;
+  generation_mode: MethodGenerationMode;
   title: string;
+  title_promise: string;
   target_user: string;
   pain: string;
-  content_type: ContentType;
   hook: string;
+  source_snapshot?: TopicSourceSnapshot;
+  internal_insight_source?: string;
+  validation_checks?: ValidationCheck[];
+  // 旧字段只用于打开历史数据；新流程不再写入或依赖。
+  direction?: GrowthDirection;
+  content_type?: ContentType;
   origin_force?: string;
   conflict_judgement?: string;
   follow_reason: string;
@@ -143,7 +295,7 @@ export interface TopicCandidate {
   weekly_action?: WeeklyDirectionAction;
   evidence?: string;
   learning_trace?: GrowthLearningTrace;
-  scores: {
+  scores?: {
     positioning: number;
     pain_clarity: number;
     entry_strength: number;
@@ -165,6 +317,12 @@ export interface GrowthRun {
   experiment_hypothesis: string;
   selected_topic?: TopicCandidate;
   topic_pool: TopicCandidate[];
+  generation_mode?: MethodGenerationMode;
+  unavailable_methods?: Array<{
+    method_id: TitleMethodId;
+    method_label: string;
+    reason: string;
+  }>;
   // 已生成过的选题标题历史（用于换一批时不与历史重复）
   seen_titles?: string[];
   draft?: ContentDraft;
@@ -181,8 +339,28 @@ export interface ContentDraft {
   account_id: string;
   run_id: string;
   status: ContentStatus;
-  direction: GrowthDirection;
-  content_type: ContentType;
+  business_line: string;
+  method_group: TitleMethodGroup;
+  method_id: TitleMethodId;
+  method_label: string;
+  generation_mode: MethodGenerationMode;
+  title_promise: string;
+  source_snapshot?: TopicSourceSnapshot;
+  selected_body_version: "short" | "long" | "selected";
+  raw_body_tags: RawBodyTag[];
+  tagging_status: "tagged" | "unclassified" | "pending";
+  canonical_tag_ids: string[];
+  cta_type: "soft_bridge" | "on_platform_consult" | "service_entry";
+  validation_checks: ValidationCheck[];
+  /** v3.2兼容元数据：旧记录只做读取适配，不自动回写。 */
+  schema_version?: GrowthSchemaVersion;
+  method_attribution_status?: MethodAttributionStatus;
+  legacy_direction?: GrowthDirection;
+  legacy_content_type?: ContentType;
+  eligible_for_method_learning?: boolean;
+  // 旧字段只用于打开历史数据；新流程不再写入或依赖。
+  direction?: GrowthDirection;
+  content_type?: ContentType;
   test_variable: string;
   expected_signal: string;
   title: string;
@@ -207,6 +385,9 @@ export interface ContentDraft {
   pictorial_rate?: string;
   compliance?: DraftCompliance;
   published_at?: string;
+  original_post_url?: string;
+  distributed_at?: string;
+  is_paid_distribution?: boolean;
   learning_trace?: GrowthLearningTrace;
   created_at: string;
   updated_at: string;
@@ -238,6 +419,10 @@ export interface GrowthReviewMetrics {
   comment_keywords?: string[];
   private_messages?: number;
   qualified_inquiries?: number;
+  diagnosis_199_entries?: number;
+  diagnosis_199_sales?: number;
+  deep_6999_qualified?: number;
+  deep_6999_sales?: number;
   target_customer_quote?: string;
   traffic_sources?: {
     home?: number;
@@ -343,6 +528,45 @@ export interface DirectionAggregate {
   classifications: Record<string, number>; // 各结果分类计数
 }
 
+export interface MethodAggregate {
+  method_id: TitleMethodId | "legacy";
+  method_label: string;
+  generation_mode: MethodGenerationMode | "legacy";
+  note_count: number;
+  reviewed_count: number;
+  valid_count: number;
+  median_ctr: number;
+  median_save_rate: number;
+  median_share_rate: number;
+  median_follow_rate: number;
+  median_inquiry_rate: number;
+  /** 周复盘辅助指标；旧快照没有这些字段时按 0 展示。 */
+  median_impressions?: number;
+  median_reads?: number;
+  median_saves?: number;
+  median_shares?: number;
+  median_profile_visits?: number;
+  median_sales?: number;
+  above_persona_inquiry_median: boolean;
+  evidence_review_ids: string[];
+}
+
+export interface TagAggregate {
+  tag: string;
+  canonical_tag_id?: string;
+  note_count: number;
+  valid_count: number;
+  median_inquiry_rate: number;
+}
+
+export interface MethodPromotionSuggestion {
+  method_id: TitleMethodId;
+  method_label: string;
+  reason: string;
+  valid_count: number;
+  median_inquiry_rate: number;
+}
+
 export interface StageDecision {
   scale_direction: string; // 建议放大的方向
   pause_direction: string; // 建议暂停的方向
@@ -373,6 +597,10 @@ export interface WeeklyReviewResult {
   eligible_total?: number;
   stale?: boolean;
   source_review_ids?: string[];
+  by_method: MethodAggregate[];
+  by_tag: TagAggregate[];
+  promotion_suggestions: MethodPromotionSuggestion[];
+  // 历史周复盘兼容；新流程固定写空数组。
   by_direction: DirectionAggregate[];
   decision: StageDecision;
 }
@@ -414,7 +642,7 @@ export interface UsageEvent {
   id: string;
   tenant_id: string;
   user_id?: string | null;
-  feature: "growth_text" | "growth_image" | "report_lite" | "report_deep" | "title_score";
+  feature: "growth_text" | "growth_image" | "report_lite" | "report_deep";
   provider?: string;
   model?: string;
   input_tokens?: number;

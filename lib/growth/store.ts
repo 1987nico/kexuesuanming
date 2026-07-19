@@ -3,6 +3,7 @@ import type {
   BusinessSettings,
   ContentDraft,
   GrowthAccount,
+  GrowthBusinessLine,
   GrowthPersona,
   GrowthPlan,
   GrowthReview,
@@ -10,6 +11,11 @@ import type {
   UsageEvent,
 } from "./types";
 import { DEFAULT_BUSINESS_SETTINGS } from "./types";
+import {
+  assertGrowthPreviewIsSafe,
+  createGrowthPreviewFixture,
+  growthPreviewEnabled,
+} from "./previewFixture";
 
 export interface GrowthStore {
   saveAccount(account: GrowthAccount): Promise<void>;
@@ -29,6 +35,7 @@ export interface GrowthStore {
     tenantId: string,
     persona: GrowthPersona,
     ownerUserId?: string,
+    businessLine?: GrowthBusinessLine,
   ): Promise<GrowthAccount | null>;
   savePlan(plan: GrowthPlan): Promise<void>;
   getPlan(id: string): Promise<GrowthPlan | null>;
@@ -50,6 +57,11 @@ export interface GrowthStore {
 function matchesOwner(account: GrowthAccount, ownerUserId?: string) {
   if (!ownerUserId) return true;
   return account.owner_user_id === ownerUserId || account.owner_user_id == null;
+}
+
+function matchesBusinessLine(account: GrowthAccount, businessLine?: GrowthBusinessLine) {
+  if (!businessLine) return true;
+  return (account.business_line ?? "executive") === businessLine;
 }
 
 function defaultBusinessSettings(tenantId: string): BusinessSettings {
@@ -86,6 +98,16 @@ class MemoryGrowthStore implements GrowthStore {
   private usage: UsageEvent[] = [];
   private settings = new Map<string, BusinessSettings>();
 
+  constructor(seedPreview = false) {
+    if (!seedPreview) return;
+    const fixture = createGrowthPreviewFixture();
+    for (const account of fixture.accounts) this.accounts.set(account.id, account);
+    for (const plan of fixture.plans) this.plans.set(plan.id, plan);
+    for (const run of fixture.runs) this.runs.set(run.id, run);
+    for (const draft of fixture.drafts) this.drafts.set(draft.id, draft);
+    for (const review of fixture.reviews) this.reviews.set(review.id, review);
+  }
+
   async saveAccount(account: GrowthAccount) {
     this.accounts.set(account.id, account);
   }
@@ -103,11 +125,12 @@ class MemoryGrowthStore implements GrowthStore {
     );
   }
 
-  async getLatestAccountByPersona(tenantId: string, persona: GrowthPersona, ownerUserId?: string) {
+  async getLatestAccountByPersona(tenantId: string, persona: GrowthPersona, ownerUserId?: string, businessLine?: GrowthBusinessLine) {
     return (
       [...this.accounts.values()]
         .filter((account) => account.tenant_id === tenantId && account.persona === persona)
         .filter((account) => matchesOwner(account, ownerUserId))
+        .filter((account) => matchesBusinessLine(account, businessLine))
         .sort((a, b) => b.created_at.localeCompare(a.created_at))[0] ?? null
     );
   }
@@ -198,6 +221,8 @@ class MemoryGrowthStore implements GrowthStore {
 }
 
 class SupabaseGrowthStore implements GrowthStore {
+  private supportsV32DraftColumns: boolean | null = null;
+
   private get db() {
     return supabaseServer();
   }
@@ -239,7 +264,7 @@ class SupabaseGrowthStore implements GrowthStore {
     return accounts.find((account) => matchesOwner(account, ownerUserId)) ?? null;
   }
 
-  async getLatestAccountByPersona(tenantId: string, persona: GrowthPersona, ownerUserId?: string) {
+  async getLatestAccountByPersona(tenantId: string, persona: GrowthPersona, ownerUserId?: string, businessLine?: GrowthBusinessLine) {
     const { data, error } = await this.db
       .from("growth_accounts")
       .select("payload")
@@ -248,7 +273,7 @@ class SupabaseGrowthStore implements GrowthStore {
       .limit(50);
     if (error) throw error;
     const accounts = (data ?? []).map((row) => row.payload as GrowthAccount);
-    return accounts.find((account) => account.persona === persona && matchesOwner(account, ownerUserId)) ?? null;
+    return accounts.find((account) => account.persona === persona && matchesOwner(account, ownerUserId) && matchesBusinessLine(account, businessLine)) ?? null;
   }
 
   async savePlan(plan: GrowthPlan) {
@@ -317,7 +342,8 @@ class SupabaseGrowthStore implements GrowthStore {
   }
 
   async saveDraft(draft: ContentDraft) {
-    const { error } = await this.db.from("content_drafts").upsert({
+    const isLegacy = draft.schema_version === "legacy_v1" || !draft.schema_version;
+    const baseRow = {
       id: draft.id,
       tenant_id: draft.tenant_id,
       owner_user_id: draft.owner_user_id ?? null,
@@ -325,10 +351,43 @@ class SupabaseGrowthStore implements GrowthStore {
       run_id: draft.run_id,
       status: draft.status,
       title: draft.title,
-      direction: draft.direction,
-      content_type: draft.content_type,
       payload: draft,
       updated_at: draft.updated_at,
+    };
+
+    if (this.supportsV32DraftColumns !== false) {
+      const { error } = await this.db.from("content_drafts").upsert({
+        ...baseRow,
+        // 完成兼容迁移后，新流程不再伪造 A 方向/诊断型。
+        direction: isLegacy ? draft.legacy_direction ?? draft.direction ?? null : null,
+        content_type: isLegacy ? draft.legacy_content_type ?? draft.content_type ?? null : null,
+        schema_version: draft.schema_version ?? "legacy_v1",
+        method_attribution_status:
+          draft.method_attribution_status ?? (isLegacy ? "missing" : "confirmed"),
+        method_group: isLegacy ? null : draft.method_group,
+        method_id: isLegacy ? null : draft.method_id,
+        generation_mode: isLegacy ? null : draft.generation_mode,
+        legacy_direction: draft.legacy_direction ?? null,
+        legacy_content_type: draft.legacy_content_type ?? null,
+        eligible_for_method_learning:
+          isLegacy ? false : draft.eligible_for_method_learning !== false,
+      });
+
+      if (!error) {
+        this.supportsV32DraftColumns = true;
+        return;
+      }
+
+      const compatibilityCodes = new Set(["23502", "42703", "PGRST204"]);
+      if (!compatibilityCodes.has(error.code ?? "")) throw error;
+      this.supportsV32DraftColumns = false;
+    }
+
+    // 迁移前的旧表仍要求这两列非空；完整 v3.2 数据始终保存在 payload 中。
+    const { error } = await this.db.from("content_drafts").upsert({
+      ...baseRow,
+      direction: draft.legacy_direction ?? draft.direction ?? "A",
+      content_type: draft.legacy_content_type ?? draft.content_type ?? "diagnostic",
     });
     if (error) throw error;
   }
@@ -435,11 +494,22 @@ declare global {
 
 export function growthStore(): GrowthStore {
   if (!globalThis.__GROWTH_STORE__) {
+    assertGrowthPreviewIsSafe();
+    if (growthPreviewEnabled()) {
+      globalThis.__GROWTH_STORE__ = new MemoryGrowthStore(true);
+      console.warn("[growthStore] 本地脱敏预览已启用；不会读取或写入 Supabase。");
+      return globalThis.__GROWTH_STORE__;
+    }
     assertCloudDatabaseConfigured("growthStore");
-    globalThis.__GROWTH_STORE__ = isDBConfigured() ? new SupabaseGrowthStore() : new MemoryGrowthStore();
+    globalThis.__GROWTH_STORE__ = isDBConfigured() ? new SupabaseGrowthStore() : new MemoryGrowthStore(false);
     if (!isDBConfigured()) {
       console.warn("[growthStore] 未配置 Supabase，已启用增长模块内存存储。");
     }
   }
   return globalThis.__GROWTH_STORE__;
+}
+
+/** 仅供自动化测试重建进程内预览数据。 */
+export function resetGrowthStoreForTests() {
+  globalThis.__GROWTH_STORE__ = undefined;
 }

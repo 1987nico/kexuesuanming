@@ -17,7 +17,6 @@ const bodySchema = z.object({
   hypotheses: z.array(z.string().max(300)).max(8).default([]),
   one_liner: z.string().max(200).optional(),
   follow_reason: z.string().max(500).optional(),
-  content_directions: z.array(z.string().max(200)).max(6).optional(),
   tone_style: z.string().max(300).optional(),
   filter_words: z.array(z.string().max(40)).max(12).optional(),
   avoid_expressions: z.array(z.string().max(40)).max(12).optional(),

@@ -13,6 +13,25 @@ import { mianbaAuthStore, type MianbaTenantUser } from "./mianbaStore";
 
 const SESSION_TTL_DAYS = 7;
 
+function growthPreviewAuth(): MianbaAuthContext | null {
+  if (process.env.NODE_ENV === "production" || process.env.GROWTH_PREVIEW_MODE !== "fixture") return null;
+  const timestamp = new Date(0).toISOString();
+  return {
+    tenantId: DEFAULT_MIANBA_TENANT_ID,
+    role: "admin",
+    user: {
+      id: "growth-preview-local-admin",
+      tenant_id: DEFAULT_MIANBA_TENANT_ID,
+      account: "preview",
+      display_name: "本地预览账号",
+      role: "admin",
+      disabled: false,
+      created_at: timestamp,
+      updated_at: timestamp,
+    },
+  };
+}
+
 export interface MianbaAuthContext {
   tenantId: string;
   role: MianbaRole;
@@ -159,7 +178,7 @@ export async function requireMianbaPageAuth(nextPath: string, allowedRoles: Mian
 export async function requireMianbaApiAuth(
   allowedRoles: MianbaRole[] = ["admin", "operator"],
 ): Promise<{ response: NextResponse } | { auth: MianbaAuthContext }> {
-  const auth = await getCurrentMianbaAuth();
+  const auth = growthPreviewAuth() ?? await getCurrentMianbaAuth();
   if (!auth) {
     return { response: NextResponse.json({ error: "unauthenticated" }, { status: 401 }) };
   }

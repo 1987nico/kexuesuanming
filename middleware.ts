@@ -8,6 +8,12 @@ function isPublicMianbaPath(pathname: string) {
 export function middleware(req: NextRequest) {
   const { pathname, search } = req.nextUrl;
   const hasSession = Boolean(req.cookies.get(MIANBA_SESSION_COOKIE)?.value);
+  const localGrowthPreview =
+    process.env.NODE_ENV !== "production" &&
+    process.env.GROWTH_PREVIEW_MODE === "fixture" &&
+    pathname.startsWith("/mianba/growth");
+
+  if (localGrowthPreview) return NextResponse.next();
 
   if (pathname === "/mianba/login" && hasSession) {
     return NextResponse.redirect(new URL("/mianba", req.url));

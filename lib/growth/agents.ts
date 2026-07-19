@@ -1,4 +1,12 @@
-import type { ContentType, GrowthDirection, GrowthPersona } from "./types";
+import type {
+  GrowthBusinessLine,
+  GrowthPersona,
+  MethodGenerationMode,
+  RawBodyTag,
+  TitleMethodId,
+  TopicSourceSnapshot,
+} from "./types";
+import type { TitleMethodDefinition } from "./methods";
 import { PERSONA_SPECIFIC_FIELDS } from "./types";
 
 const PERSONA_GUIDE: Record<GrowthPersona, string> = {
@@ -9,12 +17,7 @@ const PERSONA_GUIDE: Record<GrowthPersona, string> = {
 核心原则——话题散乱、身份一致：
 - 话题可以到处跳（求职、跳槽、被裁、裸辞、副业、创业、迷茫、和家里的分歧都能聊），不用垂直。
 - 但必须是「同一个真人」：同一种口吻、同一段正在进行的人生（例如「34 岁被裁的前中层，正在找下一步方向」），有连续的成长弧线，会更新自己的近况和进展。散的是话题，连贯的是这个人。
-本视角下 A/B/C 三方向重新理解为：
-- A 求助/示弱/情绪帖：真实抛出自己的困惑和处境，或记录当下的情绪（emo、被 PUA、纠结要不要辞），目的是形成真实讨论和共鸣，不设计评论任务。
-- B 成长/顿悟/复盘帖：分享自己最近想明白的一件事、踩过的坑、做过的小尝试，软性输出、建立信任。
-- C 转折/成功桥接帖：这是唯一允许产品自然出场的帖子——「我之前迷茫成 XX 样，后来做了一件事（做了个职业梳理/测评、找人帮我把方向理清楚了），现在不慌了」。产品/服务只在故事中作为真实经历出现，绝不硬广、不报价，也不得用评论关键词、私信、点赞、收藏或关注换取资料、样例、报告、链接或福利。
-配比：A/B 类蓄势帖占绝大多数，C 类桥接帖占少数（约 9:1），不要每篇都想转化。
-写作口吻：第一人称、像真人发牢骚/记录，可以不完美、口语化，绝不端着、不像品牌号、不输出方法论密度（那是专家视角的活）。`,
+写作口吻：第一人称、像真人在记录，可以不完美、口语化，绝不端着、不像品牌号。正文形态不要提前规定，必须跟随标题承诺自然形成；产品只能作为真实经历自然出现，不硬广、不报价，也不得用互动换资料。`,
   expert:
     "视角：专家/从业者。账号靠专业判断建立个人品牌，内容要有方法论密度和行业洞察，突出判断力与体系。",
 };
@@ -24,10 +27,10 @@ export function personaGuide(persona: GrowthPersona) {
 }
 
 export interface AccountContext {
+  businessLine?: string;
   toneStyle?: string;
   filterWords?: string[];
   avoidExpressions?: string[];
-  contentDirections?: string[];
   personaSpecific?: Record<string, string>;
   notDoing?: string;
   complianceRedline?: string;
@@ -37,8 +40,8 @@ export interface AccountContext {
 export function accountContextBlock(ctx?: AccountContext) {
   if (!ctx) return "";
   const lines: string[] = [];
+  if (ctx.businessLine) lines.push(`当前业务线：${ctx.businessLine}`);
   if (ctx.toneStyle) lines.push(`语气与风格：${ctx.toneStyle}`);
-  if (ctx.contentDirections?.length) lines.push(`内容方向：${ctx.contentDirections.join(" / ")}`);
   if (ctx.filterWords?.length) lines.push(`必须出现的筛选词：${ctx.filterWords.join("、")}`);
   if (ctx.avoidExpressions?.length) lines.push(`要避免的表达：${ctx.avoidExpressions.join("、")}`);
   if (ctx.notDoing) lines.push(`账号不做什么（必须遵守，不要碰这些内容/表达）：${ctx.notDoing}`);
@@ -55,7 +58,16 @@ export interface ReportPrices {
   deep: string; // 深度诊断报告价格
 }
 
-export function mianbaBusiness(prices: ReportPrices) {
+export function mianbaBusiness(prices: ReportPrices, businessLine: GrowthBusinessLine = "executive") {
+  if (businessLine === "overseas_student") return `
+【运营主体：面霸君｜留学生求职辅导业务】
+- 卖什么（品类）：留学生回国求职方向规划与秋招陪跑。
+- 服务：求职方向诊断＋目标岗位地图＋简历/面试辅导＋秋招陪跑。
+- 目标人群：准备海外秋招或回国求职的留学生，以及关注孩子就业结果的家长。
+- 核心差异：先把方向、岗位和招聘节奏定清楚，再进入简历、面试与投递；不是只修改一份简历。
+- 信任状：专业老师陪跑流程、匿名交付案例、真实招聘节点复盘与可验证的方法清单。
+- 红线：不承诺Offer或薪资结果；案例必须匿名或明确标注情景演绎；不虚构真实学校、企业或个人身份。
+`.trim();
   return `
 【运营主体：面霸君（本账号就是面霸君在运营，一切定位/身份/三问都以面霸君真实业务为准）】
 - 卖什么（品类）：职业/职场「方向决策」测评报告与咨询。不是性格测试、不是测评工具、不是简历/面试培训。
@@ -69,26 +81,24 @@ export function mianbaBusiness(prices: ReportPrices) {
 }
 
 export const GROWTH_SYSTEM_PROMPT = `
-你是「小红书内容工厂 V3：30 天起号实验版」。
+你是「小红书内容工厂 V3.1：方法探索与有效咨询版」。
 
-总目标：30 天内跑出一个可持续、可复制、能吸引目标用户的小红书内容方向。
-成功标准不是单篇爆款，而是：账号定位更清楚、内容方向有证据、标题/封面/正文有可复用模板、复盘能反哺下一篇。
+总目标：用可追溯的标题方法和真实数据，持续促成目标用户的有效咨询。
+成功标准不是单篇爆款，也不是联系方式数量，而是：账号定位清楚、标题来源可追溯、正文兑现标题承诺、复盘能识别哪些方法与开放标签真正带来有效咨询。
 
 四个角色：
 1. 总经理 V3：定位和实验总负责人，负责账号定位卡、阶段判断、实验假设、选题审核、终审和下一步决策。
-2. 选题官 V3：选题实验设计师，围绕 3 个内容方向产出可比较、可复盘、可延展的候选题。
-3. 主笔 V3：模板化内容写作者，把最终选题写成可发布、可比较、可复盘的小红书笔记。
-4. 复盘官 V3：方向裁判，读取真实数据，判断方向、入口、承接、人群和模板是否成立。
+2. 选题官 V3.1：严格按当前视角可用的标题方法逐法生成，每种方法只产出一个标题。
+3. 主笔 V3.1：不预设内容方向，完全跟随标题承诺写出可发布、可复盘的笔记。
+4. 复盘官 V3.1：读取真实数据，判断方法、入口、正文兑现、承接和人群是否成立。
 
-默认账号方向：
-帮助中高层、合伙人、创业者、准创业者和成熟职场人，把经验、判断、案例和能力，从公司位置转成市场上可被信任、可被定价的资产。
-
-三类内容方向：
-A 目标客户痛点诊断：验证目标用户是否认同账号判断。
-B 可收藏工具/清单：验证收藏、主页访问和长期资产价值。
-C 创始人故事/过程记录：验证信任锚点和人设承接。
+默认账号方向由当前业务线决定，不得跨业务线混用目标人群、案例、产品或承接动作。
 
 硬约束：
+- 不预设诊断型、工具型、案例型等正文方向；正文只跟随标题承诺。
+- 默认方法与探索方法必须分开，禁用方法不得生成。
+- 对标法和蹭流量没有7天内、人工确认可访问的原链接时不得生成。
+- 每篇正文只有一个主要承接动作，目标是促成有效咨询。
 - 每篇只验证一个核心变量。
 - 发布端文字 = 标题 + 正文 + 话题标签，总字数不得超过 1000 字。
 - 不做小红书自动发布，只生成可复制发布包。
@@ -101,12 +111,14 @@ C 创始人故事/过程记录：验证信任锚点和人设承接。
 export function buildAccountPlanUserPrompt(input: {
   accountName: string;
   persona?: GrowthPersona;
+  businessLine?: GrowthBusinessLine;
   targetUser?: string;
   coreProblem?: string;
   trustSource?: string;
   reportPrices: ReportPrices;
 }) {
   const persona = input.persona ?? "expert";
+  const businessLine = input.businessLine ?? "executive";
   const specFields = PERSONA_SPECIFIC_FIELDS[persona];
   const specJsonLines = specFields
     .map((f) => `      "${f.key}": "${f.label}（结合本视角具体写实，例如：${f.placeholder}）"`)
@@ -124,14 +136,14 @@ export function buildAccountPlanUserPrompt(input: {
     merchant:
       "本视角是面霸君「明着经营」的号：定位卡和品牌三问都要直接以面霸君的身份、产品、差异、信任状来回答。",
     buyer:
-      "本视角是面霸君运营的「素人真实号」：账号表面不提面霸君，只在 C 类转折帖里让面霸君的报告/咨询以'我后来做了个职业决策梳理/测评'这种亲历方式软出场；转化桥要落到面霸君。",
+      "本视角是面霸君运营的「素人真实号」：账号表面不提面霸君。只有当标题和真实经历自然需要时，才让面霸君的报告/咨询以'我后来做了个职业决策梳理/测评'这种亲历方式软出场；不能为了转化硬塞产品。",
     expert:
       "本视角是面霸君运营的「专家号」：靠面霸君的六步决策方法论和真实案例建立权威，方法论密度要高，最终承接到面霸君的报告/咨询。",
   };
   return `
 请以总经理 V3 身份，为这个账号生成账号定位卡和 30 天实验计划。
 
-${mianbaBusiness(input.reportPrices)}
+${mianbaBusiness(input.reportPrices, businessLine)}
 【本视角怎么用面霸君业务】${mianbaUsage[persona]}
 
 ${personaGuide(persona)}
@@ -151,7 +163,6 @@ ${brandTrinityGuide}
     "follow_reason": "用户为什么要长期关注",
     "trust_source": "创始人凭什么讲",
     "not_doing": "账号不做什么",
-    "content_directions": ["方向A 一句话", "方向B 一句话", "方向C 一句话"（严格按上面本视角对 A/B/C 的定义写，不要套用其它视角的方向）],
     "tone_style": "语气与风格（如克制、有判断、不鸡汤）",
     "filter_words": ["必须出现的筛选词1", "筛选词2"],
     "avoid_expressions": ["要避免的表达1", "表达2"],
@@ -165,8 +176,8 @@ ${specJsonLines}
   "plan": {
     "title": "30 天起号实验计划",
     "weeks": [
-      {"week": 1, "theme": "定位基线", "goal": "...", "content_mix": "...", "decision_rule": "..."},
-      {"week": 2, "theme": "方向二测", "goal": "...", "content_mix": "...", "decision_rule": "..."},
+      {"week": 1, "theme": "方法基线", "goal": "...", "content_mix": "默认方法为主、探索方法少量验证", "decision_rule": "..."},
+      {"week": 2, "theme": "方法二测", "goal": "...", "content_mix": "同一方法复测", "decision_rule": "..."},
       {"week": 3, "theme": "模板沉淀", "goal": "...", "content_mix": "...", "decision_rule": "..."},
       {"week": 4, "theme": "放大决策", "goal": "...", "content_mix": "...", "decision_rule": "..."}
     ]
@@ -181,14 +192,23 @@ export function buildTopicPoolUserPrompt(input: {
   coreProblem: string;
   recentSignals?: string;
   persona?: GrowthPersona;
-  count?: number;
+  methods: TitleMethodDefinition[];
+  generationMode: MethodGenerationMode;
+  sources?: TopicSourceSnapshot[];
   excludeTitles?: string[];
   context?: AccountContext;
 }) {
-  const count = input.count ?? 15;
   const exclude = (input.excludeTitles ?? []).filter(Boolean);
+  const sourceByMethod = new Map((input.sources ?? []).map((source) => [source.method_id, source]));
+  const methodLines = input.methods.map((method) => {
+    const source = sourceByMethod.get(method.id);
+    return [
+      `${method.order}. method_id=${method.id}；方法=${method.label}；要求=${method.instruction}`,
+      source ? `绑定母题=${JSON.stringify(source)}` : "无外部母题要求",
+    ].join("\n");
+  });
   return `
-请以选题官 V3 身份，围绕账号当前阶段生成候选题池。
+请以选题官 V3.1 身份，严格按给定方法列表生成标题。
 
 ${input.persona ? personaGuide(input.persona) : ""}
 ${accountContextBlock(input.context)}
@@ -198,12 +218,14 @@ ${accountContextBlock(input.context)}
 最近复盘信号：${input.recentSignals || "暂无真实数据，不得编造，用当前阶段目标继续生产。"}
 
 要求：
-- 生成 ${count} 个候选题，覆盖方向 A/B/C。
+- 当前生成模式：${input.generationMode === "default" ? "默认生成" : "探索生成"}。
+- 必须对下面每一种方法各生成1个标题，不得增减、合并或换方法：
+${methodLines.join("\n\n")}
+- 不预设正文内容方向，不输出诊断型、工具型或故事型分类。
 - 【标题硬性规则】每个 title 必须控制在 20 个字以内（含标点符号，按小红书规则），超过一律不合格；不要用「｜」「|」「——」等分隔符外挂副标题来变相加长。
 - 【原力要大】标题外层必须有至少 1 个具体实在、有画面的"原力词"：目标受众生活里能看见、摸到、遇到的物件、角色、场景或动作。例：工资条、合同、老板、合伙人、客户、会议室、工位、预算表、PPT、手机消息、加班、汇报、签合同、拍板、微信对话框、面试通知、离职交接、绩效面谈。禁止只用泛虚词做标题入口，如：成长、认知、觉醒、自由、焦虑、选择、结构、位置、命运、人生、体面；这些词可以进正文解释，但不能单独承担标题入口。
 - 【冲突要大】每个选题必须有反常识、反预期或强落差，让用户一眼看到"怎么会这样"的张力。冲突可以来自：想要稳定 vs 想要自由、职位很高 vs 离开平台不值钱、努力很多 vs 结果不变、想转型 vs 家庭/收入/年龄限制、以为是机会 vs 后来发现是坑。没有冲突的平铺题、纯建议题、纯清单题不进入候选池。
-- 每个候选题必须可比较、可复盘、可延展。
-- 优先进入生产的题必须满足：定位匹配度 >= 8，痛点清晰度 >= 7，入口强度 >= 8（入口强度必须同时看原力与冲突），关注理由 >= 7，实验价值 >= 8，泛流量风险 <= 5。
+- 每个候选题必须可比较、可复盘、可延展，并写清正文要兑现的唯一承诺。
 ${exclude.length ? `- 严禁与以下已生成选题重复或近似：${exclude.join(" / ")}` : ""}
 
 输出 JSON：
@@ -212,11 +234,11 @@ ${exclude.length ? `- 严禁与以下已生成选题重复或近似：${exclude.
   "experiment_hypothesis": "本轮实验假设",
   "topics": [
     {
-      "direction": "A|B|C",
+      "method_id": "必须与给定method_id完全一致",
       "title": "题目（20 字以内，含标点）",
+      "title_promise": "正文必须兑现的唯一承诺",
       "target_user": "目标用户",
       "pain": "用户痛点",
-      "content_type": "diagnostic|tool|story",
       "hook": "标题钩子",
       "origin_force": "原力判断（必填，不能为空）：标题里具体有画面的物件/角色/场景/动作是什么，为什么够实在",
       "conflict_judgement": "冲突判断（必填，不能为空）：本题的反常识/反预期/强落差是什么",
@@ -225,41 +247,21 @@ ${exclude.length ? `- 严禁与以下已生成选题重复或近似：${exclude.
       "expected_signal": "预期有效信号",
       "repeatable_angle": "可复制方向",
       "broad_traffic_risk": 1,
-      "priority": "S|A|B|C",
-      "scores": {
-        "positioning": 8,
-        "pain_clarity": 8,
-        "entry_strength": 8,
-        "follow_reason": 8,
-        "experiment_value": 8,
-        "repeatability": 8
-      }
+      "priority": "A"
     }
   ]
 }
 `.trim();
 }
 
-// 买家视角专属：故事化写作规范（源自第一套工作流「主笔」Agent 的靶心人/意外人模式与画面率定义）
-const BUYER_STORY_SPEC = `
-【买家视角专属·故事化写作规范（本篇必须遵守）】
-把正文写成"具体、实在、有画面"的第一人称真实故事，不要写成观点文、干货清单，也不要"开头讲故事、后面全是道理"。
-故事模式二选一，一篇只能用一个，不许混用：
-- 靶心人模式（即努力人模式）七步：目标 → 阻碍 → 努力 → 结果 → 意外 → 转弯 → 结局。适合"本来奔着一个目标去，中途撞上了更深的真相"，过程扎实、结果反转，最终认知或人生方向发生转弯。
-- 意外人模式 四步：目标 → 意外 → 转弯 → 结局。适合"一个意外事件打断原本路径、人生拐了个弯"，开头快、意外狠、转弯清晰、结局有余味。
-结构要藏在故事里，不要把"目标/阻碍/努力"这些步骤名当小标题写出来。必须有"转弯"；结局停在有力量的位置，有余味、不做大总结、不说教（删掉"我终于明白/人生就是/本质上"这类句子）。
-【画面率 ≥ 20%（硬指标）】
-画面率 =（有画面感的名词字数 + 有动作感的动词字数）÷ 正文字数，本篇正文画面率必须 ≥ 20%。
-多用有画面感的名词（门、桌子、会议室、电脑、微信对话框、合同、烟、地铁、手、眼神、脸……）和有动作感的动词，用具体场景和动作把情绪"演"出来，而不是直接下结论。
-必须在输出 JSON 里如实填写 story_mode（「靶心人模式」或「意外人模式」二选一）和 pictorial_rate（预估画面率，如「26%」，必须≥20%）。
-`.trim();
-
 export function buildDraftUserPrompt(input: {
   targetUser: string;
   trustSource: string;
-  direction: GrowthDirection;
-  contentType: ContentType;
+  methodId: TitleMethodId;
+  methodLabel: string;
+  generationMode: MethodGenerationMode;
   title: string;
+  titlePromise: string;
   testVariable: string;
   expectedSignal: string;
   followReason: string;
@@ -268,6 +270,7 @@ export function buildDraftUserPrompt(input: {
   learningGuidance?: string;
   excludeBodies?: string[];
   context?: AccountContext;
+  ctaType: "soft_bridge" | "on_platform_consult" | "service_entry";
 }) {
   const exclude = (input.excludeBodies ?? []).filter(Boolean);
   return `
@@ -278,9 +281,10 @@ ${accountContextBlock(input.context)}
 ${input.context?.privateDomain ? `业务承接背景（仅用于理解业务，不得照搬互动话术，不得引导评论/私信换资料）：${input.context.privateDomain}` : ""}
 目标用户：${input.targetUser}
 信任来源：${input.trustSource}
-方向：${input.direction}
-内容类型：${input.contentType}
+标题方法：${input.methodLabel}（${input.methodId}）
+生成模式：${input.generationMode === "default" ? "默认" : "探索"}
 最终选题：${input.title}
+正文必须兑现：${input.titlePromise}
 本篇验证变量：${input.testVariable}
 预期有效信号：${input.expectedSignal}
 关注理由：${input.followReason}
@@ -289,17 +293,18 @@ ${input.variantHint ? `本次写作角度：${input.variantHint}` : ""}
 ${exclude.length ? `严禁与以下已生成正文重复或近似（可换结构、开头、案例）：\n${exclude.map((b) => b.slice(0, 120)).join("\n---\n")}` : ""}
 
 写作要求：
-- 诊断型：直接点出处境，给反常识判断，列 3-5 个诊断信号。
-- 工具型：给表格、问题组、清单或步骤，用户能照着用。
-- 故事型：真实过程服务读者判断，不自嗨。
+- 不预设正文形态。根据标题承诺自然决定叙事、清单、判断、对比或其它写法。
+- 前30字必须回应标题中的人物、问题或冲突。
+- 标题有数字，正文必须给出同等数量的有效内容；承诺资料、清单或路线图时必须直接交付核心内容。
+- 反认知必须解释反转成立的条件；拔河式必须真实比较两边；对标法只迁移逻辑，不复制原作者表达。
 - 【标题硬性规则】title 与每个 alternative_titles 都必须控制在 20 个字以内（含标点符号，按小红书规则），不要用「｜」「|」「——」外挂副标题。
 - 发布端文字（标题+正文+话题标签）不得超过 1000 字。
 - 给 5 个以内话题标签。
-- 本篇只能改变「${input.testVariable}」这一个主要实验变量。周复盘确定方向，单篇复盘决定标题、开头、结构、证据或结尾怎么写；不得同时大改多个维度。
+- 短版和长版必须保持同一核心判断，只改变篇幅和展开深度。
+- 本篇唯一主要承接动作类型：${input.ctaType}。不能叠加第二个承接动作。
 - 【互动合规硬规则】正文、标题、封面和 comment_prompt 都不得要求点赞、收藏、关注、评论、转发、互关或互赞；不得出现「评论区扣1」「留言关键词」「回复口令」「私信我」「加微信」等动作。
 - 【禁止利益交换】不得用资料、匿名样例、报告、清单、模板、链接、福利、抽奖、诊断或体检作为互动奖励。像「需要职业方向体检的评论区扣1，我发你匿名交付样例」这种表达一律禁止。
 - 结尾优先给出一个读者当下就能完成的自查动作或判断标准。可以提出与正文直接相关的自然问题，但不能承诺根据评论发送任何东西。
-${input.persona === "buyer" ? `\n${BUYER_STORY_SPEC}\n` : ""}
 输出 JSON：
 {
   "title": "最终标题",
@@ -313,26 +318,27 @@ ${input.persona === "buyer" ? `\n${BUYER_STORY_SPEC}\n` : ""}
   "trust_anchor": "本篇信任锚点",
   "review_points": ["发布后观察点 1", "观察点 2"],
   "cover_suggestion": "首图/封面建议",
-  "story_mode": "仅买家视角必填：本篇所用故事模式，只能是「靶心人模式」或「意外人模式」；其它视角留空字符串",
-  "pictorial_rate": "仅买家视角必填：本篇预估画面率百分比字符串，如「26%」，必须≥20%；其它视角留空字符串"
+  "cta_type": "必须等于指定的唯一承接动作类型"
 }
 `.trim();
 }
 
 export function buildReviewUserPrompt(input: {
   title: string;
-  direction: GrowthDirection;
-  contentType: ContentType;
+  methodLabel: string;
+  generationMode: MethodGenerationMode;
+  rawTags?: RawBodyTag[];
   testVariable: string;
   metrics: Record<string, unknown>;
 }) {
   return `
 请以复盘官 V4 身份，基于发布24小时后的真实数据做单篇复盘。不可见字段写不可见，不得编造。
-单篇复盘只判断标题入口、正文执行和商业承接，不得凭一篇笔记决定放大或暂停整个方向。
+单篇复盘只判断标题入口、正文执行和商业承接，不得凭一篇笔记决定方法晋升或暂停。
 
 标题：${input.title}
-方向：${input.direction}
-内容类型：${input.contentType}
+标题方法：${input.methodLabel}
+生成模式：${input.generationMode === "default" ? "默认" : "探索"}
+正文开放标签：${input.rawTags?.map((tag) => tag.text).join("、") || "尚未归纳"}
 验证变量：${input.testVariable}
 真实数据 JSON：${JSON.stringify(input.metrics)}
 
@@ -360,26 +366,27 @@ export function buildReviewUserPrompt(input: {
 
 export function buildStageReviewUserPrompt(input: {
   targetUser: string;
-  directions?: string[];
-  aggregate: unknown;
+  methodAggregate: unknown;
+  tagAggregate: unknown;
+  eligibleTotal: number;
 }) {
   return `
-请以总经理 V4 身份，基于多篇笔记的聚合数据做「周复盘 / 方向决策」。不要基于单篇爆款下结论，要看近7天动量和近28天稳定性。
+请以总经理 V4 身份，基于多篇笔记的聚合数据做「周复盘 / 方法学习」。不要基于单篇爆款下结论。
 
 目标用户：${input.targetUser}
-内容方向说明：${(input.directions ?? ["A 方向", "B 方向", "C 方向"]).join(" / ")}
-各方向聚合数据 JSON（valid_count=近28天有效样本，recent_7d_count=近7天有效样本，所有rate均为中位数，action由服务器证据门槛决定，不得擅自改变）：
-${JSON.stringify(input.aggregate)}
+当前有效样本：${input.eligibleTotal}
+标题方法聚合：${JSON.stringify(input.methodAggregate)}
+正文开放标签聚合：${JSON.stringify(input.tagAggregate)}
 
 判断规则：
-- 收藏率、评论率、关注反馈更能代表方向是否成立，单纯曝光/阅读不作数。
-- 服务器给出的 action 是硬约束，只负责把理由说清楚。
-- 0-2篇只探索；3-5篇只二测；6-9篇可增加优势方向；10篇以上且比较方向各至少3篇才可暂停。
+- 有效咨询率是北极星，收藏、分享、主页访问和关注用于解释过程。
+- 少于30篇有效样本时只描述数据，不得评选最佳方法或建议标签。
+- 探索方法只有满足服务器给出的晋升门槛时才可建议晋升，且最终必须人工确认。
 
 输出 JSON：
 {
-  "scale_direction": "建议放大的方向及理由（数据不足就说需继续验证）",
-  "pause_direction": "建议暂停或降权的方向及理由（没有就写暂无）",
+  "scale_direction": "方法观察结论（样本不足就明确说不排名）",
+  "pause_direction": "风险或不应放大的方法（没有就写暂无）",
   "next_focus": "下一阶段主攻什么",
   "reusable_pattern": "已跑出的可复用标题/结构模板（没有就写暂无）",
   "summary": "一段话周结论，给运营者看的大白话",
@@ -388,5 +395,55 @@ ${JSON.stringify(input.aggregate)}
   "title_patterns_to_avoid": ["应停止的标题入口表达"],
   "body_patterns_to_repeat": ["应继续复用的正文结构"]
 }
+`.trim();
+}
+
+export function buildBodyTagUserPrompt(input: {
+  title: string;
+  body: string;
+  bodyVersion: "short" | "long" | "selected";
+}) {
+  return `
+请阅读这篇已经选定的小红书正文，从正文实际呈现方式和给读者的价值中，自由归纳1—2个简短标签。
+
+禁止从预设分类中选择；不要使用“诊断型、工具型、案例型、观点型、混合型、无法判断”等固定词表。
+每个标签2—8个汉字，避免只复述业务主题。只有能够从正文中明确找到依据时才生成；不确定则返回空数组。
+产品名、专有方法名和价格不是正文形态标签，例如“六步决策漏斗”“VRIN”“199诊断”“6999服务”都不要作为标签。
+
+标题：${input.title}
+正文版本：${input.bodyVersion}
+正文：
+${input.body}
+
+输出 JSON：
+{
+  "tags": [
+    {"text": "开放标签", "reason": "正文中哪些内容支持这个标签"}
+  ]
+}
+`.trim();
+}
+
+export function buildTagMergeUserPrompt(input: {
+  rawTags: Array<{ text: string; draftId: string; title: string }>;
+}) {
+  return `
+请整理一批由真实正文自由归纳出来的开放标签。只把明确近义、上下位高度重叠或表达重复的标签放进同一个建议；不要为了减少数量而强行合并。
+
+原始标签：${JSON.stringify(input.rawTags)}
+
+输出 JSON：
+{
+  "suggestions": [
+    {
+      "proposed_name": "建议的统一标签",
+      "definition": "这个统一标签只包含什么、不包含什么",
+      "member_tags": ["原始标签1", "原始标签2"],
+      "representative_draft_ids": ["代表正文id"]
+    }
+  ]
+}
+
+单个标签不要单独生成合并建议；member_tags至少2个。系统只会把结果交给运营人工确认，不会自动合并。
 `.trim();
 }

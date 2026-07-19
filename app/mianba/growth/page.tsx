@@ -1,26 +1,50 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import MianbaLogoutButton from "@/app/mianba/MianbaLogoutButton";
 import type {
   ContentDraft,
-  DirectionAggregate,
   GrowthAccount,
+  GrowthBusinessLine,
   GrowthPersona,
   GrowthPlan,
   GrowthReview,
-  GrowthReviewMetrics,
   GrowthRun,
-  WeeklyReviewResult,
+  MethodAggregate,
+  MethodGenerationMode,
+  TitleMethodGroup,
+  TitleMethodId,
   TopicCandidate,
+  TopicSourceSnapshot,
+  WeeklyReviewResult,
 } from "@/lib/growth/types";
-import { GROWTH_PERSONA_LABELS, GROWTH_PERSONAS, PERSONA_SPECIFIC_FIELDS } from "@/lib/growth/types";
-import { scanDraftCompliance } from "@/lib/growth/validation";
+import {
+  GROWTH_BUSINESS_DEFINITIONS,
+  GROWTH_BUSINESS_LINES,
+  GROWTH_PERSONA_LABELS,
+  GROWTH_PERSONAS,
+  PERSONA_SPECIFIC_FIELDS,
+} from "@/lib/growth/types";
+import {
+  methodsForPersona,
+  TITLE_METHOD_BY_ID,
+  type TitleMethodDefinition,
+} from "@/lib/growth/methods";
 
-interface WorkspaceState {
+interface BootstrapData {
+  businessLine: GrowthBusinessLine;
   account: GrowthAccount | null;
   plan: GrowthPlan | null;
-  run: GrowthRun | null;
+  runs: GrowthRun[];
   drafts: ContentDraft[];
+  currentDrafts: ContentDraft[];
+  historicalDrafts: ContentDraft[];
+  reviews: Record<string, GrowthReview>;
+  weeklyReview: WeeklyReviewResult | null;
+  capabilities: { reviewScreenshot: boolean };
+  preview: { enabled: boolean; banner?: string; productionDataConnected?: boolean };
+  sourceCounts: Record<MethodGenerationMode, { configured: number; generatable: number; blockedBySource: number }>;
+  learningSummary: { historicalEffectiveSamples: number; newLearningSamples: number; explanation: string };
 }
 
 interface AccountForm {
@@ -32,1261 +56,1518 @@ interface AccountForm {
   follow_reason: string;
   trust_source: string;
   not_doing: string;
-  content_directions: string;
   tone_style: string;
+  compliance_redline: string;
+  hypotheses: string;
   filter_words: string;
   avoid_expressions: string;
-  compliance_redline: string;
   private_domain: string;
-  hypotheses: string;
   persona_specific: Record<string, string>;
 }
 
-interface ReviewFormState {
-  note_status: "normal" | "limited" | "violation" | "deleted";
-  promoted: boolean;
-  impressions: string;
-  reads: string;
-  average_view_seconds: string;
-  likes: string;
-  saves: string;
-  comments: string;
-  shares: string;
-  follows: string;
-  qualified_inquiries: string;
-  note_url: string;
-  target_customer_quote: string;
-  search_keywords: string;
-  traffic_sources?: GrowthReviewMetrics["traffic_sources"];
-  audience?: GrowthReviewMetrics["audience"];
-  input_source: "manual" | "screenshot" | "mixed";
+interface SourceForm {
+  method_id: TitleMethodId;
+  platform: string;
+  author: string;
+  original_title: string;
+  original_url: string;
+  published_at: string;
+  heat_snapshot: string;
+  migration_note: string;
+  verified_by_operator: boolean;
 }
 
-interface ScreenshotExtractionState {
-  confidence: Record<string, number>;
-  warnings: string[];
-}
+const numericReviewFields = [
+  ["impressions", "曝光"], ["reads", "阅读"], ["average_view_seconds", "平均阅读秒数"], ["likes", "点赞"],
+  ["saves", "收藏"], ["comments", "评论"], ["shares", "分享"], ["profile_visits", "主页访问"],
+  ["follows", "关注"], ["private_messages", "主动私信"], ["qualified_inquiries", "有效咨询"],
+  ["diagnosis_199_entries", "199诊断进入"], ["diagnosis_199_sales", "199诊断成交"],
+  ["deep_6999_qualified", "6999适配"], ["deep_6999_sales", "6999成交"],
+] as const;
 
-const DIRECTION_LABELS: Record<string, string> = {
-  A: "痛点诊断",
-  B: "工具清单",
-  C: "故事过程",
+const emptyAccount: AccountForm = {
+  name: "面霸君",
+  one_liner: "",
+  target_user: "",
+  core_problem: "",
+  account_value: "",
+  follow_reason: "",
+  trust_source: "",
+  not_doing: "",
+  tone_style: "",
+  compliance_redline: "",
+  hypotheses: "",
+  filter_words: "",
+  avoid_expressions: "",
+  private_domain: "",
+  persona_specific: {},
 };
 
-const CONTENT_TYPE_LABELS: Record<string, string> = {
-  diagnostic: "诊断型",
-  tool: "工具型",
-  story: "故事型",
+const emptySource: SourceForm = {
+  method_id: "traffic",
+  platform: "小红书",
+  author: "",
+  original_title: "",
+  original_url: "",
+  published_at: "",
+  heat_snapshot: "",
+  migration_note: "",
+  verified_by_operator: false,
 };
 
-const DRAFT_STATUS_LABELS: Record<string, string> = {
+const emptyReview = () => Object.fromEntries([
+  ["note_url", ""],
+  ["note_status", "normal"],
+  ["promoted", false],
+  ...numericReviewFields.map(([key]) => [key, ""]),
+]) as Record<string, string | boolean>;
+
+const STATUS_LABEL: Record<string, string> = {
   draft: "草稿",
-  ready: "已选定",
+  ready: "待人工发布",
   published: "已发布",
   reviewed: "已复盘",
 };
 
-const CLASSIFICATION_LABELS: Record<string, string> = {
-  scale: "本篇模式可复用",
-  retest: "值得二测",
-  weak_entry: "入口弱",
-  weak_conversion: "承接弱",
-  wrong_audience: "人群跑偏",
-  pause: "本篇模式不建议复用",
-};
-
-const SAMPLE_STATUS_LABELS: Record<string, string> = {
-  valid: "有效样本",
-  low_sample: "低样本，仅观察",
-  paid: "投流样本，单独记录",
-  limited: "限流，只进入合规学习",
-  violation: "违规，只进入合规学习",
-  deleted: "已删除",
-  historical_unknown: "历史数据，口径未知",
-  not_ready: "尚未满24小时",
-};
-
-const WEEKLY_ACTION_LABELS: Record<string, string> = {
-  scale: "放大",
-  retest: "二测",
-  explore: "探索",
-  pause: "暂停",
-};
-
-const emptyReviewForm: ReviewFormState = {
-  note_status: "normal",
-  promoted: false,
-  impressions: "",
-  reads: "",
-  average_view_seconds: "",
-  likes: "",
-  saves: "",
-  comments: "",
-  shares: "",
-  follows: "",
-  qualified_inquiries: "",
-  note_url: "",
-  target_customer_quote: "",
-  search_keywords: "",
-  input_source: "manual",
-};
-
-function num(value?: number) {
-  return typeof value === "number" ? String(value) : "";
-}
-
-function metricsToForm(metrics?: GrowthReviewMetrics): ReviewFormState {
-  if (!metrics) return { ...emptyReviewForm };
-  return {
-    note_status: metrics.note_status ?? "normal",
-    promoted: metrics.promoted ?? false,
-    impressions: num(metrics.impressions),
-    reads: num(metrics.reads),
-    average_view_seconds: num(metrics.average_view_seconds),
-    likes: num(metrics.likes),
-    saves: num(metrics.saves),
-    comments: num(metrics.comments),
-    shares: num(metrics.shares),
-    follows: num(metrics.follows),
-    qualified_inquiries: num(metrics.qualified_inquiries),
-    note_url: metrics.note_url ?? "",
-    target_customer_quote: metrics.target_customer_quote ?? "",
-    search_keywords: (metrics.search_keywords ?? []).join("，"),
-    traffic_sources: metrics.traffic_sources,
-    audience: metrics.audience,
-    input_source: metrics.input_source ?? "manual",
-  };
-}
-
-function formToMetricsPayload(form: ReviewFormState): Record<string, unknown> {
-  const payload: Record<string, unknown> = {
-    note_status: form.note_status,
-    promoted: form.promoted,
-    input_source: form.input_source,
-  };
-  const numericKeys = [
-    "impressions",
-    "reads",
-    "average_view_seconds",
-    "likes",
-    "saves",
-    "comments",
-    "shares",
-    "follows",
-    "qualified_inquiries",
-  ] as const;
-  for (const key of numericKeys) {
-    if (form[key].trim()) payload[key] = Number(form[key]);
-  }
-  if (form.note_url.trim()) payload.note_url = form.note_url.trim();
-  if (form.target_customer_quote.trim()) payload.target_customer_quote = form.target_customer_quote.trim();
-  const keywords = form.search_keywords.split(/[,，\n]/).map((value) => value.trim()).filter(Boolean).slice(0, 5);
-  if (keywords.length) payload.search_keywords = keywords;
-  if (form.traffic_sources) payload.traffic_sources = form.traffic_sources;
-  if (form.audience) payload.audience = form.audience;
-  return payload;
-}
-
-function localDateTimeValue(date = new Date()) {
-  const offset = date.getTimezoneOffset() * 60_000;
-  return new Date(date.getTime() - offset).toISOString().slice(0, 16);
-}
-
-function effectivePublishedAt(note: ContentDraft) {
-  return note.published_at || note.updated_at || note.created_at;
-}
-
-function formatRemaining(milliseconds: number) {
-  const totalMinutes = Math.max(0, Math.ceil(milliseconds / 60_000));
-  const hours = Math.floor(totalMinutes / 60);
-  const minutes = totalMinutes % 60;
-  return `${hours}小时${minutes}分钟`;
-}
-
-async function compressReviewScreenshot(file: File) {
-  const source = await new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => (typeof reader.result === "string" ? resolve(reader.result) : reject(new Error("截图读取失败")));
-    reader.onerror = () => reject(reader.error || new Error("截图读取失败"));
-    reader.readAsDataURL(file);
+async function requestJSON<T>(url: string, options?: RequestInit): Promise<T> {
+  const response = await fetch(url, {
+    ...options,
+    headers: { "Content-Type": "application/json", ...(options?.headers || {}) },
   });
-  const image = await new Promise<HTMLImageElement>((resolve, reject) => {
-    const element = new Image();
-    element.onload = () => resolve(element);
-    element.onerror = () => reject(new Error(`${file.name} 不是可识别的图片`));
-    element.src = source;
-  });
-  let scale = Math.min(1, 1000 / image.width, 2200 / image.height);
-  const canvas = document.createElement("canvas");
-  for (let attempt = 0; attempt < 6; attempt += 1) {
-    canvas.width = Math.max(1, Math.round(image.width * scale));
-    canvas.height = Math.max(1, Math.round(image.height * scale));
-    const context = canvas.getContext("2d");
-    if (!context) throw new Error("浏览器无法处理这张截图");
-    context.drawImage(image, 0, 0, canvas.width, canvas.height);
-    const dataUrl = canvas.toDataURL("image/jpeg", Math.max(0.5, 0.72 - attempt * 0.04));
-    if (dataUrl.length <= 600_000) return { name: file.name, dataUrl };
-    scale *= 0.82;
-  }
-  throw new Error(`${file.name} 压缩后仍过大，请先裁掉无关区域再上传`);
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.message || data.error || "操作失败");
+  return data as T;
 }
 
-function toAccountForm(account: GrowthAccount): AccountForm {
-  const personaSpecific: Record<string, string> = {};
-  for (const field of PERSONA_SPECIFIC_FIELDS[account.persona]) {
-    personaSpecific[field.key] = account.persona_specific?.[field.key] ?? "";
-  }
+const lines = (value: string) => value.split(/[\n，,]/).map((item) => item.trim()).filter(Boolean);
+
+function asLocalDateTime(value = new Date().toISOString()) {
+  const date = new Date(value);
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
+  return local.toISOString().slice(0, 16);
+}
+
+function accountForm(account: GrowthAccount): AccountForm {
   return {
     name: account.name,
-    one_liner: account.one_liner ?? "",
+    one_liner: account.one_liner || "",
     target_user: account.target_user,
     core_problem: account.core_problem,
     account_value: account.account_value,
-    follow_reason: account.follow_reason ?? "",
+    follow_reason: account.follow_reason || "",
     trust_source: account.trust_source,
     not_doing: account.not_doing,
-    content_directions: (account.content_directions ?? []).join("\n"),
-    tone_style: account.tone_style ?? "",
-    filter_words: (account.filter_words ?? []).join("、"),
-    avoid_expressions: (account.avoid_expressions ?? []).join("、"),
-    compliance_redline: account.compliance_redline ?? "",
-    private_domain: account.private_domain ?? "",
-    hypotheses: account.hypotheses.join("\n"),
-    persona_specific: personaSpecific,
+    tone_style: account.tone_style || "",
+    compliance_redline: account.compliance_redline || "",
+    hypotheses: (account.hypotheses || []).join("\n"),
+    filter_words: (account.filter_words || []).join("，"),
+    avoid_expressions: (account.avoid_expressions || []).join("，"),
+    private_domain: account.private_domain || "",
+    persona_specific: account.persona_specific || {},
   };
 }
 
-function splitList(value: string, sep: RegExp) {
-  return value.split(sep).map((s) => s.trim()).filter(Boolean);
+function reviewForm(review?: GrowthReview): Record<string, string | boolean> {
+  if (!review) return emptyReview();
+  const form = emptyReview();
+  form.note_url = review.metrics.note_url || "";
+  form.note_status = review.metrics.note_status || "normal";
+  form.promoted = review.metrics.promoted ?? false;
+  for (const [key] of numericReviewFields) {
+    form[key] = review.metrics[key] === undefined ? "" : String(review.metrics[key]);
+  }
+  return form;
 }
 
-function complianceView(draft: ContentDraft) {
-  const scannedIssues = scanDraftCompliance(draft).map((issue) => issue.message);
-  const issues = draft.compliance?.issues ?? [...new Set(scannedIssues)];
-  return {
-    status: draft.compliance?.status ?? (scannedIssues.length > 0 ? "blocked" : "passed"),
-    issues,
-  } as const;
+function changedKeys(current: Record<string, string | boolean>, baseline: Record<string, string | boolean>) {
+  return Object.keys(current).filter((key) => current[key] !== baseline[key]);
 }
 
-function draftIsBlocked(draft: ContentDraft) {
-  return complianceView(draft).status === "blocked";
+function sourceAge(source: TopicSourceSnapshot) {
+  if (source.freshness === "within_72h") return "72小时内";
+  if (source.freshness === "day_4_to_7") return "4—7天";
+  return "历史框架库";
 }
 
-export default function XiaohongshuNotesPage() {
-  const [persona, setPersona] = useState<GrowthPersona>("merchant");
-  const [state, setState] = useState<WorkspaceState>({ account: null, plan: null, run: null, drafts: [] });
-  const [message, setMessage] = useState("");
-  const [busy, setBusy] = useState("");
+function sourceCanGenerate(source?: TopicSourceSnapshot) {
+  if (!source || source.freshness === "historical" || source.link_status === "invalid") return false;
+  return source.link_status === "accessible" || Boolean(source.verified_by_operator);
+}
 
-  const [editing, setEditing] = useState(false);
-  const [accountCardOpen, setAccountCardOpen] = useState(false);
-  const [accountForm, setAccountForm] = useState<AccountForm | null>(null);
+function latestSourceForMethod(sources: TopicSourceSnapshot[], methodId: TitleMethodId) {
+  return [...sources]
+    .filter((item) => item.method_id === methodId)
+    .sort((a, b) => b.collected_at.localeCompare(a.collected_at))[0];
+}
 
-  const [selectedTopicId, setSelectedTopicId] = useState<string | null>(null);
+export default function GrowthPage() {
+  const [businessLine, setBusinessLine] = useState<GrowthBusinessLine>("overseas_student");
+  const [persona, setPersona] = useState<GrowthPersona>("buyer");
+  const [data, setData] = useState<BootstrapData | null>(null);
+  const [form, setForm] = useState<AccountForm>(emptyAccount);
+  const [source, setSource] = useState<SourceForm>(emptySource);
+  const [sourceEditorMethod, setSourceEditorMethod] = useState<TitleMethodId | null>(null);
   const [variants, setVariants] = useState<ContentDraft[]>([]);
-  const [chosenDraft, setChosenDraft] = useState<ContentDraft | null>(null);
+  const [activeTopic, setActiveTopic] = useState<{ run: GrowthRun; topic: TopicCandidate } | null>(null);
+  const [chosen, setChosen] = useState<ContentDraft | null>(null);
+  const [titleEdits, setTitleEdits] = useState<Record<string, string>>({});
+  const [savingTitleId, setSavingTitleId] = useState<string | null>(null);
+  const [exploreOpen, setExploreOpen] = useState<Record<TitleMethodGroup, boolean>>({ native: false, benchmark: false });
+  const [busy, setBusy] = useState<string | null>("load");
+  const [message, setMessage] = useState("");
+  const [reviewDraft, setReviewDraft] = useState<ContentDraft | null>(null);
+  const [reviewValues, setReviewValues] = useState<Record<string, string | boolean>>(emptyReview());
+  const [reviewBaseline, setReviewBaseline] = useState<Record<string, string | boolean>>(emptyReview());
+  const [personaOpen, setPersonaOpen] = useState(false);
+  const [personaEditing, setPersonaEditing] = useState(false);
+  const [businessEditOpen, setBusinessEditOpen] = useState(false);
 
-  // 以笔记为单元：每篇笔记各自的复盘结果与回填表单
-  const [reviews, setReviews] = useState<Record<string, GrowthReview>>({});
-  const [metricsByDraft, setMetricsByDraft] = useState<Record<string, ReviewFormState>>({});
-  const [weeklyResult, setWeeklyResult] = useState<WeeklyReviewResult | null>(null);
-  const [screenshotEnabled, setScreenshotEnabled] = useState(false);
-  const [screenshotExtractions, setScreenshotExtractions] = useState<Record<string, ScreenshotExtractionState>>({});
-
-  const applyReviews = useCallback((reviewMap: Record<string, GrowthReview>, drafts: ContentDraft[]) => {
-    setReviews(reviewMap);
-    const forms: Record<string, ReviewFormState> = {};
-    for (const draft of drafts) {
-      forms[draft.id] = metricsToForm(reviewMap[draft.id]?.metrics);
-    }
-    setMetricsByDraft(forms);
-  }, []);
-
-  const loadWorkspace = useCallback(
-    async (p: GrowthPersona) => {
-      const res = await fetch(`/api/growth/bootstrap?persona=${p}`, { cache: "no-store" });
-      const data = await res.json();
-      if (res.status === 401) {
-        window.location.href = `/mianba/login?next=${encodeURIComponent("/mianba/growth")}`;
-        return;
-      }
-      const run: GrowthRun | null = (data.runs && data.runs[0]) || null;
-      const drafts: ContentDraft[] = data.drafts ?? [];
-      setState({ account: data.account ?? null, plan: data.plan ?? null, run, drafts });
-      setAccountForm(data.account ? toAccountForm(data.account) : null);
-      setEditing(false);
-      setAccountCardOpen(false);
-      setChosenDraft(drafts[0] || run?.draft || null);
-      setVariants([]);
-      setSelectedTopicId(run?.selected_topic?.id ?? null);
-      applyReviews((data.reviews ?? {}) as Record<string, GrowthReview>, drafts);
-      setWeeklyResult(
-        (data.weeklyReview ?? data.stageReview ?? data.account?.weekly_review ?? data.account?.stage_review ?? null) as WeeklyReviewResult | null,
+  const load = useCallback(async (nextBusinessLine: GrowthBusinessLine, nextPersona: GrowthPersona) => {
+    setBusy("load");
+    setMessage("");
+    try {
+      const next = await requestJSON<BootstrapData>(
+        `/api/growth/bootstrap?businessLine=${nextBusinessLine}&persona=${nextPersona}`,
       );
-      setScreenshotEnabled(Boolean(data.capabilities?.reviewScreenshot));
-    },
-    [applyReviews]
-  );
+      setData(next);
+      setForm(next.account ? accountForm(next.account) : { ...emptyAccount });
+      setVariants([]);
+      setActiveTopic(null);
+      setChosen(next.currentDrafts.find((draft) => draft.status === "ready") || null);
+      setTitleEdits({});
+      setSavingTitleId(null);
+      setExploreOpen({ native: false, benchmark: false });
+      setSourceEditorMethod(null);
+      setSource(emptySource);
+      setReviewDraft(null);
+      setReviewValues(emptyReview());
+      setReviewBaseline(emptyReview());
+      setPersonaOpen(false);
+      setPersonaEditing(false);
+      setBusinessEditOpen(false);
+    } catch (error) {
+      setMessage((error as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  }, []);
 
   useEffect(() => {
+    void load(businessLine, persona);
+  }, [businessLine, persona, load]);
+
+  const businessDefinition = GROWTH_BUSINESS_DEFINITIONS[businessLine];
+  const runs = useMemo(() => ({
+    default: data?.runs.find((run) => run.generation_mode === "default"),
+    explore: data?.runs.find((run) => run.generation_mode === "explore"),
+  }), [data?.runs]);
+  const defaultMethods = useMemo(
+    () => methodsForPersona(persona, "default", data?.account?.method_overrides),
+    [data?.account?.method_overrides, persona],
+  );
+  const exploreMethods = useMemo(
+    () => methodsForPersona(persona, "explore", data?.account?.method_overrides),
+    [data?.account?.method_overrides, persona],
+  );
+  const reviewDrafts = useMemo(
+    () => (data?.currentDrafts || []).filter((draft) =>
+      draft.schema_version !== "legacy_v1" && (draft.status === "published" || draft.status === "reviewed")),
+    [data?.currentDrafts],
+  );
+
+  function switchBusiness(next: GrowthBusinessLine) {
+    if (next === businessLine) return;
+    setData(null);
+    setBusinessLine(next);
+  }
+
+  function switchPersona(next: GrowthPersona) {
+    if (next === persona) return;
+    setData(null);
+    setPersona(next);
+  }
+
+  async function createPersona() {
+    setBusy("persona");
     setMessage("");
-    loadWorkspace(persona).catch((error) => setMessage((error as Error).message));
-  }, [persona, loadWorkspace]);
-
-  const showCopyMessage = useCallback((label: string) => {
-    setMessage(`${label}已复制`);
-  }, []);
-
-  const showCopyError = useCallback((label: string) => {
-    setMessage(`${label}复制失败，请手动选择文本`);
-  }, []);
-
-  async function run(label: string, action: () => Promise<void>, target = label) {
-    setBusy(target);
-    setMessage(`${label}中...`);
     try {
-      await action();
-      setMessage(`${label}完成`);
+      const result = await requestJSON<{ account: GrowthAccount; plan: GrowthPlan }>("/api/growth/bootstrap", {
+        method: "POST",
+        body: JSON.stringify({
+          businessLine,
+          persona,
+          accountName: form.name || "面霸君",
+          targetUser: form.target_user || undefined,
+          coreProblem: form.core_problem || undefined,
+          trustSource: form.trust_source || undefined,
+          regenerateAccountId: data?.account?.id,
+        }),
+      });
+      setData((current) => current ? { ...current, account: result.account, plan: result.plan || current.plan } : current);
+      setForm(accountForm(result.account));
+      setPersonaOpen(true);
+      setMessage("人设已合并更新，视角专属字段、高级业务事实与历史字段均已保留。");
     } catch (error) {
-      setMessage((error as Error).message || `${label}失败`);
+      setMessage((error as Error).message);
     } finally {
-      setBusy("");
+      setBusy(null);
     }
   }
 
-  async function createAccount(regenerate = false) {
-    await run(regenerate ? "系统生成定位卡" : "创建账号定位卡", async () => {
-      const res = await fetch("/api/growth/bootstrap", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          persona,
-          accountName: state.account?.name || `面霸君 · ${GROWTH_PERSONA_LABELS[persona]}`,
-          ...(regenerate && state.account ? { regenerateAccountId: state.account.id } : {}),
-        }),
-      });
-      if (!res.ok) throw new Error("生成定位卡失败");
-      await loadWorkspace(persona);
-    });
-  }
-
-  async function saveAccount() {
-    if (!state.account || !accountForm) return;
-    await run("保存定位卡", async () => {
-      const res = await fetch("/api/growth/account", {
+  async function savePersona() {
+    if (!data?.account) return;
+    setBusy("save-persona");
+    try {
+      const result = await requestJSON<{ account: GrowthAccount }>("/api/growth/account", {
         method: "PUT",
-        headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          id: state.account!.id,
-          name: accountForm.name,
-          one_liner: accountForm.one_liner,
-          target_user: accountForm.target_user,
-          core_problem: accountForm.core_problem,
-          account_value: accountForm.account_value,
-          follow_reason: accountForm.follow_reason,
-          trust_source: accountForm.trust_source,
-          not_doing: accountForm.not_doing,
-          content_directions: splitList(accountForm.content_directions, /\n/),
-          tone_style: accountForm.tone_style,
-          filter_words: splitList(accountForm.filter_words, /[,，、\n]/),
-          avoid_expressions: splitList(accountForm.avoid_expressions, /[,，、\n]/),
-          compliance_redline: accountForm.compliance_redline,
-          private_domain: accountForm.private_domain,
-          hypotheses: splitList(accountForm.hypotheses, /\n/),
-          persona_specific: accountForm.persona_specific,
+          id: data.account.id,
+          ...form,
+          hypotheses: lines(form.hypotheses),
+          filter_words: lines(form.filter_words),
+          avoid_expressions: lines(form.avoid_expressions),
+          persona_specific: form.persona_specific,
         }),
       });
-      if (!res.ok) throw new Error("保存定位卡失败");
-      await loadWorkspace(persona);
-    });
+      setData({ ...data, account: result.account });
+      setPersonaEditing(false);
+      setMessage("人设已保存。");
+    } catch (error) {
+      setMessage((error as Error).message);
+    } finally {
+      setBusy(null);
+    }
   }
 
-  async function addTopics() {
-    if (!state.account) return;
-    await run("生成 2 个选题", async () => {
-      const res = await fetch("/api/growth/topics", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ accountId: state.account!.id }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.message || data.error || "生成选题失败");
-      setState((current) => ({ ...current, run: data.run }));
-    });
+  function openSourceEditor(methodId: TitleMethodId) {
+    setSource({ ...emptySource, method_id: methodId });
+    setSourceEditorMethod(methodId);
   }
 
-  async function generateVariants(topic: TopicCandidate) {
-    if (!state.run) return;
-    setSelectedTopicId(topic.id);
-    await run("生成 2 篇正文", async () => {
-      const res = await fetch("/api/growth/drafts/variants", {
+  async function saveSource() {
+    if (!data?.account) return;
+    setBusy("source");
+    try {
+      const result = await requestJSON<{
+        source: TopicSourceSnapshot;
+        usable: boolean;
+        validation: { message: string };
+      }>("/api/growth/sources", {
         method: "POST",
-        headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          runId: state.run!.id,
-          topicId: topic.id,
-          excludeBodies: variants.map((v) => v.body),
+          ...source,
+          accountId: data.account.id,
+          published_at: new Date(source.published_at).toISOString(),
         }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.message || data.error || "生成正文失败");
-      setVariants(data.drafts || []);
-      setChosenDraft(null);
-    }, `生成正文:${topic.id}`);
+      await load(businessLine, persona);
+      setMessage(`${result.validation.message}；${result.usable ? "已进入近期可用池" : "当前不参与标题生成"}。`);
+    } catch (error) {
+      setMessage((error as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function refreshSource(sourceId: string, restricted: boolean) {
+    if (!data?.account) return;
+    const verified = restricted
+      ? window.confirm("该站点限制自动检测。你是否已人工打开并核对作者、时间与内容？")
+      : false;
+    setBusy(`source-${sourceId}`);
+    try {
+      const result = await requestJSON<{
+        source: TopicSourceSnapshot;
+        usable: boolean;
+        validation: { message: string };
+      }>(`/api/growth/sources/${sourceId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ accountId: data.account.id, verified_by_operator: verified }),
+      });
+      await load(businessLine, persona);
+      setMessage(`${result.validation.message}；${result.usable ? "可参与生成" : "不参与生成"}。`);
+    } catch (error) {
+      setMessage((error as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function generateTopics(mode: MethodGenerationMode, group?: TitleMethodGroup) {
+    if (!data?.account) return;
+    setBusy(`topics-${mode}`);
+    if (group) setExploreOpen((current) => ({ ...current, [group]: true }));
+    try {
+      const result = await requestJSON<{ run: GrowthRun; unavailableMethods: GrowthRun["unavailable_methods"] }>(
+        "/api/growth/topics",
+        { method: "POST", body: JSON.stringify({ accountId: data.account.id, generationMode: mode }) },
+      );
+      setData((current) => current ? {
+        ...current,
+        runs: [result.run, ...current.runs.filter((run) => run.id !== result.run.id)],
+      } : current);
+      setVariants([]);
+      setActiveTopic(null);
+      setChosen(null);
+      setTitleEdits({});
+      setMessage(`已生成${result.run.topic_pool.length}个标题；${result.unavailableMethods?.length || 0}个方法因来源不足暂停。`);
+    } catch (error) {
+      setMessage((error as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  function changeTopicTitle(topic: TopicCandidate, title: string) {
+    const limitedTitle = Array.from(title).slice(0, 20).join("");
+    setTitleEdits((current) => ({ ...current, [topic.id]: limitedTitle }));
+    if (activeTopic?.topic.id === topic.id) setActiveTopic(null);
+    setVariants([]);
+    setChosen(null);
+  }
+
+  async function persistTopicTitle(run: GrowthRun, topic: TopicCandidate, title: string) {
+    const nextTitle = title.trim();
+    if (!nextTitle) throw new Error("标题不能为空");
+    if (nextTitle === topic.title) return { run, topic };
+    const result = await requestJSON<{ run: GrowthRun; topic: TopicCandidate }>("/api/growth/topics", {
+      method: "PATCH",
+      body: JSON.stringify({ runId: run.id, topicId: topic.id, title: nextTitle }),
+    });
+    setData((current) => current ? {
+      ...current,
+      runs: current.runs.map((item) => item.id === result.run.id ? result.run : item),
+    } : current);
+    setTitleEdits((current) => {
+      const next = { ...current };
+      delete next[topic.id];
+      return next;
+    });
+    return result;
+  }
+
+  async function saveTopicTitle(run: GrowthRun, topic: TopicCandidate, title: string) {
+    if (!title.trim() || title.trim() === topic.title) return;
+    setSavingTitleId(topic.id);
+    try {
+      await persistTopicTitle(run, topic, title);
+      setMessage("标题修改已保存，生成正文时会使用新标题。");
+    } catch (error) {
+      setMessage((error as Error).message);
+    } finally {
+      setSavingTitleId(null);
+    }
+  }
+
+  async function generateBodies(run: GrowthRun, topic: TopicCandidate) {
+    setBusy(`body-${topic.id}`);
+    setVariants([]);
+    setChosen(null);
+    try {
+      const editedTitle = titleEdits[topic.id] ?? topic.title;
+      const saved = await persistTopicTitle(run, topic, editedTitle);
+      setActiveTopic(saved);
+      const result = await requestJSON<{ drafts: ContentDraft[] }>("/api/growth/drafts/variants", {
+        method: "POST",
+        body: JSON.stringify({ runId: saved.run.id, topicId: saved.topic.id }),
+      });
+      setVariants(result.drafts);
+      setMessage("短版和长版已生成，两版使用同一核心判断。");
+    } catch (error) {
+      setMessage((error as Error).message);
+    } finally {
+      setBusy(null);
+    }
   }
 
   async function chooseDraft(draft: ContentDraft) {
-    await run("选定这篇正文", async () => {
-      const res = await fetch("/api/growth/drafts/choose", {
+    setBusy(`choose-${draft.id}`);
+    try {
+      const result = await requestJSON<{ draft: ContentDraft }>("/api/growth/drafts/choose", {
         method: "POST",
-        headers: { "content-type": "application/json" },
         body: JSON.stringify({ draft }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.message || data.error || "选定失败");
-      setChosenDraft(data.draft);
-      setVariants([]);
-      await loadWorkspaceKeepChosen(data.draft);
-    }, `选正文:${draft.id}`);
+      await load(businessLine, persona);
+      setChosen(result.draft);
+      setMessage("已选定最终正文；开放标签会在后台只依据这个版本生成。");
+    } catch (error) {
+      setMessage((error as Error).message);
+    } finally {
+      setBusy(null);
+    }
   }
 
-  async function loadWorkspaceKeepChosen(draft: ContentDraft) {
-    const res = await fetch(`/api/growth/bootstrap?persona=${persona}`, { cache: "no-store" });
-    const data = await res.json();
-    const run2: GrowthRun | null = (data.runs && data.runs[0]) || null;
-    const drafts: ContentDraft[] = data.drafts ?? [];
-    setState({ account: data.account ?? null, plan: data.plan ?? null, run: run2, drafts });
-    setChosenDraft(draft);
-    applyReviews((data.reviews ?? {}) as Record<string, GrowthReview>, drafts);
-    setWeeklyResult(
-      (data.weeklyReview ?? data.stageReview ?? data.account?.weekly_review ?? data.account?.stage_review ?? null) as WeeklyReviewResult | null,
-    );
-    setScreenshotEnabled(Boolean(data.capabilities?.reviewScreenshot));
-  }
-
-  async function markPublishedNote(draft: ContentDraft, publishedAt: string) {
-    await run("标记已发布", async () => {
-      const parsedPublishedAt = new Date(publishedAt);
-      if (!Number.isFinite(parsedPublishedAt.getTime())) throw new Error("请填写正确的实际发布时间");
-      const res = await fetch(`/api/growth/drafts/${draft.id}/publish`, {
+  async function markPublished(draft: ContentDraft, publishedAt: string) {
+    setBusy(`publish-${draft.id}`);
+    try {
+      await requestJSON(`/api/growth/drafts/${draft.id}/publish`, {
         method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ published_at: parsedPublishedAt.toISOString() }),
+        body: JSON.stringify({ published_at: new Date(publishedAt).toISOString() }),
       });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.message || data.error || "标记发布失败");
-      await loadWorkspaceKeepChosen(chosenDraft ?? draft);
-    }, `发布:${draft.id}`);
+      await load(businessLine, persona);
+      setMessage("已记录实际发布时间，这篇内容已进入单篇复盘；满24小时后可保存复盘数据。");
+    } catch (error) {
+      setMessage((error as Error).message);
+    } finally {
+      setBusy(null);
+    }
   }
 
-  async function submitReviewNote(draft: ContentDraft) {
-    await run("提交复盘", async () => {
-      const payload = formToMetricsPayload(metricsByDraft[draft.id] ?? emptyReviewForm);
-      const res = await fetch(`/api/growth/drafts/${draft.id}/review`, {
+  function openReview(draft: ContentDraft) {
+    const values = reviewForm(data?.reviews[draft.id]);
+    setReviewDraft(draft);
+    setReviewValues(values);
+    setReviewBaseline({ ...values });
+  }
+
+  async function extractScreenshot(files: FileList | null) {
+    if (!files?.length) return;
+    setBusy("extract");
+    try {
+      const images = await Promise.all([...files].slice(0, 6).map((file) =>
+        new Promise<{ dataUrl: string; name: string }>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve({ dataUrl: String(reader.result), name: file.name });
+          reader.onerror = reject;
+          reader.readAsDataURL(file);
+        })));
+      const result = await requestJSON<{ prefill: Record<string, number> }>("/api/growth/reviews/extract", {
         method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.message || data.error || "提交复盘失败");
-      setReviews((prev) => ({ ...prev, [draft.id]: data.review }));
-      if (data.weeklyReview) setWeeklyResult(data.weeklyReview);
-      await loadWorkspaceKeepChosen(chosenDraft ?? draft);
-    }, `复盘:${draft.id}`);
-  }
-
-  function updateReviewForm(draftId: string, patch: Partial<ReviewFormState>) {
-    setMetricsByDraft((prev) => ({
-      ...prev,
-      [draftId]: { ...(prev[draftId] ?? emptyReviewForm), ...patch },
-    }));
-  }
-
-  async function extractReviewScreenshots(draft: ContentDraft, files: File[]) {
-    await run("识别数据截图", async () => {
-      if (files.length < 1 || files.length > 6) throw new Error("请选择1到6张截图");
-      const images = await Promise.all(files.map(compressReviewScreenshot));
-      const res = await fetch("/api/growth/reviews/extract", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
         body: JSON.stringify({ images }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.message || data.error || "截图识别失败");
-      const prefill = data.prefill as Partial<GrowthReviewMetrics>;
-      updateReviewForm(draft.id, {
-        impressions: num(prefill.impressions) || metricsByDraft[draft.id]?.impressions || "",
-        reads: num(prefill.reads) || metricsByDraft[draft.id]?.reads || "",
-        average_view_seconds:
-          num(prefill.average_view_seconds) || metricsByDraft[draft.id]?.average_view_seconds || "",
-        likes: num(prefill.likes) || metricsByDraft[draft.id]?.likes || "",
-        saves: num(prefill.saves) || metricsByDraft[draft.id]?.saves || "",
-        comments: num(prefill.comments) || metricsByDraft[draft.id]?.comments || "",
-        shares: num(prefill.shares) || metricsByDraft[draft.id]?.shares || "",
-        follows: num(prefill.follows) || metricsByDraft[draft.id]?.follows || "",
-        search_keywords: (prefill.search_keywords ?? []).join("，") || metricsByDraft[draft.id]?.search_keywords || "",
-        traffic_sources: prefill.traffic_sources || metricsByDraft[draft.id]?.traffic_sources,
-        audience: prefill.audience || metricsByDraft[draft.id]?.audience,
-        input_source: "mixed",
-      });
-      setScreenshotExtractions((current) => ({
+      setReviewValues((current) => ({
         ...current,
-        [draft.id]: { confidence: data.confidence ?? {}, warnings: data.warnings ?? [] },
+        ...Object.fromEntries(Object.entries(result.prefill).map(([key, value]) => [key, String(value)])),
       }));
-    }, `截图:${draft.id}`);
+      setMessage("截图中高置信度字段已预填，请人工核对后保存。");
+    } catch (error) {
+      setMessage((error as Error).message);
+    } finally {
+      setBusy(null);
+    }
   }
 
-  async function generateWeeklyReview() {
-    if (!account) return;
-    await run("生成周复盘", async () => {
-      const res = await fetch("/api/growth/weekly-review", {
+  async function submitReview() {
+    if (!reviewDraft || !data) return;
+    const existing = data.reviews[reviewDraft.id];
+    const changed = changedKeys(reviewValues, reviewBaseline);
+    const payload: Record<string, unknown> = {};
+    const keys = existing ? changed : Object.keys(reviewValues);
+    for (const key of keys) {
+      const value = reviewValues[key];
+      if (value === "") continue;
+      payload[key] = numericReviewFields.some(([item]) => item === key) ? Number(value) : value;
+    }
+    if (!existing) payload.input_source = "manual";
+    setBusy(`review-${reviewDraft.id}`);
+    try {
+      const result = await requestJSON<{ changedFields: string[] }>(
+        `/api/growth/drafts/${reviewDraft.id}/review`,
+        { method: existing ? "PATCH" : "POST", body: JSON.stringify(payload) },
+      );
+      setReviewDraft(null);
+      await load(businessLine, persona);
+      setMessage(`复盘已保存；本次更新：${result.changedFields.join("、") || "无指标变化"}。`);
+    } catch (error) {
+      setMessage((error as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function runWeeklyReview() {
+    if (!data?.account) return;
+    setBusy("weekly");
+    try {
+      await requestJSON("/api/growth/weekly-review", {
         method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ accountId: account.id }),
+        body: JSON.stringify({ accountId: data.account.id, snapshot: true }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.message || data.error || "生成周复盘失败");
-      setWeeklyResult(data.result);
-      setState((current) => ({
-        ...current,
-        account: current.account
-          ? { ...current.account, weekly_review: data.result, stage_review: data.result }
-          : current.account,
-      }));
-    });
+      await load(businessLine, persona);
+      setMessage("已保存固定周期快照；实时汇总不会覆盖上一周期。");
+    } catch (error) {
+      setMessage((error as Error).message);
+    } finally {
+      setBusy(null);
+    }
   }
 
-  const account = state.account;
-  const topicPool = state.run?.topic_pool ?? [];
+  if (busy === "load" && !data) {
+    return <main className="mx-auto max-w-6xl p-8 text-center text-slate-500">正在载入本地脱敏预览…</main>;
+  }
 
   return (
-    <main className="mianba-workspace min-h-screen px-5 py-8 text-ink-900 md:px-8">
-      <header className="mb-6 flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
-        <div>
-          <div className="mb-3 text-xs tracking-[0.35em] text-gold-700">小红书内容工厂</div>
-          <h1 className="serif text-4xl leading-tight md:text-5xl">小红书笔记</h1>
-          <p className="mt-3 max-w-2xl text-sm leading-6 text-ink-600">
-            账号定位卡 → 选题 → 正文 → 24小时单篇复盘 → 周复盘。人工确认后复制发布，系统不自动发帖。
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <a className="rounded-full bg-white px-4 py-2 text-sm text-ink-600 shadow-sm" href="/mianba">
-            返回首页
-          </a>
-          <button
-            className="rounded-full bg-white px-4 py-2 text-sm text-ink-600 shadow-sm"
-            onClick={async () => {
-              await fetch("/api/mianba/auth/logout", { method: "POST" });
-              window.location.href = "/mianba/login";
-            }}
-          >
-            退出登录
-          </button>
-          <div className="rounded-full bg-ink-900 px-4 py-2 text-sm text-white shadow-sm">
-            {message || "就绪"}
+    <main className="mianba-workspace min-h-screen bg-[#f7f6f3] text-slate-900">
+      <div className="mx-auto max-w-6xl px-4 py-6 sm:px-6 sm:py-10">
+        {data?.preview.enabled && (
+          <div className="mb-5 flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-amber-300 bg-amber-50 px-5 py-3 text-sm text-amber-950">
+            <b>{data.preview.banner}</b>
+            <span>生产 Supabase 未连接 · Vercel 零写入</span>
           </div>
-        </div>
-      </header>
+        )}
 
-      <div className="mb-6 flex flex-wrap gap-2">
-        {GROWTH_PERSONAS.map((p) => (
-          <button
-            key={p}
-            onClick={() => setPersona(p)}
-            className={
-              "rounded-full px-5 py-2 text-sm font-semibold transition " +
-              (persona === p ? "bg-ink-900 text-white" : "bg-white text-ink-600 shadow-sm")
-            }
-          >
-            {GROWTH_PERSONA_LABELS[p]}
-          </button>
-        ))}
-      </div>
-
-      {/* Step 1 账号定位卡 */}
-      <StepCard step="1" title="账号定位卡" desc="可编辑，随时调整目标用户、核心问题和账号价值。">
-        {!account ? (
+        <header className="mb-8 flex flex-col gap-5 md:flex-row md:items-end md:justify-between">
           <div>
-            <p className="text-sm leading-6 text-ink-600">
-              当前视角「{GROWTH_PERSONA_LABELS[persona]}」还没有定位卡。
+            <div className="text-xs font-semibold tracking-[0.24em] text-slate-500">小红书内容工厂</div>
+            <h1 className="serif mt-3 text-4xl leading-tight md:text-5xl">小红书笔记</h1>
+            <p className="mt-3 max-w-3xl text-sm leading-7 text-slate-600">
+              业务定位 → 三家视角 → 人设 → 选题 → 正文 → 24小时单篇复盘 → 周复盘。人工确认后复制发布，系统不自动发帖。
             </p>
-            <button className="btn-primary mt-4" disabled={!!busy} onClick={() => createAccount()}>
-              {busy === "创建账号定位卡" ? "生成中..." : "生成账号定位卡"}
-            </button>
           </div>
-        ) : editing && accountForm ? (
-          <div className="space-y-3">
-            <div className="text-xs font-semibold text-gold-700">基础定位</div>
-            <EditField label="账号名称" value={accountForm.name} onChange={(v) => setAccountForm({ ...accountForm, name: v })} />
-            <EditField label="一句话定位（10-20 字）" value={accountForm.one_liner} onChange={(v) => setAccountForm({ ...accountForm, one_liner: v })} />
-
-            <div className="pt-2 text-xs font-semibold text-gold-700">用户与价值</div>
-            <EditArea label="目标用户" value={accountForm.target_user} onChange={(v) => setAccountForm({ ...accountForm, target_user: v })} />
-            <EditArea label="最痛的问题 / 在为什么付代价" value={accountForm.core_problem} onChange={(v) => setAccountForm({ ...accountForm, core_problem: v })} />
-            <EditArea label="账号价值" value={accountForm.account_value} onChange={(v) => setAccountForm({ ...accountForm, account_value: v })} />
-            <EditArea label="关注理由" value={accountForm.follow_reason} onChange={(v) => setAccountForm({ ...accountForm, follow_reason: v })} />
-
-            <div className="pt-2 text-xs font-semibold text-gold-700">信任与边界</div>
-            <EditArea label="信任来源（创始人凭什么讲）" value={accountForm.trust_source} onChange={(v) => setAccountForm({ ...accountForm, trust_source: v })} />
-            <EditArea label="不做什么（排除带）" value={accountForm.not_doing} onChange={(v) => setAccountForm({ ...accountForm, not_doing: v })} />
-            <EditArea label="合规红线" value={accountForm.compliance_redline} onChange={(v) => setAccountForm({ ...accountForm, compliance_redline: v })} />
-
-            <div className="pt-2 text-xs font-semibold text-gold-700">内容策略</div>
-            <EditArea label="3 个内容方向（每行一个）" value={accountForm.content_directions} onChange={(v) => setAccountForm({ ...accountForm, content_directions: v })} />
-            <EditField label="语气与风格" value={accountForm.tone_style} onChange={(v) => setAccountForm({ ...accountForm, tone_style: v })} />
-            <EditField label="必须出现的筛选词（顿号/逗号分隔）" value={accountForm.filter_words} onChange={(v) => setAccountForm({ ...accountForm, filter_words: v })} />
-            <EditField label="要避免的表达（顿号/逗号分隔）" value={accountForm.avoid_expressions} onChange={(v) => setAccountForm({ ...accountForm, avoid_expressions: v })} />
-
-            <div className="pt-2 text-xs font-semibold text-gold-700">{GROWTH_PERSONA_LABELS[persona]}视角专属</div>
-            {PERSONA_SPECIFIC_FIELDS[persona].map((field) => (
-              <EditField
-                key={field.key}
-                label={field.label}
-                value={accountForm.persona_specific[field.key] ?? ""}
-                onChange={(v) =>
-                  setAccountForm({
-                    ...accountForm,
-                    persona_specific: { ...accountForm.persona_specific, [field.key]: v },
-                  })
-                }
-              />
-            ))}
-
-            <div className="pt-2 text-xs font-semibold text-gold-700">实验管理</div>
-            <EditArea label="30 天待验证假设（每行一个）" value={accountForm.hypotheses} onChange={(v) => setAccountForm({ ...accountForm, hypotheses: v })} />
-            <EditArea label="私域承接方式（可选）" value={accountForm.private_domain} onChange={(v) => setAccountForm({ ...accountForm, private_domain: v })} />
-
-            <div className="flex gap-3 pt-2">
-              <button className="btn-primary" disabled={!!busy} onClick={saveAccount}>
-                {busy === "保存定位卡" ? "保存中..." : "保存"}
-              </button>
-              <button className="rounded-full bg-ink-100 px-4 py-3 text-sm font-semibold text-ink-700" onClick={() => { setEditing(false); setAccountForm(toAccountForm(account)); }}>取消</button>
-            </div>
+          <div className="flex flex-wrap gap-2">
+            <a className="rounded-full bg-white px-4 py-2 text-sm text-slate-600 shadow-sm" href="/mianba">返回首页</a>
+            <MianbaLogoutButton className="rounded-full bg-white px-4 py-2 text-sm text-slate-600 shadow-sm disabled:opacity-50" />
+            <span className="rounded-full bg-slate-900 px-4 py-2 text-sm text-white">就绪</span>
           </div>
-        ) : (
-          <div className="space-y-3 text-sm leading-6 text-ink-700">
-            {account.one_liner && <Field label="一句话定位" value={account.one_liner} />}
-            {!account.one_liner && <Field label="账号名称" value={account.name} />}
-            <div className="rounded-2xl bg-ink-50 p-3 text-xs leading-5 text-ink-600">
-              定位卡平时默认收起，需要调整定位、查看三问或专属字段时再展开。
-            </div>
-            {accountCardOpen && (
-              <>
-                <Field label="目标用户" value={account.target_user} />
-                <Field label="最痛的问题" value={account.core_problem} />
-                <Field label="账号价值" value={account.account_value} />
-                {account.follow_reason && <Field label="关注理由" value={account.follow_reason} />}
-                <Field label="信任来源" value={account.trust_source} />
-                <Field label="不做什么" value={account.not_doing} />
-                {account.content_directions && account.content_directions.length > 0 && (
-                  <Field label="内容方向" value={account.content_directions.join(" / ")} />
-                )}
-                {account.tone_style && <Field label="语气风格" value={account.tone_style} />}
-                {account.persona_specific &&
-                  PERSONA_SPECIFIC_FIELDS[persona].map((field) =>
-                    account.persona_specific?.[field.key] ? (
-                      <Field key={field.key} label={field.label} value={account.persona_specific[field.key]} />
-                    ) : null
-                  )}
-              </>
-            )}
-            <div className="flex flex-wrap gap-3 pt-2">
-              <button
-                className="rounded-full bg-ink-100 px-4 py-3 text-sm font-semibold text-ink-700"
-                onClick={() => setAccountCardOpen((v) => !v)}
-              >
-                {accountCardOpen ? "收起定位卡" : "展开定位卡"}
-              </button>
-              <button
-                className="btn-primary"
-                onClick={() => {
-                  setAccountForm(toAccountForm(account));
-                  setAccountCardOpen(true);
-                  setEditing(true);
-                }}
-              >
-                编辑定位卡
-              </button>
-              <button className="rounded-full bg-ink-100 px-4 py-3 text-sm font-semibold text-ink-700" disabled={!!busy} onClick={() => createAccount(true)}>
-                {busy === "系统生成定位卡" ? "生成中..." : "系统生成"}
-              </button>
-            </div>
-          </div>
+        </header>
+
+        {message && (
+          <div className="mb-6 rounded-2xl border border-[#ead7b5] bg-[#fffaf0] px-5 py-3 text-sm">{message}</div>
         )}
-      </StepCard>
 
-      {/* Step 2 选题 */}
-      <StepCard step="2" title="选题">
-        <button className="btn-primary" disabled={!!busy || !account} onClick={addTopics}>
-          {busy === "生成 2 个选题" ? "生成中..." : "生成 2 个选题"}
-        </button>
-        {topicPool.length > 0 && (
-          <div className="mt-4 grid gap-3 md:grid-cols-2">
-            {topicPool.map((topic) => (
-              <div
-                key={topic.id}
-                className={
-                  "rounded-2xl border p-4 " +
-                  (selectedTopicId === topic.id ? "border-gold-400 bg-gold-50/50" : "border-ink-100")
-                }
-              >
-                <div className="mb-2 flex items-center gap-2 text-xs text-ink-500">
-                  <span>方向 {topic.direction} · {DIRECTION_LABELS[topic.direction] ?? ""}</span>
-                  <span>·</span>
-                  <span>{CONTENT_TYPE_LABELS[topic.content_type] ?? topic.content_type}</span>
-                  {topic.weekly_action && <span>· {WEEKLY_ACTION_LABELS[topic.weekly_action]}</span>}
-                </div>
-                <div className="font-medium leading-6">{topic.title}</div>
-                <p className="mt-1 text-xs leading-5 text-ink-500">验证变量：{topic.test_variable}</p>
-                {topic.evidence && <p className="mt-1 text-xs leading-5 text-ink-500">生成依据：{topic.evidence}</p>}
-                <div className="mt-3 flex flex-wrap gap-2">
-                  <button className="btn-primary" disabled={!!busy} onClick={() => generateVariants(topic)}>
-                    {busy === `生成正文:${topic.id}` ? "生成中..." : "用这个选题写正文"}
-                  </button>
-                  <CopyButton text={topic.title} label="复制标题" onCopied={showCopyMessage} onCopyFailed={showCopyError} />
-                </div>
+        {data && (
+          <div className="space-y-6">
+            <Section
+              number="0"
+              title="先选业务定位"
+              subtitle="先决定服务哪条业务。切换后，人设、来源、标题、正文和复盘都会进入对应业务空间。"
+            >
+              <div className="grid gap-4 md:grid-cols-2">
+                {GROWTH_BUSINESS_LINES.map((item) => {
+                  const definition = GROWTH_BUSINESS_DEFINITIONS[item];
+                  const active = item === businessLine;
+                  return (
+                    <button
+                      type="button"
+                      key={item}
+                      onClick={() => switchBusiness(item)}
+                      className={`rounded-2xl border p-5 text-left transition ${active ? "border-[#d8a95b] bg-[#fffaf0] shadow-sm" : "border-slate-200 bg-white hover:border-slate-300"}`}
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="text-lg font-semibold">{definition.label}</div>
+                        {active && <span className="rounded-full bg-slate-900 px-3 py-1 text-xs text-white">当前业务</span>}
+                      </div>
+                      <div className="mt-2 text-sm text-slate-600">{definition.summary}</div>
+                      <div className="mt-2 text-xs leading-5 text-slate-500">服务：{definition.service}</div>
+                    </button>
+                  );
+                })}
               </div>
-            ))}
-          </div>
-        )}
-      </StepCard>
 
-      {/* Step 3 正文 */}
-      <StepCard step="3" title="正文">
-        {variants.length > 0 && (
-          <div className="grid gap-4 md:grid-cols-2">
-            {variants.map((draft, index) => (
-              <div key={draft.id} className="rounded-2xl border border-ink-100 p-4">
-                <div className="mb-2 text-xs text-gold-700">方案 {index + 1} · 只测试「{draft.test_variable}」（{draft.word_count.total} 字）</div>
-                <div className="font-medium leading-6">{draft.title}</div>
-                <pre className="mt-3 max-h-64 overflow-auto whitespace-pre-wrap rounded-xl bg-ink-50 p-3 text-xs leading-6 text-ink-700">{draft.body}</pre>
-                <div className="mt-2 text-xs text-ink-500">字数：{draft.word_count.total} / {draft.word_count.within_limit ? "≤1000 通过" : "超限"}</div>
-                <ComplianceStatus draft={draft} />
-                <div className="mt-3 flex flex-wrap gap-2">
-                  <button className="btn-primary" disabled={!!busy || draftIsBlocked(draft)} onClick={() => chooseDraft(draft)}>
-                    {busy === `选正文:${draft.id}` ? "选定中..." : "选这篇"}
-                  </button>
-                  <CopyButton text={draft.title} label="复制标题" disabled={draftIsBlocked(draft)} onCopied={showCopyMessage} onCopyFailed={showCopyError} />
-                  <CopyButton
-                    text={`${draft.body}\n\n${draft.hashtags.join(" ")}`}
-                    label="复制正文+话题"
-                    disabled={draftIsBlocked(draft)}
-                    onCopied={showCopyMessage}
-                    onCopyFailed={showCopyError}
-                  />
+              <div className="mt-5 rounded-2xl border border-slate-200 bg-white p-5">
+                <div className="flex flex-wrap items-start justify-between gap-4">
+                  <div>
+                    <div className="text-xs font-semibold tracking-wider text-slate-500">当前业务母定位</div>
+                    <h3 className="mt-2 text-xl font-semibold">{businessDefinition.label}</h3>
+                    <p className="mt-2 text-sm text-slate-600">{businessDefinition.target}</p>
+                  </div>
+                  <SecondaryButton onClick={() => setBusinessEditOpen((open) => !open)}>调整业务定位</SecondaryButton>
                 </div>
-              </div>
-            ))}
-          </div>
-        )}
-        {selectedTopicId && (
-          <button
-            className="rounded-full bg-ink-100 px-4 py-3 text-sm font-semibold text-ink-700 mt-4"
-            disabled={!!busy}
-            onClick={() => {
-              const topic = topicPool.find((t) => t.id === selectedTopicId);
-              if (topic) generateVariants(topic);
-            }}
-          >
-            {busy === `生成正文:${selectedTopicId}` ? "生成中..." : "再生成 2 篇新的"}
-          </button>
-        )}
-        {chosenDraft && variants.length === 0 && (
-          <div className="rounded-2xl border border-gold-300 bg-gold-50/40 p-4">
-            <div className="mb-2 text-xs text-gold-700">已选定正文（状态：{DRAFT_STATUS_LABELS[chosenDraft.status] ?? chosenDraft.status}）</div>
-            <div className="font-medium leading-6">{chosenDraft.title}</div>
-            <pre className="mt-3 max-h-72 overflow-auto whitespace-pre-wrap rounded-xl bg-white p-3 text-sm leading-7 text-ink-800">{chosenDraft.body}{"\n\n"}{chosenDraft.hashtags.join(" ")}</pre>
-            <ComplianceStatus draft={chosenDraft} />
-            <div className="mt-3 flex flex-wrap gap-2">
-              <CopyButton text={chosenDraft.title} label="复制标题" disabled={draftIsBlocked(chosenDraft)} onCopied={showCopyMessage} onCopyFailed={showCopyError} />
-              <CopyButton
-                text={`${chosenDraft.body}\n\n${chosenDraft.hashtags.join(" ")}`}
-                label="复制正文+话题"
-                disabled={draftIsBlocked(chosenDraft)}
-                onCopied={showCopyMessage}
-                onCopyFailed={showCopyError}
-              />
-              <CopyButton text={chosenDraft.hashtags.join(" ")} label="复制话题" disabled={draftIsBlocked(chosenDraft)} onCopied={showCopyMessage} onCopyFailed={showCopyError} />
-            </div>
-            {(chosenDraft.cover_text || chosenDraft.cover_suggestion) && (
-              <div className="mt-4 rounded-xl bg-white/70 p-3 text-sm leading-6 text-ink-700">
-                <div className="mb-1 text-xs font-medium text-gold-700">封面文案（自己做图时参考）</div>
-                {chosenDraft.cover_text && <div>封面句：{chosenDraft.cover_text}</div>}
-                {chosenDraft.cover_suggestion && <div className="mt-1 text-xs text-ink-500">画面建议：{chosenDraft.cover_suggestion}</div>}
-                {chosenDraft.cover_text && (
-                  <div className="mt-2">
-                    <CopyButton text={chosenDraft.cover_text} label="复制封面句" disabled={draftIsBlocked(chosenDraft)} onCopied={showCopyMessage} onCopyFailed={showCopyError} />
+                <div className="mt-5 grid gap-4 md:grid-cols-3">
+                  <MotherFact label="你是什么（品类）" value={businessDefinition.category} />
+                  <MotherFact label="有何不同" value={businessDefinition.difference} />
+                  <MotherFact label="何以见得（信任来源）" value={businessDefinition.trust} />
+                </div>
+                {businessEditOpen && (
+                  <div className="mt-5 rounded-xl bg-slate-50 p-4 text-sm leading-6 text-slate-600">
+                    本地预览沿用线上两条业务母定位。本轮可检查信息结构；正式编辑仍走现有业务定位保存接口，不写生产数据。
                   </div>
                 )}
               </div>
+            </Section>
+
+            <Section
+              number="1"
+              title="选择商家 / 买家 / 专家视角"
+              subtitle="同一业务下三种内容身份彼此隔离。切换视角会清空上一视角未保存的标题、正文和复盘表单。"
+            >
+              <div className="grid gap-3 md:grid-cols-3">
+                {GROWTH_PERSONAS.map((item) => {
+                  const view = businessDefinition.personas[item];
+                  const active = persona === item;
+                  return (
+                    <button
+                      type="button"
+                      key={item}
+                      onClick={() => switchPersona(item)}
+                      className={`rounded-2xl border p-4 text-left ${active ? "border-slate-900 bg-slate-900 text-white" : "border-slate-200 bg-white text-slate-800"}`}
+                    >
+                      <div className={`text-xs font-semibold ${active ? "text-amber-200" : "text-slate-500"}`}>
+                        {GROWTH_PERSONA_LABELS[item]}
+                      </div>
+                      <div className="mt-1 font-semibold">{view.role}</div>
+                      <div className={`mt-2 text-xs leading-5 ${active ? "text-slate-300" : "text-slate-500"}`}>{view.description}</div>
+                    </button>
+                  );
+                })}
+              </div>
+            </Section>
+
+            <Section
+              number="2"
+              title={`${businessDefinition.personas[persona].role}人设`}
+              subtitle={`继承「${businessDefinition.label}」母定位；默认收起，只展示一句话人设。`}
+            >
+              <div className="rounded-2xl bg-slate-50 p-4">
+                <div className="text-xs font-medium text-slate-500">一句话人设</div>
+                <div className="mt-2 text-lg font-semibold">{form.one_liner || "尚未生成"}</div>
+                <div className="mt-4 flex flex-wrap gap-2">
+                  <SecondaryButton onClick={() => setPersonaOpen((open) => !open)}>
+                    {personaOpen ? "收起人设" : "展开人设"}
+                  </SecondaryButton>
+                  <SecondaryButton onClick={() => { setPersonaOpen(true); setPersonaEditing(true); }}>编辑人设</SecondaryButton>
+                  <PrimaryButton disabled={Boolean(busy)} onClick={createPersona}>系统生成人设</PrimaryButton>
+                </div>
+              </div>
+
+              {personaOpen && data.account && (
+                <div className="mt-5">
+                  {personaEditing ? (
+                    <div className="grid gap-4 md:grid-cols-2">
+                      <TextInput label="人设名称" value={form.name} onChange={(value) => setForm({ ...form, name: value })} />
+                      <TextInput label="一句话人设" value={form.one_liner} onChange={(value) => setForm({ ...form, one_liner: value })} />
+                      <TextArea label="目标人群" value={form.target_user} onChange={(value) => setForm({ ...form, target_user: value })} />
+                      <TextArea label="核心问题" value={form.core_problem} onChange={(value) => setForm({ ...form, core_problem: value })} />
+                      <TextArea label="持续提供的价值" value={form.account_value} onChange={(value) => setForm({ ...form, account_value: value })} />
+                      <TextArea label="信任来源" value={form.trust_source} onChange={(value) => setForm({ ...form, trust_source: value })} />
+                      <TextArea label="不做什么" value={form.not_doing} onChange={(value) => setForm({ ...form, not_doing: value })} />
+                      <TextArea label="合规红线" value={form.compliance_redline} onChange={(value) => setForm({ ...form, compliance_redline: value })} />
+                    </div>
+                  ) : (
+                    <div className="grid gap-4 md:grid-cols-2">
+                      <PersonFact label="目标人群" value={form.target_user} />
+                      <PersonFact label="核心问题" value={form.core_problem} />
+                      <PersonFact label="持续提供的价值" value={form.account_value} />
+                      <PersonFact label="信任来源" value={form.trust_source} />
+                    </div>
+                  )}
+
+                  <h3 className="mt-6 font-semibold">{GROWTH_PERSONA_LABELS[persona]}视角专属字段</h3>
+                  <div className="mt-3 grid gap-4 md:grid-cols-2">
+                    {PERSONA_SPECIFIC_FIELDS[persona].map((field) => personaEditing ? (
+                      <TextArea
+                        key={field.key}
+                        label={field.label}
+                        value={form.persona_specific[field.key] || ""}
+                        onChange={(value) => setForm({
+                          ...form,
+                          persona_specific: { ...form.persona_specific, [field.key]: value },
+                        })}
+                        placeholder={field.placeholder}
+                      />
+                    ) : (
+                      <PersonFact key={field.key} label={field.label} value={form.persona_specific[field.key] || "未填写"} />
+                    ))}
+                  </div>
+
+                  <details className="mt-5 rounded-2xl border border-slate-200">
+                    <summary className="cursor-pointer p-4 font-medium">高级业务事实</summary>
+                    <div className="grid gap-4 px-4 pb-4 md:grid-cols-2">
+                      {personaEditing ? (
+                        <>
+                          <TextArea label="业务假设（每行一条）" value={form.hypotheses} onChange={(value) => setForm({ ...form, hypotheses: value })} />
+                          <TextArea label="过滤词" value={form.filter_words} onChange={(value) => setForm({ ...form, filter_words: value })} />
+                          <TextArea label="禁用表达" value={form.avoid_expressions} onChange={(value) => setForm({ ...form, avoid_expressions: value })} />
+                          <TextArea label="私域承接边界" value={form.private_domain} onChange={(value) => setForm({ ...form, private_domain: value })} />
+                        </>
+                      ) : (
+                        <>
+                          <PersonFact label="业务假设" value={form.hypotheses || "未填写"} />
+                          <PersonFact label="过滤词" value={form.filter_words || "未填写"} />
+                          <PersonFact label="禁用表达" value={form.avoid_expressions || "未填写"} />
+                          <PersonFact label="私域承接边界" value={form.private_domain || "未填写"} />
+                        </>
+                      )}
+                    </div>
+                  </details>
+
+                  <div className="mt-5 rounded-2xl bg-slate-50 p-4 text-sm">
+                    <b>只读历史方向</b>
+                    <div className="mt-2 text-slate-600">{data.account.content_directions?.join(" / ") || "无历史值"}</div>
+                  </div>
+
+                  {personaEditing && (
+                    <div className="mt-5 flex flex-wrap gap-2">
+                      <PrimaryButton disabled={Boolean(busy)} onClick={savePersona}>保存人设</PrimaryButton>
+                      <SecondaryButton onClick={() => { setForm(accountForm(data.account!)); setPersonaEditing(false); }}>取消编辑</SecondaryButton>
+                    </div>
+                  )}
+                </div>
+              )}
+            </Section>
+
+            {data.account && (
+              <>
+                <Section
+                  number="3"
+                  title="选题"
+                  subtitle="一个方法对应一个标题槽位。默认方法直接显示，探索方法在原生法或对标法内部折叠，禁用方法不出现。"
+                >
+                  <div className="flex flex-col gap-4 rounded-2xl bg-slate-50 p-4 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <div className="font-semibold">当前视角：{businessDefinition.personas[persona].role}</div>
+                      <div className="mt-1 text-sm text-slate-600">
+                        默认 {defaultMethods.length} 个槽位 · 探索 {exploreMethods.length} 个槽位 · 不做标题评分
+                      </div>
+                    </div>
+                    <PrimaryButton disabled={Boolean(busy)} onClick={() => generateTopics("default")}>生成选题</PrimaryButton>
+                  </div>
+
+                  <div className="mt-6 space-y-6">
+                    {(["native", "benchmark"] as TitleMethodGroup[]).map((group) => (
+                      <MethodArea
+                        key={group}
+                        group={group}
+                        defaultMethods={defaultMethods.filter((method) => method.group === group)}
+                        exploreMethods={exploreMethods.filter((method) => method.group === group)}
+                        defaultRun={runs.default}
+                        exploreRun={runs.explore}
+                        sources={data.account?.topic_sources || []}
+                        busy={busy}
+                        exploreOpen={exploreOpen[group]}
+                        sourceEditorMethod={sourceEditorMethod}
+                        source={source}
+                        activeTopicId={activeTopic?.topic.id}
+                        titleEdits={titleEdits}
+                        savingTitleId={savingTitleId}
+                        onExploreOpen={(open) => setExploreOpen((current) => ({ ...current, [group]: open }))}
+                        onExplore={() => generateTopics("explore", group)}
+                        onGenerateBody={generateBodies}
+                        onTitleChange={changeTopicTitle}
+                        onSaveTitle={saveTopicTitle}
+                        onOpenSource={openSourceEditor}
+                        onCloseSource={() => setSourceEditorMethod(null)}
+                        onSourceChange={setSource}
+                        onSaveSource={saveSource}
+                        onRefreshSource={refreshSource}
+                      />
+                    ))}
+                  </div>
+                </Section>
+
+                <Section
+                  number="4"
+                  title="正文"
+                  subtitle={activeTopic ? `已选标题：${activeTopic.topic.title}；标题承诺：${activeTopic.topic.title_promise}` : "先在选题槽位中选择一个标题，再生成短版和长版正文。"}
+                >
+                  {variants.length > 0 ? (
+                    <div className="grid gap-5 lg:grid-cols-2">
+                      {variants.map((draft) => (
+                        <DraftCard key={draft.id} draft={draft} busy={busy} onChoose={chooseDraft} />
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-sm text-slate-400">短版和长版使用同一核心判断；正文不选择内容方向或正文阶段。</p>
+                  )}
+
+                  {chosen && (
+                    <div className="mt-7 border-t border-slate-200 pt-6">
+                      <h3 className="text-lg font-semibold">已选最终正文</h3>
+                      <p className="mt-1 text-sm text-slate-500">发布前只做来源、身份、兑现、合规四项硬校验。</p>
+                      <div className="mt-4">
+                        <FinalDraft key={chosen.id} draft={chosen} busy={busy} onPublish={markPublished} />
+                      </div>
+                    </div>
+                  )}
+                </Section>
+
+                <Section
+                  number="5"
+                  title="单篇复盘"
+                  subtitle="只展示当前业务、当前视角的新流程已发布或已复盘内容。首次复盘与更新复盘使用同一入口。"
+                >
+                  {reviewDrafts.length ? (
+                    <div className="space-y-3">
+                      {reviewDrafts.map((draft) => (
+                        <ReviewRow
+                          key={draft.id}
+                          draft={draft}
+                          review={data.reviews[draft.id]}
+                          onOpen={() => openReview(draft)}
+                        />
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="rounded-2xl border border-dashed border-slate-300 p-6 text-center text-sm text-slate-500">
+                      暂无新流程已发布内容。请先在正文中填写实际发布时间并标记发布。
+                    </div>
+                  )}
+                </Section>
+
+                <Section
+                  number="6"
+                  title="周复盘"
+                  subtitle="按当前视角 × 原生/对标方法 × 默认/探索复盘。北极星指标固定为有效咨询率。"
+                >
+                  <div className="flex flex-col gap-4 rounded-2xl bg-slate-50 p-4 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <div className="font-semibold">v3.2 新有效样本：{data.learningSummary.newLearningSamples}/30</div>
+                      <p className="mt-1 text-sm text-slate-600">30篇前只展示数据，不推荐最佳方法；旧版样本不进入新方法胜率。</p>
+                    </div>
+                    <PrimaryButton disabled={Boolean(busy)} onClick={runWeeklyReview}>保存固定周期快照</PrimaryButton>
+                  </div>
+
+                  {data.weeklyReview ? (
+                    <WeeklyReview review={data.weeklyReview} />
+                  ) : (
+                    <div className="mt-5 rounded-2xl border border-dashed border-slate-300 p-6 text-center text-sm text-slate-500">
+                      尚无本视角周复盘快照。保存后将按13种标题方法展示描述性数据。
+                    </div>
+                  )}
+                </Section>
+              </>
             )}
           </div>
         )}
-        {variants.length === 0 && !chosenDraft && (
-          <p className="text-sm leading-6 text-ink-600">先在第 2 步选一个题，点「用这个选题写正文」。</p>
-        )}
-      </StepCard>
+      </div>
 
-      {/* Step 4 单篇复盘（以笔记为基本单元） */}
-      <StepCard step="4" title="单篇复盘 · 分析标题与正文" desc="记录发布24小时后的固定快照，拆解标题入口、正文质量和商业承接。单篇只决定怎么写，不直接决定方向。">
-        {state.drafts.length === 0 ? (
-          <p className="text-sm leading-6 text-ink-600">还没有笔记。先在第 2、3 步选题并选定一篇正文，它就会作为一篇笔记出现在这里。</p>
-        ) : (
-          <div className="grid gap-4">
-            {state.drafts.map((note) => (
-              <NoteReviewCard
-                key={note.id}
-                note={note}
-                review={reviews[note.id]}
-                form={metricsByDraft[note.id] ?? emptyReviewForm}
-                busyKey={busy}
-                screenshotEnabled={screenshotEnabled}
-                screenshotExtraction={screenshotExtractions[note.id]}
-                onFormChange={(patch) => updateReviewForm(note.id, patch)}
-                onPublish={(publishedAt) => markPublishedNote(note, publishedAt)}
-                onScreenshots={(files) => extractReviewScreenshots(note, files)}
-                onSubmit={() => submitReviewNote(note)}
+      {reviewDraft && (
+        <Modal title={`复盘：${reviewDraft.title}`} onClose={() => setReviewDraft(null)}>
+          <div className="mb-4 rounded-xl bg-slate-50 p-3 text-xs text-slate-600">
+            已完整预填已有数据。本次变更：{changedKeys(reviewValues, reviewBaseline).join("、") || "尚未修改"}
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <TextInput label="小红书原帖链接" value={String(reviewValues.note_url)} onChange={(value) => setReviewValues({ ...reviewValues, note_url: value })} />
+            <Select
+              label="分发状态"
+              value={String(reviewValues.note_status)}
+              onChange={(value) => setReviewValues({ ...reviewValues, note_status: value })}
+              options={[
+                { value: "normal", label: "正常" },
+                { value: "limited", label: "限流" },
+                { value: "violation", label: "违规" },
+                { value: "deleted", label: "删除" },
+              ]}
+            />
+            {numericReviewFields.map(([key, label]) => (
+              <TextInput
+                key={key}
+                label={label}
+                type="number"
+                value={String(reviewValues[key])}
+                onChange={(value) => setReviewValues({ ...reviewValues, [key]: value })}
               />
             ))}
           </div>
-        )}
-      </StepCard>
-
-      {/* Step 5 周复盘（跨笔记做方向决策） */}
-      <StepCard step="5" title="周复盘 · 判断方向与下周策略" desc="近7天看变化，近28天看稳定性。周复盘决定写什么和内容占比，单篇复盘决定标题与正文怎么写。">
-        <button className="btn-primary" disabled={!!busy || !account} onClick={generateWeeklyReview}>
-          {busy === "生成周复盘" ? "生成中..." : "更新周复盘 / 方向决策"}
-        </button>
-        {weeklyResult && (
-          <div className="mt-5 space-y-4">
-            <div className="text-xs text-ink-500">
-              共 {weeklyResult.note_total} 篇笔记，已复盘 {weeklyResult.reviewed_total} 篇，近28天有效样本 {weeklyResult.eligible_total ?? 0} 篇。
-            </div>
-            <div className="grid gap-3 md:grid-cols-3">
-              {weeklyResult.by_direction.map((agg) => (
-                <DirectionAggregateCard key={agg.direction} agg={agg} />
-              ))}
-            </div>
-            <div className="grid gap-3 rounded-2xl bg-gold-50/50 p-4 text-sm leading-6 text-ink-700 md:grid-cols-2">
-              <Field label="方向动作建议" value={weeklyResult.decision.scale_direction} />
-              <Field label="建议暂停/降权的方向" value={weeklyResult.decision.pause_direction} />
-              <Field label="下周主攻" value={weeklyResult.decision.next_focus} />
-              <Field label="可复用标题/正文模式" value={weeklyResult.decision.reusable_pattern} />
-              <Field label="下周唯一战略假设" value={weeklyResult.decision.strategic_hypothesis || "样本不足，先继续探索。"} />
-              <Field
-                label="下周内容比例"
-                value={(weeklyResult.decision.content_allocation ?? [])
-                  .map((item) => `${item.direction} ${item.percentage}%（${WEEKLY_ACTION_LABELS[item.action] ?? item.action}）`)
-                  .join("；") || "等待有效样本"}
-              />
-              <div className="md:col-span-2">
-                <Field label="周结论" value={weeklyResult.decision.summary} />
-              </div>
-            </div>
+          <label className="mt-4 flex items-center gap-2 text-sm">
+            <input type="checkbox" checked={Boolean(reviewValues.promoted)} onChange={(event) => setReviewValues({ ...reviewValues, promoted: event.target.checked })} />
+            本篇有投流
+          </label>
+          <div className="mt-4 rounded-2xl border border-dashed border-slate-300 p-4">
+            <div className="text-sm font-medium">上传数据截图预填</div>
+            <p className="mt-1 text-xs text-slate-500">只填高置信度字段，保存前仍需人工核对。</p>
+            <input
+              className="mt-3 block w-full text-sm"
+              type="file"
+              accept="image/png,image/jpeg,image/webp"
+              multiple
+              disabled={!data?.capabilities.reviewScreenshot || Boolean(busy)}
+              onChange={(event) => extractScreenshot(event.target.files)}
+            />
+            {!data?.capabilities.reviewScreenshot && (
+              <p className="mt-2 text-xs text-amber-700">当前本地模型未配置视觉能力，上传入口保留但暂不可识别。</p>
+            )}
           </div>
-        )}
-      </StepCard>
+          <div className="mt-5">
+            <PrimaryButton
+              disabled={Boolean(busy) || !reviewValues.note_url || (Boolean(data?.reviews[reviewDraft.id]) && changedKeys(reviewValues, reviewBaseline).length === 0)}
+              onClick={submitReview}
+            >
+              {data?.reviews[reviewDraft.id] ? "只保存变更字段" : "保存首次复盘"}
+            </PrimaryButton>
+          </div>
+        </Modal>
+      )}
     </main>
   );
 }
 
-function NoteReviewCard({
-  note,
-  review,
-  form,
-  busyKey,
-  screenshotEnabled,
-  screenshotExtraction,
-  onFormChange,
-  onPublish,
-  onScreenshots,
-  onSubmit,
+function MethodArea({
+  group,
+  defaultMethods,
+  exploreMethods,
+  defaultRun,
+  exploreRun,
+  sources,
+  busy,
+  exploreOpen,
+  sourceEditorMethod,
+  source,
+  activeTopicId,
+  titleEdits,
+  savingTitleId,
+  onExploreOpen,
+  onExplore,
+  onGenerateBody,
+  onTitleChange,
+  onSaveTitle,
+  onOpenSource,
+  onCloseSource,
+  onSourceChange,
+  onSaveSource,
+  onRefreshSource,
 }: {
-  note: ContentDraft;
-  review?: GrowthReview;
-  form: ReviewFormState;
-  busyKey: string;
-  screenshotEnabled: boolean;
-  screenshotExtraction?: ScreenshotExtractionState;
-  onFormChange: (patch: Partial<ReviewFormState>) => void;
-  onPublish: (publishedAt: string) => void;
-  onScreenshots: (files: File[]) => void;
-  onSubmit: () => void;
+  group: TitleMethodGroup;
+  defaultMethods: TitleMethodDefinition[];
+  exploreMethods: TitleMethodDefinition[];
+  defaultRun?: GrowthRun;
+  exploreRun?: GrowthRun;
+  sources: TopicSourceSnapshot[];
+  busy: string | null;
+  exploreOpen: boolean;
+  sourceEditorMethod: TitleMethodId | null;
+  source: SourceForm;
+  activeTopicId?: string;
+  titleEdits: Record<string, string>;
+  savingTitleId: string | null;
+  onExploreOpen: (open: boolean) => void;
+  onExplore: () => void;
+  onGenerateBody: (run: GrowthRun, topic: TopicCandidate) => void;
+  onTitleChange: (topic: TopicCandidate, title: string) => void;
+  onSaveTitle: (run: GrowthRun, topic: TopicCandidate, title: string) => void;
+  onOpenSource: (methodId: TitleMethodId) => void;
+  onCloseSource: () => void;
+  onSourceChange: (source: SourceForm) => void;
+  onSaveSource: () => void;
+  onRefreshSource: (sourceId: string, restricted: boolean) => void;
 }) {
-  const [open, setOpen] = useState(false);
-  const [publishedAtInput, setPublishedAtInput] = useState(() =>
-    localDateTimeValue(
-      note.status === "published" || note.status === "reviewed" ? new Date(effectivePublishedAt(note)) : new Date(),
-    ),
-  );
-  const [clock, setClock] = useState(() => Date.now());
-  useEffect(() => {
-    const timer = window.setInterval(() => setClock(Date.now()), 60_000);
-    return () => window.clearInterval(timer);
-  }, []);
-  const published = note.status === "published" || note.status === "reviewed";
-  const reviewed = note.status === "reviewed" && !!review;
-  const publishing = busyKey === `发布:${note.id}`;
-  const reviewing = busyKey === `复盘:${note.id}`;
-  const extracting = busyKey === `截图:${note.id}`;
-  const availableAt = Date.parse(effectivePublishedAt(note)) + 24 * 60 * 60 * 1000;
-  const reviewReady = reviewed || (published && Number.isFinite(availableAt) && clock >= availableAt);
-  const manualChange = (patch: Partial<ReviewFormState>) =>
-    onFormChange({ ...patch, input_source: form.input_source === "manual" ? "manual" : "mixed" });
-
+  const isNative = group === "native";
   return (
-    <div className="rounded-2xl border border-ink-100 p-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2 text-xs text-gold-700">
-            <span>{DIRECTION_LABELS[note.direction] ?? note.direction}</span>
-            <span>· {CONTENT_TYPE_LABELS[note.content_type] ?? note.content_type}</span>
-            <span>· {DRAFT_STATUS_LABELS[note.status] ?? note.status}</span>
-          </div>
-          <div className="mt-1 font-medium leading-6">{note.title}</div>
-          <div className="mt-1 text-xs text-ink-400">验证变量：{note.test_variable}</div>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <input
-            type="datetime-local"
-            value={publishedAtInput}
-            max={localDateTimeValue()}
-            onChange={(event) => setPublishedAtInput(event.target.value)}
-            disabled={reviewed}
-            className="rounded-xl border border-ink-100 bg-white px-3 py-2 text-sm"
-            aria-label="实际发布时间"
-          />
-          <button
-            className="rounded-full bg-ink-100 px-4 py-2 text-sm font-semibold text-ink-700 transition hover:bg-ink-200 disabled:opacity-40"
-            disabled={!!busyKey || reviewed}
-            onClick={() => onPublish(publishedAtInput)}
-          >
-            {publishing ? "保存中..." : reviewed ? "发布时间已锁定" : published ? "修正发布时间" : "标记实际发布"}
-          </button>
-          <button
-            className="rounded-full bg-ink-100 px-4 py-2 text-sm font-semibold text-ink-700 transition hover:bg-ink-200"
-            disabled={!published}
-            onClick={() => setOpen((v) => !v)}
-          >
-            {open ? "收起数据" : reviewed ? "查看/修改复盘" : reviewReady ? "录入24小时数据" : "等待24小时"}
-          </button>
-        </div>
-      </div>
-
-      {published && (
-        <div className="mt-3 border-t border-ink-100 pt-3 text-xs leading-5 text-ink-500">
-          实际发布：{new Date(effectivePublishedAt(note)).toLocaleString("zh-CN")}
-          {!reviewReady && <span className="ml-3 text-gold-700">距离正式复盘还有 {formatRemaining(availableAt - clock)}</span>}
-        </div>
-      )}
-
-      {reviewed && review && (
-        <div className="mt-3 grid gap-2 border-t border-ink-100 pt-3 text-xs leading-5 text-ink-700 md:grid-cols-3">
-          <Field label="结果分类" value={CLASSIFICATION_LABELS[review.classification] ?? review.classification} />
-          <Field label="样本状态" value={SAMPLE_STATUS_LABELS[review.sample?.status || "historical_unknown"]} />
-          <Field label="下一篇只改一个变量" value={review.next_variable} />
-        </div>
-      )}
-
-      {open && (
-        <div className="mt-4 border-t border-ink-100 pt-4">
-          {!reviewReady && (
-            <div className="text-sm leading-6 text-ink-600">
-              24小时数据口径还没到。到时系统会开放正式录入，避免用过早数据误判标题和方向。
-            </div>
-          )}
-          {reviewReady && screenshotEnabled && (
-            <div className="mb-4 flex flex-wrap items-center gap-3">
-              <label className="cursor-pointer rounded-full border border-gold-400 px-4 py-2 text-sm font-semibold text-gold-800">
-                {extracting ? "识别中..." : "上传数据截图预填"}
-                <input
-                  type="file"
-                  accept="image/png,image/jpeg,image/webp"
-                  multiple
-                  className="hidden"
-                  disabled={!!busyKey}
-                  onChange={(event) => {
-                    const files = Array.from(event.target.files ?? []).slice(0, 6);
-                    if (files.length) onScreenshots(files);
-                    event.currentTarget.value = "";
-                  }}
-                />
-              </label>
-              <span className="text-xs text-ink-500">支持1–6张，识别结果只预填，确认后才保存。</span>
-            </div>
-          )}
-          {reviewReady && screenshotExtraction && (
-            <div className="mb-4 text-xs leading-5 text-ink-600">
-              已识别 {Object.values(screenshotExtraction.confidence).filter((value) => value >= 0.72).length} 个高置信字段。
-              {screenshotExtraction.warnings.length > 0 && ` 提醒：${screenshotExtraction.warnings.join("；")}`}
-            </div>
-          )}
-          {reviewReady && (
-            <>
-          <div className="mb-4 grid gap-3 md:grid-cols-3">
-            <div>
-              <label className="mb-2 block text-xs font-medium text-ink-500">笔记状态</label>
-              <select
-                value={form.note_status}
-                onChange={(event) => manualChange({ note_status: event.target.value as ReviewFormState["note_status"] })}
-                className="w-full rounded-xl border border-ink-100 bg-white px-3 py-2 text-sm"
-              >
-                <option value="normal">正常</option>
-                <option value="limited">限流</option>
-                <option value="violation">违规</option>
-                <option value="deleted">已删除</option>
-              </select>
-            </div>
-            <label className="flex min-h-10 items-center gap-3 text-sm text-ink-700 md:self-end">
-              <input
-                type="checkbox"
-                checked={form.promoted}
-                onChange={(event) => manualChange({ promoted: event.target.checked })}
-              />
-              这篇使用过投流
-            </label>
-          </div>
-          <div className="grid gap-3 md:grid-cols-5">
-            <NoteMetricInput label="曝光" name="impressions" form={form} onMetric={(name, value) => manualChange({ [name]: value })} />
-            <NoteMetricInput label="观看" name="reads" form={form} onMetric={(name, value) => manualChange({ [name]: value })} />
-            <NoteMetricInput label="平均观看时长（秒）" name="average_view_seconds" form={form} onMetric={(name, value) => manualChange({ [name]: value })} />
-            <NoteMetricInput label="点赞" name="likes" form={form} onMetric={(name, value) => manualChange({ [name]: value })} />
-            <NoteMetricInput label="收藏" name="saves" form={form} onMetric={(name, value) => manualChange({ [name]: value })} />
-            <NoteMetricInput label="评论" name="comments" form={form} onMetric={(name, value) => manualChange({ [name]: value })} />
-            <NoteMetricInput label="分享" name="shares" form={form} onMetric={(name, value) => manualChange({ [name]: value })} />
-            <NoteMetricInput label="新增关注" name="follows" form={form} onMetric={(name, value) => manualChange({ [name]: value })} />
-            <NoteMetricInput label="有效咨询（选填）" name="qualified_inquiries" form={form} onMetric={(name, value) => manualChange({ [name]: value })} />
-            <div>
-              <label className="mb-2 block text-xs font-medium text-ink-500">搜索词TOP5（截图选填）</label>
-              <input
-                value={form.search_keywords}
-                onChange={(event) => manualChange({ search_keywords: event.target.value })}
-                className="w-full rounded-xl border border-ink-100 bg-white px-3 py-2 text-sm"
-                placeholder="逗号分隔"
-              />
-            </div>
-          </div>
-          <div className="mt-3 grid gap-3 md:grid-cols-2">
-            <input
-              value={form.note_url}
-              onChange={(event) => manualChange({ note_url: event.target.value })}
-              className="w-full rounded-xl border border-ink-100 bg-white px-3 py-2 text-sm"
-              placeholder="笔记链接（选填）"
-            />
-            <input
-              value={form.target_customer_quote}
-              onChange={(event) => manualChange({ target_customer_quote: event.target.value })}
-              className="w-full rounded-xl border border-ink-100 bg-white px-3 py-2 text-sm"
-              placeholder="目标客户原话或主要问题（选填）"
-            />
-          </div>
-          {(form.traffic_sources || form.audience) && (
-            <div className="mt-3 text-xs leading-5 text-ink-500">
-              {form.traffic_sources && `流量来源：${Object.entries(form.traffic_sources).map(([key, value]) => `${key} ${value}%`).join("，")}`}
-              {form.audience && <div>已确认受众截图数据，将用于判断目标人群匹配，不要求手工录入完整分布。</div>}
-            </div>
-          )}
-          <button className="btn-primary mt-4" disabled={!!busyKey} onClick={onSubmit}>
-            {reviewing ? "提交中..." : reviewed ? "更新复盘" : "提交复盘"}
-          </button>
-            </>
-          )}
-        </div>
-      )}
-
-      {reviewed && review && (
-        <div className="mt-4 grid gap-3 border-t border-ink-100 pt-4 text-sm leading-6 text-ink-700 md:grid-cols-2">
-          <Field label="标题与入口" value={review.entry_judgement} />
-          <Field label="正文质量" value={review.body_judgement || review.value_judgement} />
-          <Field label="转化与承接" value={review.conversion_judgement || review.follow_judgement} />
-          <Field label="人群判断" value={review.audience_judgement} />
-          <Field label="标题结构" value={review.entry_diagnosis?.title_pattern || "历史复盘未记录"} />
-          <Field label="合规判断" value={review.compliance_judgement || "以发布前合规扫描为准"} />
-        </div>
-      )}
-    </div>
-  );
-}
-
-type NumericReviewField =
-  | "impressions"
-  | "reads"
-  | "average_view_seconds"
-  | "likes"
-  | "saves"
-  | "comments"
-  | "shares"
-  | "follows"
-  | "qualified_inquiries";
-
-function NoteMetricInput({
-  label,
-  name,
-  form,
-  onMetric,
-}: {
-  label: string;
-  name: NumericReviewField;
-  form: ReviewFormState;
-  onMetric: (name: NumericReviewField, value: string) => void;
-}) {
-  return (
-    <div>
-      <label className="mb-2 block text-xs font-medium text-ink-500">{label}</label>
-      <input
-        value={form[name]}
-        onChange={(e) => onMetric(name, e.target.value)}
-        inputMode={name === "average_view_seconds" ? "decimal" : "numeric"}
-        className="w-full rounded-xl border border-ink-100 bg-white px-3 py-2 text-sm"
-        placeholder="0"
-      />
-    </div>
-  );
-}
-
-function DirectionAggregateCard({ agg }: { agg: DirectionAggregate }) {
-  return (
-    <div className="rounded-2xl border border-ink-100 p-4 text-sm leading-6 text-ink-700">
-      <div className="mb-2 flex items-center justify-between gap-2">
-        <div className="font-semibold text-ink-900">{agg.label || DIRECTION_LABELS[agg.direction] || agg.direction}</div>
-        <span className="text-xs font-semibold text-gold-700">{WEEKLY_ACTION_LABELS[agg.action || "explore"]}</span>
-      </div>
-      <div className="text-xs text-ink-500">
-        近7天 {agg.recent_7d_count ?? 0} 篇 · 近28天有效 {agg.valid_count ?? 0} 篇
-      </div>
-      <div className="mt-2 grid grid-cols-2 gap-1 text-xs">
-        <div>点击率中位数：{((agg.median_ctr ?? 0) * 100).toFixed(1)}%</div>
-        <div>观看时长：{(agg.median_average_view_seconds ?? 0).toFixed(1)}秒</div>
-        <div>收藏率：{((agg.median_save_rate ?? agg.avg_save_rate) * 100).toFixed(1)}%</div>
-        <div>分享率：{((agg.median_share_rate ?? 0) * 100).toFixed(1)}%</div>
-        <div>涨粉率：{((agg.median_follow_rate ?? 0) * 100).toFixed(1)}%</div>
-        <div>咨询率：{((agg.median_inquiry_rate ?? 0) * 100).toFixed(1)}%</div>
-      </div>
-    </div>
-  );
-}
-
-function CopyButton({
-  text,
-  label = "一键复制",
-  className = "",
-  disabled = false,
-  onCopied,
-  onCopyFailed,
-}: {
-  text: string;
-  label?: string;
-  className?: string;
-  disabled?: boolean;
-  onCopied?: (label: string) => void;
-  onCopyFailed?: (label: string) => void;
-}) {
-  const [copied, setCopied] = useState(false);
-  async function copy() {
-    try {
-      if (navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(text);
-      } else {
-        const ta = document.createElement("textarea");
-        ta.value = text;
-        ta.style.position = "fixed";
-        ta.style.opacity = "0";
-        document.body.appendChild(ta);
-        ta.select();
-        document.execCommand("copy");
-        document.body.removeChild(ta);
-      }
-      setCopied(true);
-      onCopied?.(label);
-      setTimeout(() => setCopied(false), 1500);
-    } catch {
-      setCopied(false);
-      onCopyFailed?.(label);
-    }
-  }
-  return (
-    <button
-      type="button"
-      onClick={copy}
-      disabled={disabled}
-      className={"rounded-full bg-ink-100 px-4 py-2 text-sm font-semibold text-ink-700 transition hover:bg-ink-200 disabled:cursor-not-allowed disabled:opacity-40 " + className}
-    >
-      {copied ? "已复制 ✓" : label}
-    </button>
-  );
-}
-
-function ComplianceStatus({ draft }: { draft: ContentDraft }) {
-  const compliance = complianceView(draft);
-  if (compliance.status === "passed") {
-    return <div className="mt-2 text-xs font-medium text-emerald-700">互动合规检查通过</div>;
-  }
-  if (compliance.status === "rewritten") {
-    return (
-      <div className="mt-2 rounded-xl bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">
-        已自动移除诱导互动表达，当前复制内容已更新。
-      </div>
-    );
-  }
-  return (
-    <div className="mt-2 rounded-xl bg-red-50 px-3 py-2 text-xs leading-5 text-red-700">
-      <div className="font-semibold">互动合规未通过，已禁止选定和复制。</div>
-      {compliance.issues.slice(0, 2).map((issue) => (
-        <div key={issue}>· {issue}</div>
-      ))}
-    </div>
-  );
-}
-
-function StepCard({
-  step,
-  title,
-  desc,
-  children,
-}: {
-  step: string;
-  title: string;
-  desc?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <section className="mb-4 rounded-3xl bg-white p-5 shadow-sm">
-      <div className="mb-4 flex items-start gap-3">
-        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-ink-900 text-sm font-semibold text-white">{step}</div>
+    <div data-method-group={group} className="rounded-2xl border border-slate-200 bg-white p-4 sm:p-5">
+      <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h2 className="font-semibold">{title}</h2>
-          {desc && <p className="mt-1 text-xs leading-5 text-ink-500">{desc}</p>}
+          <h3 className="text-xl font-semibold">{isNative ? "原生法" : "对标法"}</h3>
+          <p className="mt-1 text-sm text-slate-500">
+            {isNative ? "从业务、人群和内部洞察出发；蹭流量必须绑定近期热点。" : "先找到7天内真实母题，再迁移标题逻辑。"}
+          </p>
         </div>
+        <Badge>默认 {defaultMethods.length} · 探索 {exploreMethods.length}</Badge>
+      </div>
+
+      <div className="mt-5 grid gap-4 lg:grid-cols-2">
+        {defaultMethods.map((method) => (
+          <MethodSlot
+            key={method.id}
+            method={method}
+            mode="default"
+            run={defaultRun}
+            source={latestSourceForMethod(sources, method.id)}
+            busy={busy}
+            sourceEditorOpen={sourceEditorMethod === method.id}
+            sourceForm={source}
+            activeTopicId={activeTopicId}
+            editedTitle={topicTitle(defaultRun, method.id, titleEdits)}
+            savingTitle={savingTitleId === defaultRun?.topic_pool.find((item) => item.method_id === method.id)?.id}
+            onGenerateBody={onGenerateBody}
+            onTitleChange={onTitleChange}
+            onSaveTitle={onSaveTitle}
+            onOpenSource={onOpenSource}
+            onCloseSource={onCloseSource}
+            onSourceChange={onSourceChange}
+            onSaveSource={onSaveSource}
+            onRefreshSource={onRefreshSource}
+          />
+        ))}
+      </div>
+
+      {exploreMethods.length > 0 && (
+        <details
+          className="mt-5 rounded-2xl border border-amber-200 bg-amber-50/50"
+          open={exploreOpen}
+          onToggle={(event) => onExploreOpen((event.currentTarget as HTMLDetailsElement).open)}
+        >
+          <summary className="cursor-pointer px-4 py-4 font-semibold">探索方法（{exploreMethods.length}个，默认收起）</summary>
+          <div className="border-t border-amber-100 px-4 pb-4 pt-4">
+            <SecondaryButton disabled={Boolean(busy)} onClick={onExplore}>探索生成{isNative ? "原生法" : "对标法"}</SecondaryButton>
+            <div className="mt-4 grid gap-4 lg:grid-cols-2">
+              {exploreMethods.map((method) => (
+                <MethodSlot
+                  key={method.id}
+                  method={method}
+                  mode="explore"
+                  run={exploreRun}
+                  source={latestSourceForMethod(sources, method.id)}
+                  busy={busy}
+                  sourceEditorOpen={sourceEditorMethod === method.id}
+                  sourceForm={source}
+                  activeTopicId={activeTopicId}
+                  editedTitle={topicTitle(exploreRun, method.id, titleEdits)}
+                  savingTitle={savingTitleId === exploreRun?.topic_pool.find((item) => item.method_id === method.id)?.id}
+                  onGenerateBody={onGenerateBody}
+                  onTitleChange={onTitleChange}
+                  onSaveTitle={onSaveTitle}
+                  onOpenSource={onOpenSource}
+                  onCloseSource={onCloseSource}
+                  onSourceChange={onSourceChange}
+                  onSaveSource={onSaveSource}
+                  onRefreshSource={onRefreshSource}
+                />
+              ))}
+            </div>
+          </div>
+        </details>
+      )}
+    </div>
+  );
+}
+
+function MethodSlot({
+  method,
+  mode,
+  run,
+  source,
+  busy,
+  sourceEditorOpen,
+  sourceForm,
+  activeTopicId,
+  editedTitle,
+  savingTitle,
+  onGenerateBody,
+  onTitleChange,
+  onSaveTitle,
+  onOpenSource,
+  onCloseSource,
+  onSourceChange,
+  onSaveSource,
+  onRefreshSource,
+}: {
+  method: TitleMethodDefinition;
+  mode: MethodGenerationMode;
+  run?: GrowthRun;
+  source?: TopicSourceSnapshot;
+  busy: string | null;
+  sourceEditorOpen: boolean;
+  sourceForm: SourceForm;
+  activeTopicId?: string;
+  editedTitle?: string;
+  savingTitle: boolean;
+  onGenerateBody: (run: GrowthRun, topic: TopicCandidate) => void;
+  onTitleChange: (topic: TopicCandidate, title: string) => void;
+  onSaveTitle: (run: GrowthRun, topic: TopicCandidate, title: string) => void;
+  onOpenSource: (methodId: TitleMethodId) => void;
+  onCloseSource: () => void;
+  onSourceChange: (source: SourceForm) => void;
+  onSaveSource: () => void;
+  onRefreshSource: (sourceId: string, restricted: boolean) => void;
+}) {
+  const topic = run?.topic_pool.find((item) => item.method_id === method.id);
+  const unavailable = run?.unavailable_methods?.find((item) => item.method_id === method.id);
+  const usableSource = sourceCanGenerate(source);
+  const active = topic?.id === activeTopicId;
+  const currentTitle = topic ? editedTitle ?? topic.title : "";
+
+  return (
+    <div data-method-slot={`${method.id}-${mode}`} className={`rounded-2xl border p-4 ${active ? "border-slate-900 bg-slate-50" : "border-slate-200 bg-white"}`}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="font-semibold">{method.order}. {method.label}</div>
+        <Badge>{mode === "default" ? "默认" : "探索方法"}</Badge>
+      </div>
+
+      {method.sourceRequired && (
+        <div className="mt-3 rounded-xl bg-slate-50 p-3">
+          {source ? (
+            <>
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div className="min-w-0 text-xs font-medium text-slate-700">{source.author}｜{source.original_title}</div>
+                <SourceStatus status={source.link_status} verified={source.verified_by_operator} />
+              </div>
+              <div className="mt-2 text-xs leading-5 text-slate-500">
+                {source.platform} · {new Date(source.published_at).toLocaleDateString("zh-CN")} · {sourceAge(source)} · {source.heat_snapshot}
+              </div>
+              <div className="mt-2 flex flex-wrap gap-3 text-xs">
+                <a className="text-[#9a6b24] underline" href={source.original_url} target="_blank" rel="noreferrer">原链接</a>
+                <button className="text-slate-700 underline" onClick={() => onRefreshSource(source.id, source.link_status === "restricted")}>
+                  {busy === `source-${source.id}` ? "检测中…" : "刷新校验"}
+                </button>
+                <button className="text-slate-700 underline" onClick={() => onOpenSource(method.id)}>补充近期来源</button>
+              </div>
+              {!usableSource && <div className="mt-2 text-xs text-amber-700">该来源当前不能生成标题，请补充7天内可用来源。</div>}
+            </>
+          ) : (
+            <button className="text-sm font-medium text-[#9a6b24] underline" onClick={() => onOpenSource(method.id)}>补充近期来源</button>
+          )}
+        </div>
+      )}
+
+      {sourceEditorOpen && (
+        <SourceEditor
+          method={method}
+          value={sourceForm}
+          busy={busy}
+          onChange={onSourceChange}
+          onSave={onSaveSource}
+          onClose={onCloseSource}
+        />
+      )}
+
+      <div className="mt-4">
+        {topic && run ? (
+          <>
+            <label className="block">
+              <span className="flex items-center justify-between gap-3 text-xs font-medium text-slate-500">
+                <span>标题（可编辑）</span>
+                <span>{Array.from(currentTitle).length}/20{savingTitle ? " · 保存中…" : currentTitle !== topic.title ? " · 已修改" : ""}</span>
+              </span>
+              <textarea
+                aria-label={`编辑${method.label}标题`}
+                rows={2}
+                value={currentTitle}
+                onChange={(event) => onTitleChange(topic, event.target.value)}
+                onBlur={() => onSaveTitle(run, topic, currentTitle)}
+                className={`mt-2 w-full resize-none rounded-xl border bg-white px-3 py-2.5 text-base font-semibold leading-6 outline-none focus:border-amber-500 ${currentTitle.trim() ? "border-slate-200" : "border-red-400"}`}
+              />
+            </label>
+            <p className="mt-2 text-sm leading-6 text-slate-600">正文承诺：{topic.title_promise}</p>
+            <div className="mt-4">
+              <PrimaryButton disabled={Boolean(busy) || !currentTitle.trim()} onClick={() => onGenerateBody(run, topic)}>用这个标题写正文</PrimaryButton>
+            </div>
+          </>
+        ) : unavailable ? (
+          <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+            暂停生成：{unavailable.reason || "缺少近期有效来源"}。系统不会虚构标题。
+          </div>
+        ) : (
+          <div className="rounded-xl border border-dashed border-slate-300 p-3 text-sm text-slate-400">
+            {method.sourceRequired && !usableSource ? "补充近期来源后再生成" : mode === "default" ? "等待生成默认选题" : "展开后点击探索生成"}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function topicTitle(run: GrowthRun | undefined, methodId: TitleMethodId, edits: Record<string, string>) {
+  const topic = run?.topic_pool.find((item) => item.method_id === methodId);
+  return topic ? edits[topic.id] ?? topic.title : undefined;
+}
+
+function SourceEditor({
+  method,
+  value,
+  busy,
+  onChange,
+  onSave,
+  onClose,
+}: {
+  method: TitleMethodDefinition;
+  value: SourceForm;
+  busy: string | null;
+  onChange: (value: SourceForm) => void;
+  onSave: () => void;
+  onClose: () => void;
+}) {
+  const ready = value.original_url && value.original_title && value.published_at && value.heat_snapshot;
+  return (
+    <div className="mt-3 rounded-xl border border-[#ead7b5] bg-[#fffaf0] p-3">
+      <div className="mb-3 flex items-center justify-between gap-2">
+        <b className="text-sm">为“{method.label}”补充{method.id === "traffic" ? "热点" : "对标母题"}</b>
+        <button className="text-sm text-slate-500" onClick={onClose}>关闭</button>
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <TextInput label="平台" value={value.platform} onChange={(platform) => onChange({ ...value, platform })} />
+        <TextInput label="原作者" value={value.author} onChange={(author) => onChange({ ...value, author })} />
+        <TextInput label="原标题" value={value.original_title} onChange={(original_title) => onChange({ ...value, original_title })} />
+        <TextInput label="原链接" value={value.original_url} onChange={(original_url) => onChange({ ...value, original_url })} />
+        <TextInput label="发布时间" type="datetime-local" value={value.published_at} onChange={(published_at) => onChange({ ...value, published_at })} />
+        <TextInput label="热度快照" value={value.heat_snapshot} onChange={(heat_snapshot) => onChange({ ...value, heat_snapshot })} />
+      </div>
+      <div className="mt-3">
+        <TextArea label="迁移说明" value={value.migration_note} onChange={(migration_note) => onChange({ ...value, migration_note })} />
+      </div>
+      <div className="mt-3">
+        <PrimaryButton disabled={Boolean(busy) || !ready} onClick={onSave}>检测链接并保存</PrimaryButton>
+      </div>
+    </div>
+  );
+}
+
+function DraftCard({
+  draft,
+  busy,
+  onChoose,
+}: {
+  draft: ContentDraft;
+  busy: string | null;
+  onChoose: (draft: ContentDraft) => void;
+}) {
+  return (
+    <div className="rounded-2xl border border-slate-200 p-5">
+      <div className="flex gap-2">
+        <Badge>{draft.selected_body_version === "long" ? "长版" : "短版"}</Badge>
+        <Badge>同一核心判断</Badge>
+      </div>
+      <h3 className="mt-3 text-lg font-semibold">{draft.title}</h3>
+      <pre className="mt-3 max-h-[430px] overflow-auto whitespace-pre-wrap font-sans text-sm leading-7 text-slate-700">{draft.body}</pre>
+      <div className="mt-4 grid gap-2 sm:grid-cols-2">
+        {draft.validation_checks.map((check) => <Check key={check.key} check={check} />)}
+      </div>
+      <div className="mt-4">
+        <PrimaryButton disabled={Boolean(busy)} onClick={() => onChoose(draft)}>选定这个版本</PrimaryButton>
+      </div>
+    </div>
+  );
+}
+
+function FinalDraft({
+  draft,
+  busy,
+  onPublish,
+}: {
+  draft: ContentDraft;
+  busy: string | null;
+  onPublish: (draft: ContentDraft, publishedAt: string) => void;
+}) {
+  const [publishedAt, setPublishedAt] = useState(asLocalDateTime(draft.published_at));
+  const packageText = `${draft.title}\n\n${draft.body}\n\n${draft.hashtags.join(" ")}`;
+  const feedback = `标题：${draft.title}\n方法：${draft.method_label}\n承诺：${draft.title_promise}\n复盘重点：${draft.review_points.join("、")}`;
+  const publishable = draft.validation_checks.length === 4 && draft.validation_checks.every((check) => check.status === "passed");
+  return (
+    <div className="rounded-2xl border border-slate-200 p-5">
+      <div className="flex flex-wrap gap-2">
+        <Badge>{draft.method_group === "native" ? "原生法" : "对标法"}</Badge>
+        <Badge>{draft.method_label}</Badge>
+        <Badge>{draft.selected_body_version === "long" ? "长版" : "短版"}</Badge>
+      </div>
+      <div className="mt-5 grid gap-4 lg:grid-cols-[220px_1fr]">
+        <div className="rounded-2xl bg-slate-900 p-5 text-white">
+          <div className="text-xs text-slate-300">封面句</div>
+          <div className="mt-3 text-2xl font-semibold leading-tight">{draft.cover_text}</div>
+          <div className="mt-5 text-xs leading-5 text-slate-300">{draft.cover_suggestion}</div>
+        </div>
+        <div>
+          <h3 className="text-xl font-semibold">{draft.title}</h3>
+          <pre className="mt-3 max-h-[520px] overflow-auto whitespace-pre-wrap font-sans text-sm leading-7 text-slate-700">{draft.body}</pre>
+          <div className="mt-3 text-sm text-[#9a6b24]">{draft.hashtags.join(" ")}</div>
+        </div>
+      </div>
+      <div className="mt-5 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+        {draft.validation_checks.map((check) => <Check key={check.key} check={check} />)}
+      </div>
+      <div className="mt-5 flex flex-wrap gap-2">
+        <CopyButton text={draft.cover_text} label="复制封面" />
+        <CopyButton text={feedback} label="复制反馈" />
+        <CopyButton text={packageText} label="复制完整发布包" />
+      </div>
+      <div className="mt-5 flex flex-col gap-3 rounded-2xl bg-slate-50 p-4 sm:flex-row sm:items-end">
+        <TextInput label="实际发布时间" type="datetime-local" value={publishedAt} onChange={setPublishedAt} />
+        <PrimaryButton
+          disabled={Boolean(busy) || draft.status !== "ready" || !publishable || !publishedAt}
+          onClick={() => onPublish(draft, publishedAt)}
+        >
+          标记实际发布
+        </PrimaryButton>
+      </div>
+      {!publishable && <p className="mt-3 text-xs text-red-600">硬校验未全部通过，系统会阻止标记发布。</p>}
+    </div>
+  );
+}
+
+function ReviewRow({ draft, review, onOpen }: { draft: ContentDraft; review?: GrowthReview; onOpen: () => void }) {
+  const publishedMs = Date.parse(draft.published_at || draft.distributed_at || draft.updated_at);
+  const availableAt = Number.isFinite(publishedMs) ? publishedMs + 24 * 60 * 60 * 1000 : Number.NaN;
+  const ready = draft.status === "reviewed" || Boolean(review) || (Number.isFinite(availableAt) && Date.now() >= availableAt);
+  return (
+    <div className="flex flex-col gap-3 rounded-2xl border border-slate-200 p-4 md:flex-row md:items-center md:justify-between">
+      <div>
+        <div className="flex flex-wrap gap-2">
+          <Badge>{draft.method_group === "native" ? "原生法" : "对标法"}</Badge>
+          <Badge>{draft.generation_mode === "default" ? "默认" : "探索"}</Badge>
+          <Badge>{STATUS_LABEL[draft.status]}</Badge>
+        </div>
+        <div className="mt-2 font-semibold">{draft.title}</div>
+        <div className="mt-1 text-xs text-slate-500">
+          {draft.method_label} · 实际发布于 {new Date(draft.published_at || draft.distributed_at || draft.updated_at).toLocaleString("zh-CN")}
+        </div>
+      </div>
+      <div>
+        {ready ? (
+          <SecondaryButton onClick={onOpen}>{review ? "更新复盘" : "首次复盘"}</SecondaryButton>
+        ) : (
+          <div className="text-right text-xs text-slate-500">
+            等待24小时<br />{Number.isFinite(availableAt) ? new Date(availableAt).toLocaleString("zh-CN") : "发布时间缺失"}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function WeeklyReview({ review }: { review: WeeklyReviewResult }) {
+  return (
+    <div className="mt-5">
+      <div className="rounded-2xl border border-slate-200 p-4 text-sm leading-7">
+        <b>本周期结论：</b>{review.decision.summary}<br />
+        <b>新有效样本：</b>{review.eligible_total || 0}/30<br />
+        <b>规则：</b>{(review.eligible_total || 0) < 30 ? "只展示描述性数据，不推荐最佳方法。" : review.decision.scale_direction}
+      </div>
+
+      {(["native", "benchmark"] as TitleMethodGroup[]).map((group) => {
+        const rows = review.by_method.filter((item) =>
+          item.method_id !== "legacy" && TITLE_METHOD_BY_ID[item.method_id]?.group === group);
+        return (
+          <div key={group} className="mt-5">
+            <h3 className="font-semibold">{group === "native" ? "原生法" : "对标法"}</h3>
+            {rows.length ? (
+              <div className="mt-3 overflow-x-auto rounded-2xl border border-slate-200">
+                <table className="min-w-[980px] w-full text-left text-xs">
+                  <thead className="bg-slate-50 text-slate-500">
+                    <tr>
+                      <th className="px-3 py-3">方法</th>
+                      <th className="px-3 py-3">模式</th>
+                      <th className="px-3 py-3">有效/复盘</th>
+                      <th className="px-3 py-3">有效咨询率</th>
+                      <th className="px-3 py-3">曝光</th>
+                      <th className="px-3 py-3">阅读</th>
+                      <th className="px-3 py-3">收藏</th>
+                      <th className="px-3 py-3">分享</th>
+                      <th className="px-3 py-3">主页访问</th>
+                      <th className="px-3 py-3">成交</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.map((item) => <WeeklyMethodRow key={`${item.method_id}-${item.generation_mode}`} item={item} />)}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="mt-3 rounded-xl border border-dashed border-slate-300 p-4 text-sm text-slate-400">本周期暂无该类方法样本。</div>
+            )}
+          </div>
+        );
+      })}
+
+      {review.promotion_suggestions.length > 0 && (
+        <div className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm">
+          <b>探索晋升建议（需人工确认）</b>
+          <ul className="mt-2 list-disc space-y-1 pl-5">
+            {review.promotion_suggestions.map((item) => <li key={item.method_id}>{item.method_label}：{item.reason}</li>)}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function WeeklyMethodRow({ item }: { item: MethodAggregate }) {
+  return (
+    <tr className="border-t border-slate-100">
+      <td className="px-3 py-3 font-medium">{item.method_label}</td>
+      <td className="px-3 py-3">{item.generation_mode === "default" ? "默认" : "探索"}</td>
+      <td className="px-3 py-3">{item.valid_count}/{item.reviewed_count}</td>
+      <td className="px-3 py-3 font-semibold text-[#9a6b24]">{formatPercent(item.median_inquiry_rate)}</td>
+      <td className="px-3 py-3">{formatNumber(item.median_impressions)}</td>
+      <td className="px-3 py-3">{formatNumber(item.median_reads)}</td>
+      <td className="px-3 py-3">{formatNumber(item.median_saves)}</td>
+      <td className="px-3 py-3">{formatNumber(item.median_shares)}</td>
+      <td className="px-3 py-3">{formatNumber(item.median_profile_visits)}</td>
+      <td className="px-3 py-3">{formatNumber(item.median_sales)}</td>
+    </tr>
+  );
+}
+
+const formatPercent = (value?: number) => `${((value || 0) * 100).toFixed(2)}%`;
+const formatNumber = (value?: number) => Math.round(value || 0).toLocaleString("zh-CN");
+
+function Check({ check }: { check: ContentDraft["validation_checks"][number] }) {
+  const label = ({ source: "来源", identity: "身份", fulfillment: "兑现", compliance: "合规" } as Record<string, string>)[check.key];
+  return (
+    <div className={`rounded-xl px-3 py-2 text-xs ${check.status === "passed" ? "bg-emerald-50 text-emerald-800" : "bg-red-50 text-red-700"}`}>
+      <b>{label}</b> · {check.status === "passed" ? "通过" : "需修改"}
+      <div className="mt-1 opacity-75">{check.message}</div>
+    </div>
+  );
+}
+
+function MotherFact({ label, value }: { label: string; value: string }) {
+  return <div><div className="text-xs font-medium text-slate-500">{label}</div><div className="mt-2 text-sm font-medium leading-6 text-slate-800">{value}</div></div>;
+}
+
+function PersonFact({ label, value }: { label: string; value: string }) {
+  return <div className="rounded-2xl border border-slate-200 p-4"><div className="text-xs font-medium text-slate-500">{label}</div><div className="mt-2 whitespace-pre-wrap text-sm leading-6 text-slate-700">{value || "未填写"}</div></div>;
+}
+
+function SourceStatus({ status, verified }: { status: "accessible" | "restricted" | "invalid"; verified?: boolean }) {
+  const text = status === "accessible" ? "可访问" : status === "invalid" ? "已失效" : verified ? "受限·已人工复核" : "受限·待复核";
+  const color = status === "accessible" ? "bg-emerald-50 text-emerald-700" : status === "invalid" ? "bg-red-50 text-red-700" : "bg-amber-50 text-amber-700";
+  return <span className={`shrink-0 rounded-full px-2 py-1 text-xs ${color}`}>{text}</span>;
+}
+
+function Section({ number, title, subtitle, children }: { number: string; title: string; subtitle: string; children: React.ReactNode }) {
+  return (
+    <section data-step={number} className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
+      <div className="mb-6 flex gap-4">
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-900 text-sm font-semibold text-white">{number}</span>
+        <div><h2 className="text-xl font-semibold">{title}</h2><p className="mt-1 text-sm leading-6 text-slate-500">{subtitle}</p></div>
       </div>
       {children}
     </section>
   );
 }
 
-function Field({ label, value }: { label: string; value: string | number }) {
+function TextInput({ label, value, onChange, type = "text" }: { label: string; value: string; onChange: (value: string) => void; type?: string }) {
   return (
-    <div>
-      <div className="text-xs font-medium text-ink-400">{label}</div>
-      <div className="mt-1 leading-6 text-ink-800">{value}</div>
-    </div>
+    <label className="block min-w-[180px] flex-1">
+      <span className="mb-2 block text-xs font-medium text-slate-500">{label}</span>
+      <input type={type} value={value} onChange={(event) => onChange(event.target.value)} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-amber-500" />
+    </label>
   );
 }
 
-function EditField({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
+function TextArea({ label, value, onChange, placeholder }: { label: string; value: string; onChange: (value: string) => void; placeholder?: string }) {
   return (
-    <div>
-      <label className="mb-1 block text-xs font-medium text-ink-500">{label}</label>
-      <input value={value} onChange={(e) => onChange(e.target.value)} className="w-full rounded-xl border border-ink-100 bg-white px-3 py-2 text-sm" />
-    </div>
+    <label className="block">
+      <span className="mb-2 block text-xs font-medium text-slate-500">{label}</span>
+      <textarea value={value} placeholder={placeholder} onChange={(event) => onChange(event.target.value)} rows={3} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-amber-500" />
+    </label>
   );
 }
 
-function EditArea({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
+function Select({ label, value, onChange, options }: { label: string; value: string; onChange: (value: string) => void; options: Array<{ value: string; label: string }> }) {
   return (
-    <div>
-      <label className="mb-1 block text-xs font-medium text-ink-500">{label}</label>
-      <textarea value={value} onChange={(e) => onChange(e.target.value)} rows={3} className="w-full rounded-xl border border-ink-100 bg-white px-3 py-2 text-sm leading-6" />
+    <label className="block min-w-[180px]">
+      <span className="mb-2 block text-xs font-medium text-slate-500">{label}</span>
+      <select value={value} onChange={(event) => onChange(event.target.value)} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm">
+        {options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+      </select>
+    </label>
+  );
+}
+
+function PrimaryButton({ children, onClick, disabled = false }: { children: React.ReactNode; onClick: () => void; disabled?: boolean }) {
+  return <button type="button" disabled={disabled} onClick={onClick} className="rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40">{children}</button>;
+}
+
+function SecondaryButton({ children, onClick, disabled = false }: { children: React.ReactNode; onClick: () => void; disabled?: boolean }) {
+  return <button type="button" disabled={disabled} onClick={onClick} className="rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-800 disabled:opacity-40">{children}</button>;
+}
+
+function Badge({ children }: { children: React.ReactNode }) {
+  return <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600">{children}</span>;
+}
+
+function CopyButton({ text, label }: { text: string; label: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <SecondaryButton onClick={async () => {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1200);
+    }}>
+      {copied ? "已复制" : label}
+    </SecondaryButton>
+  );
+}
+
+function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4">
+      <div className="max-h-[92vh] w-full max-w-3xl overflow-auto rounded-3xl bg-white p-5 shadow-2xl sm:p-6">
+        <div className="mb-5 flex items-start justify-between gap-4">
+          <h2 className="text-xl font-semibold">{title}</h2>
+          <button onClick={onClose} className="text-2xl text-slate-400">×</button>
+        </div>
+        {children}
+      </div>
     </div>
   );
 }
