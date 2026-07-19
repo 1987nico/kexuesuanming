@@ -10,6 +10,7 @@ import {
   isWeeklyReviewStale,
 } from "@/lib/growth/reviewLearning";
 import { ensureRecentTopicSources } from "@/lib/growth/sourceDiscovery";
+import { accountForBusinessGeneration } from "@/lib/growth/businessCompatibility";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -78,7 +79,7 @@ export async function POST(req: Request) {
     : [];
 
   const { topics, unavailableMethods, usage } = await generateTopicBatch({
-    account,
+    account: accountForBusinessGeneration(account),
     week: parsed.data.week ?? run?.week ?? 1,
     generationMode,
     excludeTitles: seenTitles,

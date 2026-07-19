@@ -32,6 +32,7 @@ import {
   TITLE_METHOD_BY_ID,
   type TitleMethodDefinition,
 } from "@/lib/growth/methods";
+import { visibleBusinessText } from "@/lib/growth/businessCompatibility";
 
 interface BootstrapData {
   businessLine: GrowthBusinessLine;
@@ -193,6 +194,11 @@ function sourceAge(source: TopicSourceSnapshot) {
   return "历史框架库";
 }
 
+function sourceHeatSummary(source: TopicSourceSnapshot) {
+  const items = source.heat_snapshot.split("·").map((item) => item.trim()).filter(Boolean);
+  return items.slice(0, 2).join(" · ") || source.heat_snapshot;
+}
+
 function sourceCanGenerate(source?: TopicSourceSnapshot) {
   if (!source || source.freshness === "historical" || source.link_status === "invalid") return false;
   return source.link_status === "accessible" || Boolean(source.verified_by_operator);
@@ -215,6 +221,7 @@ export default function GrowthPage() {
   const [source, setSource] = useState<SourceForm>(emptySource);
   const [sourceEditorMethod, setSourceEditorMethod] = useState<TitleMethodId | null>(null);
   const [variants, setVariants] = useState<ContentDraft[]>([]);
+  const [selectedTopic, setSelectedTopic] = useState<{ run: GrowthRun; topic: TopicCandidate } | null>(null);
   const [activeTopic, setActiveTopic] = useState<{ run: GrowthRun; topic: TopicCandidate } | null>(null);
   const [chosen, setChosen] = useState<ContentDraft | null>(null);
   const [titleEdits, setTitleEdits] = useState<Record<string, string>>({});
@@ -222,6 +229,7 @@ export default function GrowthPage() {
   const [exploreOpen, setExploreOpen] = useState<Record<TitleMethodGroup, boolean>>({ native: false, benchmark: false });
   const [busy, setBusy] = useState<string | null>("load");
   const [message, setMessage] = useState("");
+  const [topicMessage, setTopicMessage] = useState("");
   const [reviewDraft, setReviewDraft] = useState<ContentDraft | null>(null);
   const [reviewValues, setReviewValues] = useState<Record<string, string | boolean>>(emptyReview());
   const [reviewBaseline, setReviewBaseline] = useState<Record<string, string | boolean>>(emptyReview());
@@ -240,6 +248,7 @@ export default function GrowthPage() {
     setData(next);
     setForm(next?.account ? accountForm(next.account) : { ...emptyAccount });
     setVariants([]);
+    setSelectedTopic(null);
     setActiveTopic(null);
     setChosen(next?.currentDrafts?.find((draft) => draft.status === "ready") || null);
     setTitleEdits({});
@@ -247,6 +256,7 @@ export default function GrowthPage() {
     setExploreOpen({ native: false, benchmark: false });
     setSourceEditorMethod(null);
     setSource(emptySource);
+    setTopicMessage("");
     setReviewDraft(null);
     setReviewValues(emptyReview());
     setReviewBaseline(emptyReview());
@@ -340,6 +350,19 @@ export default function GrowthPage() {
       draft.schema_version !== "legacy_v1" && (draft.status === "published" || draft.status === "reviewed")),
     [data?.currentDrafts],
   );
+  const workflowSteps = [
+    ["0", "业务定位"], ["1", "三家视角"], ["2", "人设"], ["3", "选题"],
+    ["4", "正文"], ["5", "单篇复盘"], ["6", "周复盘"],
+  ] as const;
+  const currentStep = data?.weeklyReview
+    ? "6"
+    : reviewDrafts.length
+      ? "5"
+      : selectedTopic || activeTopic || variants.length || chosen
+        ? "4"
+        : data?.account
+          ? "3"
+          : "0";
 
   function switchBusiness(next: GrowthBusinessLine) {
     if (next === businessLine) return;
@@ -504,7 +527,7 @@ export default function GrowthPage() {
   async function generateTopics(mode: MethodGenerationMode, group?: TitleMethodGroup) {
     if (!data?.account) return;
     setBusy(`topics-${mode}`);
-    setMessage("正在调用小红书职业榜API获取近期笔记，并生成标题…");
+    setTopicMessage("正在调用小红书职业榜API获取近期笔记，并生成标题…");
     if (group) setExploreOpen((current) => ({ ...current, [group]: true }));
     try {
       const result = await requestJSON<{
@@ -525,12 +548,13 @@ export default function GrowthPage() {
         runs: [result.run, ...current.runs.filter((run) => run.id !== result.run.id)],
       } : current);
       setVariants([]);
+      setSelectedTopic(null);
       setActiveTopic(null);
       setChosen(null);
       setTitleEdits({});
-      setMessage(`${result.sourceRefresh.message} 已生成${result.run.topic_pool.length}个标题；${result.unavailableMethods?.length || 0}个方法因来源不足暂停。`);
+      setTopicMessage(`${result.sourceRefresh.message} 已生成${result.run.topic_pool.length}个标题；${result.unavailableMethods?.length || 0}个方法因来源不足暂停。`);
     } catch (error) {
-      setMessage((error as Error).message);
+      setTopicMessage((error as Error).message);
     } finally {
       setBusy(null);
     }
@@ -540,6 +564,13 @@ export default function GrowthPage() {
     const limitedTitle = Array.from(title).slice(0, 20).join("");
     setTitleEdits((current) => ({ ...current, [topic.id]: limitedTitle }));
     if (activeTopic?.topic.id === topic.id) setActiveTopic(null);
+    setVariants([]);
+    setChosen(null);
+  }
+
+  function selectTopic(run: GrowthRun, topic: TopicCandidate) {
+    setSelectedTopic({ run, topic });
+    setActiveTopic(null);
     setVariants([]);
     setChosen(null);
   }
@@ -584,6 +615,7 @@ export default function GrowthPage() {
     try {
       const editedTitle = titleEdits[topic.id] ?? topic.title;
       const saved = await persistTopicTitle(run, topic, editedTitle);
+      setSelectedTopic(saved);
       setActiveTopic(saved);
       const result = await requestJSON<{ drafts: ContentDraft[] }>("/api/growth/drafts/variants", {
         method: "POST",
@@ -735,6 +767,28 @@ export default function GrowthPage() {
           </div>
         </header>
 
+        <nav
+          aria-label="内容生产流程"
+          className="sticky top-3 z-20 mb-6 overflow-x-auto rounded-2xl border border-slate-200 bg-white/95 p-2 shadow-sm backdrop-blur"
+        >
+          <div className="flex min-w-max gap-1">
+            {workflowSteps.map(([number, label]) => (
+              <a
+                key={number}
+                href={`#growth-step-${number}`}
+                aria-current={currentStep === number ? "step" : undefined}
+                className={`flex min-h-10 items-center rounded-xl px-3 text-sm font-medium transition ${
+                  currentStep === number
+                    ? "bg-slate-900 text-white"
+                    : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+                }`}
+              >
+                {number} {label}
+              </a>
+            ))}
+          </div>
+        </nav>
+
         {message && (
           <div className="mb-6 rounded-2xl border border-[#ead7b5] bg-[#fffaf0] px-5 py-3 text-sm">{message}</div>
         )}
@@ -782,11 +836,13 @@ export default function GrowthPage() {
                     {businessEditOpen ? "收起设置" : "调整业务定位"}
                   </SecondaryButton>
                 </div>
-                <div className="mt-5 grid gap-4 md:grid-cols-3">
-                  <MotherFact label="你是什么（品类）" value={businessPosition.service_category} />
-                  <MotherFact label="有何不同" value={businessPosition.differentiation} />
-                  <MotherFact label="何以见得（信任来源）" value={businessPosition.trust_source} />
-                </div>
+                {!businessEditOpen && (
+                  <div className="mt-5 grid gap-4 md:grid-cols-3">
+                    <MotherFact label="你是什么（品类）" value={businessPosition.service_category} />
+                    <MotherFact label="有何不同" value={businessPosition.differentiation} />
+                    <MotherFact label="何以见得（信任来源）" value={businessPosition.trust_source} />
+                  </div>
+                )}
                 {businessEditOpen && (
                   <div className="mt-5 rounded-2xl border border-slate-200 bg-slate-50 p-4">
                     <div className="grid gap-4 md:grid-cols-2">
@@ -864,7 +920,7 @@ export default function GrowthPage() {
                       className={`rounded-2xl border p-4 text-left ${active ? "border-slate-900 bg-slate-900 text-white" : "border-slate-200 bg-white text-slate-800"}`}
                     >
                       <div className={`text-xs font-semibold ${active ? "text-amber-200" : "text-slate-500"}`}>
-                        {GROWTH_PERSONA_LABELS[item]}
+                        {GROWTH_PERSONA_LABELS[item]}{active ? " · 已选择" : ""}
                       </div>
                       <div className="mt-1 font-semibold">{view.role}</div>
                       <div className={`mt-2 text-xs leading-5 ${active ? "text-slate-300" : "text-slate-500"}`}>{view.description}</div>
@@ -897,19 +953,19 @@ export default function GrowthPage() {
                     <div className="grid gap-4 md:grid-cols-2">
                       <TextInput label="人设名称" value={form.name} onChange={(value) => setForm({ ...form, name: value })} />
                       <TextInput label="一句话人设" value={form.one_liner} onChange={(value) => setForm({ ...form, one_liner: value })} />
-                      <TextArea label="目标人群" value={form.target_user} onChange={(value) => setForm({ ...form, target_user: value })} />
-                      <TextArea label="核心问题" value={form.core_problem} onChange={(value) => setForm({ ...form, core_problem: value })} />
-                      <TextArea label="持续提供的价值" value={form.account_value} onChange={(value) => setForm({ ...form, account_value: value })} />
-                      <TextArea label="信任来源" value={form.trust_source} onChange={(value) => setForm({ ...form, trust_source: value })} />
+                      <TextArea label="目标人群" value={visibleBusinessText(form.target_user, businessLine)} onChange={(value) => setForm({ ...form, target_user: value })} />
+                      <TextArea label="核心问题" value={visibleBusinessText(form.core_problem, businessLine)} onChange={(value) => setForm({ ...form, core_problem: value })} />
+                      <TextArea label="持续提供的价值" value={visibleBusinessText(form.account_value, businessLine)} onChange={(value) => setForm({ ...form, account_value: value })} />
+                      <TextArea label="信任来源" value={visibleBusinessText(form.trust_source, businessLine)} onChange={(value) => setForm({ ...form, trust_source: value })} />
                       <TextArea label="不做什么" value={form.not_doing} onChange={(value) => setForm({ ...form, not_doing: value })} />
                       <TextArea label="合规红线" value={form.compliance_redline} onChange={(value) => setForm({ ...form, compliance_redline: value })} />
                     </div>
                   ) : (
                     <div className="grid gap-4 md:grid-cols-2">
-                      <PersonFact label="目标人群" value={form.target_user} />
-                      <PersonFact label="核心问题" value={form.core_problem} />
-                      <PersonFact label="持续提供的价值" value={form.account_value} />
-                      <PersonFact label="信任来源" value={form.trust_source} />
+                      <PersonFact label="目标人群" value={visibleBusinessText(form.target_user, businessLine)} />
+                      <PersonFact label="核心问题" value={visibleBusinessText(form.core_problem, businessLine)} />
+                      <PersonFact label="持续提供的价值" value={visibleBusinessText(form.account_value, businessLine)} />
+                      <PersonFact label="信任来源" value={visibleBusinessText(form.trust_source, businessLine)} />
                     </div>
                   )}
 
@@ -919,7 +975,7 @@ export default function GrowthPage() {
                       <TextArea
                         key={field.key}
                         label={field.label}
-                        value={form.persona_specific[field.key] || ""}
+                        value={visibleBusinessText(form.persona_specific[field.key], businessLine)}
                         onChange={(value) => setForm({
                           ...form,
                           persona_specific: { ...form.persona_specific, [field.key]: value },
@@ -927,7 +983,11 @@ export default function GrowthPage() {
                         placeholder={field.placeholder}
                       />
                     ) : (
-                      <PersonFact key={field.key} label={field.label} value={form.persona_specific[field.key] || "未填写"} />
+                      <PersonFact
+                        key={field.key}
+                        label={field.label}
+                        value={visibleBusinessText(form.persona_specific[field.key], businessLine) || "未填写"}
+                      />
                     ))}
                   </div>
 
@@ -951,11 +1011,6 @@ export default function GrowthPage() {
                       )}
                     </div>
                   </details>
-
-                  <div className="mt-5 rounded-2xl bg-slate-50 p-4 text-sm">
-                    <b>只读历史方向</b>
-                    <div className="mt-2 text-slate-600">{data.account.content_directions?.join(" / ") || "无历史值"}</div>
-                  </div>
 
                   {personaEditing && (
                     <div className="mt-5 flex flex-wrap gap-2">
@@ -984,6 +1039,12 @@ export default function GrowthPage() {
                     <PrimaryButton disabled={Boolean(busy)} onClick={() => generateTopics("default")}>生成选题</PrimaryButton>
                   </div>
 
+                  {topicMessage && (
+                    <div className="mt-4 rounded-2xl border border-[#ead7b5] bg-[#fffaf0] px-4 py-3 text-sm leading-6">
+                      {topicMessage}
+                    </div>
+                  )}
+
                   <div className="mt-6 space-y-6">
                     {(["native", "benchmark"] as TitleMethodGroup[]).map((group) => (
                       <MethodArea
@@ -998,12 +1059,12 @@ export default function GrowthPage() {
                         exploreOpen={exploreOpen[group]}
                         sourceEditorMethod={sourceEditorMethod}
                         source={source}
-                        activeTopicId={activeTopic?.topic.id}
+                        activeTopicId={selectedTopic?.topic.id}
                         titleEdits={titleEdits}
                         savingTitleId={savingTitleId}
                         onExploreOpen={(open) => setExploreOpen((current) => ({ ...current, [group]: open }))}
                         onExplore={() => generateTopics("explore", group)}
-                        onGenerateBody={generateBodies}
+                        onSelectTopic={selectTopic}
                         onTitleChange={changeTopicTitle}
                         onSaveTitle={saveTopicTitle}
                         onOpenSource={openSourceEditor}
@@ -1014,12 +1075,35 @@ export default function GrowthPage() {
                       />
                     ))}
                   </div>
+
+                  <div className="sticky bottom-3 z-10 mt-6 rounded-2xl border border-slate-300 bg-white/95 p-4 shadow-lg backdrop-blur">
+                    {selectedTopic ? (
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="min-w-0">
+                          <div className="text-xs font-semibold text-[#9a6b24]">已选择标题</div>
+                          <div className="mt-1 truncate font-semibold">
+                            {titleEdits[selectedTopic.topic.id] ?? selectedTopic.topic.title}
+                          </div>
+                        </div>
+                        <PrimaryButton
+                          disabled={Boolean(busy)}
+                          onClick={() => generateBodies(selectedTopic.run, selectedTopic.topic)}
+                        >
+                          {busy === `body-${selectedTopic.topic.id}` ? "正在生成正文…" : "下一步：生成正文"}
+                        </PrimaryButton>
+                      </div>
+                    ) : (
+                      <div className="text-sm text-slate-500">请先在上方选择一个标题，再进入正文。</div>
+                    )}
+                  </div>
                 </Section>
 
                 <Section
                   number="4"
                   title="正文"
-                  subtitle={activeTopic ? `已选标题：${activeTopic.topic.title}；标题承诺：${activeTopic.topic.title_promise}` : "先在选题槽位中选择一个标题，再生成短版和长版正文。"}
+                  subtitle={(activeTopic || selectedTopic)
+                    ? `已选标题：${titleEdits[(activeTopic || selectedTopic)!.topic.id] ?? (activeTopic || selectedTopic)!.topic.title}；标题承诺：${(activeTopic || selectedTopic)!.topic.title_promise}`
+                    : "先在选题槽位中选择一个标题，再生成短版和长版正文。"}
                 >
                   {variants.length > 0 ? (
                     <div className="grid gap-5 lg:grid-cols-2">
@@ -1027,8 +1111,22 @@ export default function GrowthPage() {
                         <DraftCard key={draft.id} draft={draft} busy={busy} onChoose={chooseDraft} />
                       ))}
                     </div>
+                  ) : chosen ? (
+                    <div className="rounded-2xl bg-slate-50 p-4 text-sm text-slate-600">
+                      当前已有一篇待发布正文，完整内容与发布校验显示在下方。
+                    </div>
+                  ) : selectedTopic ? (
+                    <div className="rounded-2xl border border-dashed border-slate-300 p-5 text-sm text-slate-500">
+                      <div className="font-medium text-slate-800">标题已选定，等待生成正文</div>
+                      <p className="mt-2 leading-6">短版和长版将使用同一核心判断；正文不选择内容方向或正文阶段。</p>
+                      <a className="mt-3 inline-flex min-h-10 items-center rounded-xl border border-slate-200 px-3 font-medium text-slate-700" href="#growth-step-3">返回选题</a>
+                    </div>
                   ) : (
-                    <p className="text-sm text-slate-400">短版和长版使用同一核心判断；正文不选择内容方向或正文阶段。</p>
+                    <div className="rounded-2xl border border-dashed border-slate-300 p-5 text-sm text-slate-500">
+                      <div className="font-medium text-slate-800">待选择标题</div>
+                      <p className="mt-2">先从原生法或对标法中选择一个标题。</p>
+                      <a className="mt-3 inline-flex min-h-10 items-center rounded-xl border border-slate-200 px-3 font-medium text-slate-700" href="#growth-step-3">返回选题</a>
+                    </div>
                   )}
 
                   {chosen && (
@@ -1075,7 +1173,9 @@ export default function GrowthPage() {
                       <div className="font-semibold">v3.2 新有效样本：{data.learningSummary.newLearningSamples}/30</div>
                       <p className="mt-1 text-sm text-slate-600">30篇前只展示数据，不推荐最佳方法；旧版样本不进入新方法胜率。</p>
                     </div>
-                    <PrimaryButton disabled={Boolean(busy)} onClick={runWeeklyReview}>保存固定周期快照</PrimaryButton>
+                    <PrimaryButton disabled={Boolean(busy) || reviewDrafts.length === 0} onClick={runWeeklyReview}>
+                      {reviewDrafts.length === 0 ? "有发布内容后可保存" : "保存固定周期快照"}
+                    </PrimaryButton>
                   </div>
 
                   {data.weeklyReview ? (
@@ -1168,7 +1268,7 @@ function MethodArea({
   savingTitleId,
   onExploreOpen,
   onExplore,
-  onGenerateBody,
+  onSelectTopic,
   onTitleChange,
   onSaveTitle,
   onOpenSource,
@@ -1192,7 +1292,7 @@ function MethodArea({
   savingTitleId: string | null;
   onExploreOpen: (open: boolean) => void;
   onExplore: () => void;
-  onGenerateBody: (run: GrowthRun, topic: TopicCandidate) => void;
+  onSelectTopic: (run: GrowthRun, topic: TopicCandidate) => void;
   onTitleChange: (topic: TopicCandidate, title: string) => void;
   onSaveTitle: (run: GrowthRun, topic: TopicCandidate, title: string) => void;
   onOpenSource: (methodId: TitleMethodId) => void;
@@ -1228,7 +1328,7 @@ function MethodArea({
             activeTopicId={activeTopicId}
             editedTitle={topicTitle(defaultRun, method.id, titleEdits)}
             savingTitle={savingTitleId === defaultRun?.topic_pool.find((item) => item.method_id === method.id)?.id}
-            onGenerateBody={onGenerateBody}
+            onSelectTopic={onSelectTopic}
             onTitleChange={onTitleChange}
             onSaveTitle={onSaveTitle}
             onOpenSource={onOpenSource}
@@ -1263,7 +1363,7 @@ function MethodArea({
                   activeTopicId={activeTopicId}
                   editedTitle={topicTitle(exploreRun, method.id, titleEdits)}
                   savingTitle={savingTitleId === exploreRun?.topic_pool.find((item) => item.method_id === method.id)?.id}
-                  onGenerateBody={onGenerateBody}
+                  onSelectTopic={onSelectTopic}
                   onTitleChange={onTitleChange}
                   onSaveTitle={onSaveTitle}
                   onOpenSource={onOpenSource}
@@ -1292,7 +1392,7 @@ function MethodSlot({
   activeTopicId,
   editedTitle,
   savingTitle,
-  onGenerateBody,
+  onSelectTopic,
   onTitleChange,
   onSaveTitle,
   onOpenSource,
@@ -1311,7 +1411,7 @@ function MethodSlot({
   activeTopicId?: string;
   editedTitle?: string;
   savingTitle: boolean;
-  onGenerateBody: (run: GrowthRun, topic: TopicCandidate) => void;
+  onSelectTopic: (run: GrowthRun, topic: TopicCandidate) => void;
   onTitleChange: (topic: TopicCandidate, title: string) => void;
   onSaveTitle: (run: GrowthRun, topic: TopicCandidate, title: string) => void;
   onOpenSource: (methodId: TitleMethodId) => void;
@@ -1338,26 +1438,32 @@ function MethodSlot({
           {source ? (
             <>
               <div className="flex flex-wrap items-start justify-between gap-2">
-                <div className="min-w-0 text-xs font-medium text-slate-700">{source.author}｜{source.original_title}</div>
+                <div className="min-w-0 text-sm font-medium leading-6 text-slate-700">{source.author}｜{source.original_title}</div>
                 <SourceStatus status={source.link_status} verified={source.verified_by_operator} />
               </div>
               <div className="mt-2 text-xs leading-5 text-slate-500">
-                {source.source_provider === "redfox_daily"
-                  ? `真实热榜API · ${source.rank_date || "当日"}榜${source.rank_position ? `第${source.rank_position}` : ""}`
-                  : source.platform}
-                {" · "}{new Date(source.published_at).toLocaleDateString("zh-CN")} · {sourceAge(source)} · {source.heat_snapshot}
+                {new Date(source.published_at).toLocaleDateString("zh-CN")} · {sourceAge(source)} · {sourceHeatSummary(source)}
               </div>
-              <div className="mt-2 flex flex-wrap gap-3 text-xs">
-                <a className="text-[#9a6b24] underline" href={source.original_url} target="_blank" rel="noreferrer">原链接</a>
-                <button className="text-slate-700 underline" onClick={() => onRefreshSource(source.id, source.link_status === "restricted")}>
+              <details className="mt-2 text-xs text-slate-500">
+                <summary className="cursor-pointer py-1 font-medium text-slate-600">查看完整来源数据</summary>
+                <div className="mt-1 leading-5">
+                  {source.source_provider === "redfox_daily"
+                    ? `真实热榜API · ${source.rank_date || "当日"}榜${source.rank_position ? `第${source.rank_position}` : ""}`
+                    : source.platform}
+                  {" · "}{source.heat_snapshot}
+                </div>
+              </details>
+              <div className="mt-3 flex flex-wrap gap-2 text-sm">
+                <a className="inline-flex min-h-11 items-center rounded-xl border border-[#ead7b5] bg-white px-3 font-medium text-[#9a6b24]" href={source.original_url} target="_blank" rel="noreferrer">打开原链接</a>
+                <button className="min-h-11 rounded-xl border border-slate-200 bg-white px-3 font-medium text-slate-700" onClick={() => onRefreshSource(source.id, source.link_status === "restricted")}>
                   {busy === `source-${source.id}` ? "检测中…" : "刷新校验"}
                 </button>
-                <button className="text-slate-700 underline" onClick={() => onOpenSource(method.id)}>补充近期来源</button>
+                <button className="min-h-11 rounded-xl border border-slate-200 bg-white px-3 font-medium text-slate-700" onClick={() => onOpenSource(method.id)}>补充来源</button>
               </div>
               {!usableSource && <div className="mt-2 text-xs text-amber-700">该来源当前不能生成标题，请补充7天内可用来源。</div>}
             </>
           ) : (
-            <button className="text-sm font-medium text-[#9a6b24] underline" onClick={() => onOpenSource(method.id)}>补充近期来源</button>
+            <button className="min-h-11 rounded-xl border border-[#ead7b5] bg-white px-3 text-sm font-medium text-[#9a6b24]" onClick={() => onOpenSource(method.id)}>补充近期来源</button>
           )}
         </div>
       )}
@@ -1379,7 +1485,7 @@ function MethodSlot({
             <label className="block">
               <span className="flex items-center justify-between gap-3 text-xs font-medium text-slate-500">
                 <span>标题（可编辑）</span>
-                <span>{Array.from(currentTitle).length}/20{savingTitle ? " · 保存中…" : currentTitle !== topic.title ? " · 已修改" : ""}</span>
+                <span>{Array.from(currentTitle).length}字 / 建议不超过20字{savingTitle ? " · 保存中…" : currentTitle !== topic.title ? " · 已修改" : ""}</span>
               </span>
               <textarea
                 aria-label={`编辑${method.label}标题`}
@@ -1392,7 +1498,11 @@ function MethodSlot({
             </label>
             <p className="mt-2 text-sm leading-6 text-slate-600">正文承诺：{topic.title_promise}</p>
             <div className="mt-4">
-              <PrimaryButton disabled={Boolean(busy) || !currentTitle.trim()} onClick={() => onGenerateBody(run, topic)}>用这个标题写正文</PrimaryButton>
+              {active ? (
+                <div className="inline-flex min-h-10 items-center rounded-xl bg-slate-900 px-4 text-sm font-semibold text-white">已选择</div>
+              ) : (
+                <SecondaryButton disabled={Boolean(busy) || !currentTitle.trim()} onClick={() => onSelectTopic(run, topic)}>选择此标题</SecondaryButton>
+              )}
             </div>
           </>
         ) : unavailable ? (
@@ -1671,7 +1781,7 @@ function SourceStatus({ status, verified }: { status: "accessible" | "restricted
 
 function Section({ number, title, subtitle, children }: { number: string; title: string; subtitle: string; children: React.ReactNode }) {
   return (
-    <section data-step={number} className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
+    <section id={`growth-step-${number}`} data-step={number} className="scroll-mt-24 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
       <div className="mb-6 flex gap-4">
         <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-900 text-sm font-semibold text-white">{number}</span>
         <div><h2 className="text-xl font-semibold">{title}</h2><p className="mt-1 text-sm leading-6 text-slate-500">{subtitle}</p></div>
@@ -1685,7 +1795,7 @@ function TextInput({ label, value, onChange, type = "text" }: { label: string; v
   return (
     <label className="block min-w-[180px] flex-1">
       <span className="mb-2 block text-xs font-medium text-slate-500">{label}</span>
-      <input type={type} value={value} onChange={(event) => onChange(event.target.value)} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-amber-500" />
+      <input type={type} value={value} onChange={(event) => onChange(event.target.value)} className="min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-amber-500" />
     </label>
   );
 }
@@ -1711,11 +1821,11 @@ function Select({ label, value, onChange, options }: { label: string; value: str
 }
 
 function PrimaryButton({ children, onClick, disabled = false }: { children: React.ReactNode; onClick: () => void; disabled?: boolean }) {
-  return <button type="button" disabled={disabled} onClick={onClick} className="rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40">{children}</button>;
+  return <button type="button" disabled={disabled} onClick={onClick} className="min-h-11 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40">{children}</button>;
 }
 
 function SecondaryButton({ children, onClick, disabled = false }: { children: React.ReactNode; onClick: () => void; disabled?: boolean }) {
-  return <button type="button" disabled={disabled} onClick={onClick} className="rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-800 disabled:opacity-40">{children}</button>;
+  return <button type="button" disabled={disabled} onClick={onClick} className="min-h-11 rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-800 disabled:opacity-40">{children}</button>;
 }
 
 function Badge({ children }: { children: React.ReactNode }) {

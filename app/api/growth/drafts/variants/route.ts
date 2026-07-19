@@ -3,6 +3,7 @@ import { z } from "zod";
 import { requireMianbaApiAuth } from "@/lib/auth/mianba";
 import { generateDraftVariants } from "@/lib/growth/runner";
 import { growthStore } from "@/lib/growth/store";
+import { accountForBusinessGeneration } from "@/lib/growth/businessCompatibility";
 import {
   buildLearningBrief,
   buildWeeklyReviewResult,
@@ -61,7 +62,7 @@ export async function POST(req: Request) {
 
   const { drafts, usage } = await generateDraftVariants({
     tenantId: DEFAULT_TENANT_ID,
-    account,
+    account: accountForBusinessGeneration(account),
     run,
     topic,
     count: parsed.data.count ?? 2,
