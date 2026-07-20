@@ -349,33 +349,56 @@ function fallbackBody(topic: TopicCandidate, long: boolean, cta: ContentDraft["c
   const judgement = businessLine === "overseas_student"
     ? "学校、专业和留学投入，都可能让人误判自己的岗位匹配度。真正要看的，是目标岗位是否认可你的经历、技能和可验证成果。"
     : "职位、收入和平台资源，都可能让人误判自己的市场价格。真正要看的，是离开当前岗位后，哪些能力、成果和客户信任仍能被单独识别。";
-  const core = `${topic.target_user}先看这里：${topic.title_promise}。\n\n${judgement}${list}`;
-  const detail = long ? "\n\n执行时不要一次验证所有假设。先选成本最低、最能推翻自己判断的一项，约定一个观察周期，再用访谈、试做或真实付费反馈判断。没有证据之前，保留选择权比急着表态更重要。" : "";
+  const core = `${identityOpening(persona, businessLine)}\n\n${fallbackFulfillment(topic, businessLine)}${judgement}${list}`;
   const serviceBridge = `\n\n${serviceBridgeSentence(persona, businessLine)}`;
+  const detail = long ? `\n\n${fallbackVerificationDetail(businessLine)}` : "";
   const closing = cta === "soft_bridge" ? "\n\n先把这些变量写下来，再看哪条路值得迈出第一步。" : cta === "on_platform_consult" ? "\n\n如果你卡在两条具体路径之间，可在站内补充当前职位、候选方向和最担心的冲突，先做适配判断。" : "\n\n如果你的处境已经具体，可从站内服务入口提交职位、候选路径和决策冲突，先确认服务是否适配。";
-  return `${core}${detail}${serviceBridge}${closing}`;
+  return `${core}${serviceBridge}${detail}${closing}`;
+}
+
+function fallbackFulfillment(topic: TopicCandidate, businessLine: GrowthBusinessLine) {
+  if (topic.method_id === "tug_of_war") {
+    return businessLine === "overseas_student"
+      ? "我们后来把两条路摆在一张纸上：留当地，要看签证、岗位数量和当地经历；回国，要看招聘窗口、岗位匹配和时间成本。"
+      : "我后来把两条路摆在一张纸上：留下，要看平台还有多少空间；离开，要看可迁移能力、市场报价和家庭现金流。";
+  }
+  const promise = topic.title_promise
+    .replace(/[。！？!?]+$/u, "")
+    .replace(/^(?:真实)?(?:解释|呈现|说明|展示|梳理|比较|提供|交付|盘点|列出|给出|帮助)/u, "")
+    .trim();
+  return `后来把信息一项项摊开，才发现真正卡住我们的，是${promise || "眼前这个选择该用什么证据判断"}。`;
+}
+
+function fallbackVerificationDetail(businessLine: GrowthBusinessLine) {
+  return businessLine === "overseas_student"
+    ? "后面我们也没再同时试所有方向，只挑两个最可能的岗位，各用一版简历投一小批，再根据真实回音调整。这样做慢一点，但每次没回应都能留下有用的信息。"
+    : "后面我也没急着一次验证所有猜想，只选成本最低、最可能推翻自己的那一项，约定一个观察周期，再用访谈、试做或真实反馈判断。证据没出来之前，先保留选择权。";
 }
 
 function serviceBridgeSentence(persona: GrowthPersona, businessLine: GrowthBusinessLine) {
   if (businessLine === "overseas_student") {
-    if (persona === "buyer") return "后来我们找了专业的求职机构老师带，先把方向、岗位地图和招聘节奏梳理清楚，再逐项调整简历和面试准备。";
-    if (persona === "expert") return "在求职咨询里，我会先帮学生梳理目标岗位和招聘节奏，再用投递反馈验证简历与面试准备。";
-    return "在求职辅导服务中，我们会先诊断方向和岗位匹配，再按招聘时间线提供简历、面试和投递陪跑。";
+    if (persona === "buyer") return "我们自己折腾了几轮还是没理顺，后来才找了一位求职老师一起梳理现有材料。她没有先改文案，而是先把岗位和招聘节奏对齐；至少孩子不再拿一份简历乱投，下一步该验证什么也有了顺序。";
+    if (persona === "expert") return "我当时没有先改简历，而是和学生一起梳理目标岗位、项目证据和招聘节奏。直接变化不是立刻拿到 Offer，而是岗位范围收窄了，后面的投递反馈也终于能用来复盘。";
+    return "我们当时先停下改简历，把岗位匹配、项目证据和招聘时间线一起梳理了一遍。第一步变化不是立刻拿到 Offer，而是目标岗位收窄了，不同简历版本也终于有了明确去向。";
   }
-  if (persona === "buyer") return "后来我请职业决策顾问一起梳理，先把个人能力、市场机会和失败风险拆开验证，再决定是否转向。";
-  if (persona === "expert") return "在职业咨询里，我会先梳理候选方向、能力证据和市场风险，再用小样本验证帮助来访者作出判断。";
-  return "在职业决策服务中，我们会先诊断方向、能力证据和失败风险，再通过市场验证与咨询陪跑帮助客户作出选择。";
+  if (persona === "buyer") return "我自己越想越乱，后来才请一位职业决策顾问陪我梳理能力、市场机会和失败成本。最后没有被催着辞职，反而先排除了一个看似体面的方向，也知道下一步该验证什么。";
+  if (persona === "expert") return "我当时没有替来访者直接选答案，而是先把候选方向、能力证据和失败成本拆开，再安排最小验证。直接变化不是马上做决定，而是三个方向收窄到一个先验证，下一步也有了明确顺序。";
+  return "我们当时没有催客户马上选方向，而是先把能力证据、市场机会和失败成本拆开，再安排最小验证。阶段结果不是一个漂亮结论，而是排除了一个高风险方向，并定下了下一步验证顺序。";
 }
 
 function identityOpening(persona: GrowthPersona, businessLine: GrowthBusinessLine) {
   if (businessLine === "overseas_student") {
-    if (persona === "buyer") return "作为留学生家长，我陪孩子准备秋招时，最先面对的是求职方向和岗位选择的冲突。";
-    if (persona === "expert") return "作为留学生求职老师，我的判断是：秋招准备先看岗位匹配和招聘节奏。";
-    return "我们做留学生求职辅导服务时，会先判断求职方向、岗位匹配和秋招节奏。";
+    if (persona === "buyer") return "前阵子陪孩子忙秋招，我们在回国还是留当地这件事上，来回改了好几次主意。";
+    if (persona === "expert") return "前两天帮一个留学生梳理秋招计划，聊到第三个目标岗位时，我先让他停了下来。";
+    return "最近我们给一位留学生梳理秋招方案，第一步不是改简历，而是先停下来看岗位和招聘节奏。";
   }
-  if (persona === "buyer") return "作为正在转型的中高管，我面对离职与留任选择时，最先要看清职业路径冲突。";
-  if (persona === "expert") return "作为职业决策顾问，我的判断是：中高管转型先看职业路径和市场验证。";
-  return "我们做中高管职业决策服务时，会先诊断候选方向、能力证据和市场风险。";
+  if (persona === "buyer") return "前阵子我又把辞职这件事按了回去，不是突然不想走，而是越算越发现有几笔账没弄明白。";
+  if (persona === "expert") return "前两天和一位中高管聊转型，他列了三个方向，却说不清哪一个值得先试。";
+  return "最近我们给一位中高管梳理转型方向，没有先劝他辞职，而是先把三条候选路径摆在一起。";
+}
+
+function removeFormulaOpening(body: string) {
+  return body.replace(/^(?:作为|身为|我的判断是|我判断|先看这里|我们做.{0,16}(?:服务|咨询)时)[^。！？\n]*[。！？]\s*/u, "").trim();
 }
 
 function deterministicDraftRepair(
@@ -386,6 +409,7 @@ function deterministicDraftRepair(
   const failed = new Set(draft.validation_checks.filter((check) => check.status !== "passed").map((check) => check.key));
   let body = draft.body.trim();
   if (failed.has("identity") || failed.has("fulfillment")) {
+    body = removeFormulaOpening(body);
     const opening = identityOpening(persona, businessLine);
     if (!body.startsWith(opening)) body = `${opening}\n\n${body}`;
   }
@@ -395,16 +419,17 @@ function deterministicDraftRepair(
 
 async function rewriteDraftForValidation(
   draft: ContentDraft,
-  persona: GrowthPersona,
-  businessLine: GrowthBusinessLine,
+  account: GrowthAccount,
 ) {
+  const persona = account.persona;
+  const businessLine = account.business_line ?? "executive";
   const failedChecks = draft.validation_checks
     .filter((check) => check.status !== "passed")
     .map((check) => `${check.key}: ${check.message}`)
     .join("\n");
   const result = await llmJSON<any>({
     system: GROWTH_SYSTEM_PROMPT,
-    user: `请修正下面这篇小红书正文，只输出 JSON：{"body":"修正后的完整正文"}。\n\n标题：${draft.title}\n标题承诺：${draft.title_promise}\n当前身份：${persona}\n业务：${businessLine}\n未通过项：\n${failedChecks}\n\n修正规则：\n1. 前30字体现当前身份并回应标题人物与冲突。\n2. 标题以“X项、X条、X步、X个方法”等作数量承诺时，正文必须用同等数量的编号内容逐项兑现；投递数、薪资、日期等背景数字不算清单承诺。\n3. 必须自然写清专业老师、求职机构或职业顾问如何介入、做了什么、解决了什么，不能生硬宣传。\n4. 保留原正文有价值的信息，不加入互动诱导或站外导流。\n\n原正文：\n${draft.body}`,
+    user: `请修正下面这篇小红书正文，只输出 JSON：{"body":"修正后的完整正文"}。\n\n标题：${draft.title}\n标题承诺：${draft.title_promise}\n当前身份：${persona}\n业务：${businessLine}\n账号人设：${account.one_liner}\n账号语气：${account.tone_style}\n目标用户：${account.target_user}\n未通过项：\n${failedChecks}\n\n修正规则：\n1. 保持原账号人设和口吻，像同一个真人继续讲，不要改成标准化营销文案。\n2. 开头像真人自然开口，从动作、现场、念头或矛盾切入并回应标题。禁止以“作为××”“身为××”“我的判断是”“先看这里”“我们做××服务时”自报身份，也不要机械复述标题。\n3. 标题以“X项、X条、X步、X个方法”等作数量承诺时，正文必须用同等数量的编号内容逐项兑现；投递数、薪资、日期等背景数字不算清单承诺。\n4. 专业服务必须放在故事因果里：先有具体卡点或自己试过的动作，再写老师、机构或顾问做了什么，紧接着交代一个克制、可验证的阶段结果。不要在结尾突然加广告句。\n5. 阶段结果优先写岗位收窄、简历对齐、排除方向、明确下一步或反馈可复盘；没有真实依据不得编造 Offer、薪资、录取数量或保证成功。\n6. 保留原正文有价值的信息，不加入互动诱导或站外导流。\n\n原正文：\n${draft.body}`,
     maxTokens: draft.selected_body_version === "long" ? 3500 : 1800,
     temperature: 0.35,
   });
@@ -413,20 +438,20 @@ async function rewriteDraftForValidation(
 
 async function passDraftValidationGate(
   initial: ContentDraft,
-  input: { persona: GrowthPersona; businessLine: GrowthBusinessLine; topic: TopicCandidate; cta: ContentDraft["cta_type"] },
+  input: { account: GrowthAccount; persona: GrowthPersona; businessLine: GrowthBusinessLine; topic: TopicCandidate; cta: ContentDraft["cta_type"] },
 ) {
   let draft = withDraftValidation(initial, input.persona, 0);
   for (let attempt = 1; attempt <= 2 && draft.validation_report?.status !== "passed"; attempt += 1) {
-    let repairedBody = deterministicDraftRepair(draft, input.persona, input.businessLine);
-    if (attempt === 2) {
-      try {
-        repairedBody = await rewriteDraftForValidation(draft, input.persona, input.businessLine);
-      } catch (error) {
-        console.warn("[growth] validation rewrite fallback:", (error as Error).message);
+    let repairedBody = "";
+    try {
+      repairedBody = await rewriteDraftForValidation(draft, input.account);
+      if (!repairedBody) throw new Error("validation_rewrite_empty");
+    } catch (error) {
+      console.warn("[growth] validation rewrite fallback:", (error as Error).message);
+      repairedBody = deterministicDraftRepair(draft, input.persona, input.businessLine);
+      if (!repairedBody) {
         repairedBody = fallbackBody(input.topic, draft.selected_body_version === "long", input.cta, input.businessLine, input.persona);
       }
-      const proposed = withDraftValidation({ ...draft, body: repairedBody }, input.persona, attempt);
-      repairedBody = deterministicDraftRepair(proposed, input.persona, input.businessLine);
     }
     const checked = enforceDraftCompliance({
       ...draft,
@@ -493,6 +518,7 @@ async function generateSingleDraft(input: {
   };
   let draft = enforceDraftCompliance(raw, input.topic.title);
   draft = await passDraftValidationGate(draft, {
+    account: input.account,
     persona: input.account.persona,
     businessLine,
     topic: input.topic,

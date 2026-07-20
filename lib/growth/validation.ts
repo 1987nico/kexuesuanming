@@ -280,9 +280,16 @@ export function extractPromisedCount(title: string) {
 
 function openingRespondsToTitle(draft: ContentDraft) {
   const opening = draft.body.slice(0, 30).replace(/\s/g, "");
-  const identityTokens = ["中高管", "高管", "中层", "管理层", "总监", "负责人", "老板", "专家", "顾问", "留学生", "海归", "毕业生", "家长"];
+  const identityTokens = ["中高管", "高管", "中层", "管理层", "总监", "负责人", "老板", "专家", "顾问", "留学生", "海归", "毕业生", "家长", "我", "孩子", "客户", "学员"];
   const conflictTokens = ["离职", "留任", "转型", "跳槽", "重新定价", "两条路", "职业", "平台", "选择", "求职", "投递", "回国", "留当地", "岗位", "秋招"];
   return identityTokens.some((token) => opening.includes(token)) && conflictTokens.some((token) => `${draft.title}${opening}`.includes(token));
+}
+
+function openingFeelsNatural(draft: ContentDraft) {
+  const opening = draft.body.trimStart().slice(0, 64).replace(/\s+/g, "");
+  if (!opening) return false;
+  return !/^(?:作为|身为|我的判断是|我判断|先看这里|我们做.{0,16}(?:服务|咨询)时|在.{0,12}(?:咨询|服务)里，我会)/.test(opening)
+    && !/(?:本文|这篇)(?:会|将|主要)?(?:讲|介绍|分享)/.test(opening);
 }
 
 interface IndexedBodyUnit {
@@ -339,18 +346,28 @@ function numberedBodyUnits(body: string): IndexedBodyUnit[] {
 function identityEvidence(draft: ContentDraft, persona: GrowthPersona) {
   const patterns: Record<GrowthPersona, RegExp> = {
     buyer: /(?:我|我们|我家|孩子|家长|自己).{0,36}(?:求职|秋招|投递|回国|留任|离职|转型|选择|岗位|职业|面试|简历)/,
-    expert: /(?:我的判断|我判断|我见过|咨询中|咨询里|建议|先看|关键是|真正要看|需要判断|适合先)/,
+    expert: /(?:我的判断|我判断|我见过|咨询中|咨询里|建议|先看|关键是|真正要看|需要判断|适合先|我.{0,24}(?:帮|让|问|拆|梳理|复盘|判断)|有次咨询|前几次咨询)/,
     merchant: /(?:我们|本服务|服务中|交付中|客户|学员).{0,36}(?:服务|交付|陪跑|诊断|辅导|帮助|解决|梳理|规划)/,
   };
   return indexedBodyUnits(draft.body).find((unit) => patterns[persona].test(unit.quote));
 }
 
 function conversionEvidence(draft: ContentDraft) {
+  const units = indexedBodyUnits(draft.body);
   const role = /(?:专业的?)?(?:求职机构|求职老师|辅导老师|职业顾问|职业决策顾问|咨询师|教练|专业团队)|(?:咨询|服务)(?:中|里|过程)/;
   const action = /(?:带|陪跑|辅导|指导|帮助|梳理|诊断|规划|复盘|判断|验证)/;
-  const outcome = /(?:方向|岗位|节奏|简历|面试|路径|能力|市场|风险|选择|证据|时间线|招聘|投递|清楚|理顺|收窄|验证)/;
-  return indexedBodyUnits(draft.body).find((unit) =>
-    role.test(unit.quote) && action.test(unit.quote) && outcome.test(unit.quote));
+  const target = /(?:方向|岗位|节奏|简历|面试|路径|能力|市场|风险|选择|证据|时间线|招聘|投递|项目|经历|材料)/;
+  const result = /(?:结果|最终|直接变化|变化是|至少|终于|开始|不再|从.{0,24}(?:变成|缩到|收窄到)|缩到|收窄到|定下|排除|明确了|理顺了|对齐了|有了(?:顺序|重点|下一步)|能说清|知道下一步|收到.{0,12}(?:反馈|回音|笔试|面试))/;
+  const serviceIndex = units.findIndex((unit) => role.test(unit.quote) && action.test(unit.quote) && target.test(unit.quote));
+  if (serviceIndex < 0) return undefined;
+  const resultUnit = units.slice(serviceIndex, serviceIndex + 3).find((unit) => result.test(unit.quote));
+  if (!resultUnit) return undefined;
+  const serviceUnit = units[serviceIndex];
+  return {
+    quote: draft.body.slice(serviceUnit.start, resultUnit.end),
+    start: serviceUnit.start,
+    end: resultUnit.end,
+  };
 }
 
 export function analyzeDraftValidation(
@@ -397,10 +414,11 @@ export function analyzeDraftValidation(
   const countFulfilled = count === undefined || numberedUnits.length === count;
   const materialFulfilled = !hasPromisedMaterial || numberedUnits.length > 0 || draft.body.length >= 280;
   const opensOnPromise = openingRespondsToTitle(draft);
-  const fulfillmentPassed = countFulfilled && materialFulfilled && opensOnPromise;
+  const naturalOpening = openingFeelsNatural(draft);
+  const fulfillmentPassed = countFulfilled && materialFulfilled && opensOnPromise && naturalOpening;
   const openingUnit = indexedBodyUnits(draft.body)[0];
   if (fulfillmentPassed && openingUnit) {
-    annotations.push(annotation(draft, "fulfillment", openingUnit, "开头直接回应了标题中的人物和核心冲突", 0.94));
+    annotations.push(annotation(draft, "fulfillment", openingUnit, "开头从具体处境自然切入，并回应了标题中的人物和核心冲突", 0.94));
     numberedUnits.slice(0, 10).forEach((unit, index) => annotations.push(annotation(
       draft,
       "fulfillment",
@@ -416,7 +434,7 @@ export function analyzeDraftValidation(
       draft,
       "conversion",
       conversionUnit,
-      "这句话同时说明了专业角色、介入动作和解决的具体问题",
+      "这段话把专业服务放进前后因果里，并交代了介入动作和可验证的阶段结果",
       0.96,
     ));
   }
@@ -436,14 +454,14 @@ export function analyzeDraftValidation(
       status: fulfillmentPassed ? "passed" as const : "needs_edit" as const,
       message: fulfillmentPassed
         ? `正文已覆盖标题承诺：${draft.title_promise}`
-        : "正文尚未做到：数字逐项一致、资料/路线图实际交付、前30字回应人物与冲突",
+        : "正文尚未做到：开头自然回应人物与冲突、数字逐项一致、资料/路线图实际交付",
     },
     {
       key: "conversion" as const,
       status: conversionPassed ? "passed" as const : "needs_edit" as const,
       message: conversionPassed
-        ? "正文已自然说明专业老师、求职机构或职业顾问如何介入并提供帮助"
-        : "正文缺少自然的专业服务介入；可说明找了专业老师、求职机构或职业顾问后，具体如何梳理、指导或陪跑",
+        ? "正文已把专业服务自然放进因果链，并说明介入动作与阶段结果"
+        : "正文缺少完整的自然转折：具体卡点之后，老师、机构或顾问做了什么，以及随后出现了什么可验证的阶段变化",
     },
   ];
   const status = hardChecksAllowPublishing(checks) && (["identity", "fulfillment", "conversion"] as const)

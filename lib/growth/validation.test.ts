@@ -60,7 +60,7 @@ describe("growth publish validation", () => {
   });
 
   it("passes conversion when professional service is naturally embedded", () => {
-    const body = "中高管离职前先看这组冲突。\n1. 能力\n2. 现金流\n3. 市场\n4. 停止条件\n5. 证据\n\n后来我请职业决策顾问一起梳理，先把能力和市场机会拆开判断。";
+    const body = "中高管离职前先看这组冲突。\n1. 能力\n2. 现金流\n3. 市场\n4. 停止条件\n5. 证据\n\n后来我请职业决策顾问一起梳理，先把能力和市场机会拆开判断。最后没有立刻辞职，而是先排除了一个方向，也知道下一步该验证什么。";
     const checks = validateDraftHardChecks(hardCheckDraft(body), "expert");
     expect(checks.find((item) => item.key === "conversion")?.status).toBe("passed");
     expect(hardChecksAllowPublishing(checks)).toBe(true);
@@ -69,9 +69,22 @@ describe("growth publish validation", () => {
     expect(analysis.report.status).toBe("passed");
     expect(analysis.report.attempts).toBe(1);
     expect(new Set(analysis.report.annotations.map((item) => item.key))).toEqual(new Set(["identity", "fulfillment", "conversion"]));
+    expect(analysis.report.annotations.find((item) => item.key === "conversion")?.quote).toContain("最后没有立刻辞职");
     for (const item of analysis.report.annotations) {
       expect(body.slice(item.start, item.end)).toBe(item.quote);
     }
+  });
+
+  it("does not pass a service mention without a restrained outcome", () => {
+    const body = "中高管离职前先看这组冲突。\n1. 能力\n2. 现金流\n3. 市场\n4. 停止条件\n5. 证据\n\n后来我请职业决策顾问一起梳理，先把能力和市场机会拆开判断。";
+    const checks = validateDraftHardChecks(hardCheckDraft(body), "expert");
+    expect(checks.find((item) => item.key === "conversion")?.status).toBe("needs_edit");
+  });
+
+  it("rejects formulaic self-introductions even when the structure is complete", () => {
+    const body = "作为职业决策顾问，我的判断是中高管离职前要先看冲突。\n1. 能力\n2. 现金流\n3. 市场\n4. 停止条件\n5. 证据\n\n有次职业咨询里，我先把能力和市场机会拆开判断。最后排除了一个方向，也知道下一步该验证什么。";
+    const checks = validateDraftHardChecks(hardCheckDraft(body), "expert");
+    expect(checks.find((item) => item.key === "fulfillment")?.status).toBe("needs_edit");
   });
 
   it("keeps the operator report failed until all three checks have exact evidence", () => {
