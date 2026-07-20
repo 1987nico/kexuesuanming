@@ -187,7 +187,107 @@ export type MethodAttributionStatus = "missing" | "confirmed";
 
 export type NoteDistributionStatus = "normal" | "limited" | "violation" | "deleted";
 
-export type ReviewInputSource = "manual" | "screenshot" | "mixed";
+export type ReviewInputSource = "manual" | "screenshot" | "excel" | "mixed";
+
+export type GrowthReviewWindow = "content_24h" | "business_7d" | "attribution_30d";
+
+export type MetricConfirmationStatus = "unknown" | "confirmed_zero" | "confirmed_value";
+
+export type GrowthDistributionType = "unknown" | "organic" | "paid";
+
+export type ThreeDayCycleStatus = "draft" | "completed" | "skipped";
+
+export type ThreeDayTrafficStatus =
+  | "unknown"
+  | "organic_normal"
+  | "paid"
+  | "limited"
+  | "violation"
+  | "deleted";
+
+export type ThreeDayMatchStatus = "matched" | "suggested" | "unmatched" | "excluded";
+
+export interface ThreeDayNoteMetrics {
+  impressions: number;
+  views: number;
+  cover_ctr: number;
+  likes: number;
+  comments: number;
+  saves: number;
+  follows: number;
+  shares: number;
+  avg_view_seconds: number;
+  danmaku: number;
+}
+
+export interface ThreeDayDerivedMetrics {
+  like_rate?: number;
+  comment_rate?: number;
+  save_rate?: number;
+  share_rate?: number;
+  follow_rate?: number;
+  value_rate?: number;
+  interaction_rate?: number;
+}
+
+export interface ThreeDayNoteSnapshot {
+  source_key: string;
+  source_title?: string;
+  published_at: string;
+  content_format: string;
+  draft_id?: string;
+  method_id?: TitleMethodId;
+  method_label?: string;
+  method_group?: TitleMethodGroup;
+  generation_mode?: MethodGenerationMode;
+  match_status: ThreeDayMatchStatus;
+  match_reason: string;
+  metrics: ThreeDayNoteMetrics;
+  derived: ThreeDayDerivedMetrics;
+  traffic_status: ThreeDayTrafficStatus;
+  content_eligible: boolean;
+  commercial_eligible: boolean;
+  attributed_inquiries?: number;
+  eligibility_reasons: string[];
+}
+
+export interface ThreeDayCycleDecision {
+  keep: string[];
+  retest_or_pause: string[];
+  next_variable: GrowthExperimentVariable;
+  next_variable_reason: string;
+  summary: string;
+}
+
+export interface ThreeDayReviewCycle {
+  id: string;
+  account_id: string;
+  business_line: GrowthBusinessLine;
+  persona: GrowthPersona;
+  cycle_number: number;
+  status: ThreeDayCycleStatus;
+  started_at: string;
+  due_at: string;
+  completed_at?: string;
+  next_due_at?: string;
+  source_file_name?: string;
+  source_file_size?: number;
+  source_row_count: number;
+  source_date_from?: string;
+  source_date_to?: string;
+  imported_at?: string;
+  traffic_confirmed: boolean;
+  notes: ThreeDayNoteSnapshot[];
+  qualified_inquiries?: number;
+  unattributed_inquiries?: number;
+  diagnosis_199_entries?: number;
+  diagnosis_199_sales?: number;
+  deep_6999_qualified?: number;
+  deep_6999_sales?: number;
+  decision?: ThreeDayCycleDecision;
+  created_at: string;
+  updated_at: string;
+}
 
 export type ReviewSampleStatus =
   | "valid"
@@ -251,6 +351,9 @@ export interface GrowthAccount {
   weekly_review?: WeeklyReviewResult;
   /** 固定周期快照。实时汇总不得覆盖这里的历史周期。 */
   weekly_review_snapshots?: WeeklyReviewResult[];
+  cycle_experiments?: GrowthCycleExperiment[];
+  /** v3.4 三日复盘：本地兼容预览先保存在账号载荷，正式上线后迁移至独立表。 */
+  three_day_review_cycles?: ThreeDayReviewCycle[];
   // 旧字段兼容：历史数据仍能打开，新代码统一写入 weekly_review。
   stage_review?: StageReviewResult;
   created_at: string;
@@ -481,6 +584,16 @@ export interface GrowthReviewMetrics {
   };
 }
 
+export interface GrowthReviewSnapshot {
+  id: string;
+  review_window: GrowthReviewWindow;
+  metrics: GrowthReviewMetrics;
+  input_source: ReviewInputSource;
+  captured_at: string;
+  supersedes_snapshot_id?: string;
+  metric_confirmation_status?: Partial<Record<keyof GrowthReviewMetrics, MetricConfirmationStatus>>;
+}
+
 export interface GrowthDerivedMetrics {
   ctr: number;
   engagement_rate: number;
@@ -535,6 +648,12 @@ export interface GrowthReview {
   writer_instruction: string;
   experiment_variable?: GrowthExperimentVariable;
   learning_version?: string;
+  /** v3.3 复盘中心：旧字段 metrics 继续提供最新合并视图，快照永久保留。 */
+  snapshots?: GrowthReviewSnapshot[];
+  content_reviewed_at?: string;
+  business_reviewed_at?: string;
+  attribution_reviewed_at?: string;
+  business_metrics_status?: MetricConfirmationStatus;
   created_at: string;
   updated_at?: string;
 }
@@ -589,6 +708,7 @@ export interface MethodAggregate {
   median_profile_visits?: number;
   median_sales?: number;
   above_persona_inquiry_median: boolean;
+  confidence?: "display_only" | "trend" | "decision_ready";
   evidence_review_ids: string[];
 }
 
@@ -606,6 +726,24 @@ export interface MethodPromotionSuggestion {
   reason: string;
   valid_count: number;
   median_inquiry_rate: number;
+}
+
+export interface GrowthCycleExperiment {
+  id: string;
+  account_id: string;
+  period_id: string;
+  target_user: string;
+  method_id?: TitleMethodId;
+  method_label?: string;
+  generation_mode?: MethodGenerationMode;
+  hypothesis: string;
+  experiment_variable: GrowthExperimentVariable;
+  expected_signal: string;
+  stop_condition: string;
+  evidence_review_ids: string[];
+  status: "pending" | "confirmed" | "rejected" | "applied";
+  created_at: string;
+  resolved_at?: string;
 }
 
 export interface StageDecision {
@@ -628,6 +766,7 @@ export interface StageDecision {
 
 export interface WeeklyReviewResult {
   account_id: string;
+  period_id?: string;
   generated_at: string;
   learning_version?: string;
   period_start?: string;
@@ -641,6 +780,7 @@ export interface WeeklyReviewResult {
   by_method: MethodAggregate[];
   by_tag: TagAggregate[];
   promotion_suggestions: MethodPromotionSuggestion[];
+  experiment_card?: GrowthCycleExperiment;
   // 历史周复盘兼容；新流程固定写空数组。
   by_direction: DirectionAggregate[];
   decision: StageDecision;

@@ -107,6 +107,7 @@ export async function GET(req: Request) {
     currentDrafts,
     historicalDrafts,
     reviews,
+    threeDayReviewCycles: account?.three_day_review_cycles ?? [],
     weeklyReview,
     stageReview: weeklyReview,
     capabilities: { reviewScreenshot: isVisionConfigured() },
@@ -178,6 +179,7 @@ export async function POST(req: Request) {
     account.weekly_review = existingAccount.weekly_review;
     account.weekly_review_snapshots = existingAccount.weekly_review_snapshots;
     account.stage_review = existingAccount.stage_review;
+    account.three_day_review_cycles = existingAccount.three_day_review_cycles;
   }
   plan.owner_user_id = account.owner_user_id;
 

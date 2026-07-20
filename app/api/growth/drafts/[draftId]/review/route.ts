@@ -8,6 +8,13 @@ import {
   getReviewAvailability,
   resolvePublishedAt,
 } from "@/lib/growth/reviewLearning";
+import {
+  appendReviewSnapshot,
+  ATTRIBUTION_REVIEW_DELAY_MS,
+  BUSINESS_REVIEW_DELAY_MS,
+  createReviewSnapshot,
+} from "@/lib/growth/reviewCenter";
+import type { GrowthReviewMetrics, GrowthReviewWindow } from "@/lib/growth/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -17,18 +24,18 @@ const DEFAULT_TENANT_ID = "mianbajun";
 const metricsSchema = z.object({
   published_at: z.string().optional(),
   note_url: z.string().url().max(500).optional(),
-  note_status: z.enum(["normal", "limited", "violation", "deleted"]).default("normal"),
-  promoted: z.boolean().default(false),
-  input_source: z.enum(["manual", "screenshot", "mixed"]).default("manual"),
+  note_status: z.enum(["normal", "limited", "violation", "deleted"]).optional(),
+  promoted: z.boolean().optional(),
+  input_source: z.enum(["manual", "screenshot", "excel", "mixed"]).default("manual"),
   impressions: z.number().int().nonnegative(),
   reads: z.number().int().nonnegative(),
-  average_view_seconds: z.number().nonnegative(),
-  likes: z.number().int().nonnegative(),
-  saves: z.number().int().nonnegative(),
-  comments: z.number().int().nonnegative(),
-  shares: z.number().int().nonnegative(),
+  average_view_seconds: z.number().nonnegative().optional(),
+  likes: z.number().int().nonnegative().optional(),
+  saves: z.number().int().nonnegative().optional(),
+  comments: z.number().int().nonnegative().optional(),
+  shares: z.number().int().nonnegative().optional(),
   profile_visits: z.number().int().nonnegative().optional(),
-  follows: z.number().int().nonnegative(),
+  follows: z.number().int().nonnegative().optional(),
   comment_keywords: z.array(z.string()).optional(),
   private_messages: z.number().int().nonnegative().optional(),
   qualified_inquiries: z.number().int().nonnegative().optional(),
@@ -57,14 +64,16 @@ const metricsSchema = z.object({
     .optional(),
 });
 
-const patchMetricsSchema = metricsSchema.partial();
+const reviewWindowSchema = z.enum(["content_24h", "business_7d", "attribution_30d"]);
+const createRequestSchema = metricsSchema.extend({ review_window: reviewWindowSchema.optional() });
+const patchMetricsSchema = metricsSchema.partial().extend({ review_window: reviewWindowSchema.optional() });
 
 async function saveReview(req: Request, { params }: { params: { draftId: string } }, mode: "create" | "update") {
   const guard = await requireMianbaApiAuth();
   if ("response" in guard) return guard.response;
 
   const body = await req.json().catch(() => ({}));
-  const parsed = (mode === "update" ? patchMetricsSchema : metricsSchema).safeParse(body);
+  const parsed = (mode === "update" ? patchMetricsSchema : createRequestSchema).safeParse(body);
   if (!parsed.success) {
     return NextResponse.json({ error: "validation", issues: parsed.error.flatten() }, { status: 400 });
   }
@@ -80,10 +89,12 @@ async function saveReview(req: Request, { params }: { params: { draftId: string 
   if (mode === "update" && !existingReview) {
     return NextResponse.json({ error: "review_not_found", message: "这篇正文还没有复盘，请先使用首次复盘。" }, { status: 404 });
   }
-  const changedFields = Object.keys(parsed.data).filter((key) => (parsed.data as Record<string, unknown>)[key] !== undefined);
+  const { review_window: requestedWindow, ...metricsPatch } = parsed.data;
+  const reviewWindow: GrowthReviewWindow = requestedWindow ?? "content_24h";
+  const changedFields = Object.keys(metricsPatch).filter((key) => (metricsPatch as Record<string, unknown>)[key] !== undefined);
   const metricsInput = mode === "update"
-    ? { ...(existingReview?.metrics ?? {}), ...parsed.data }
-    : parsed.data;
+    ? { ...(existingReview?.metrics ?? {}), ...metricsPatch }
+    : metricsPatch;
   const fullMetrics = metricsSchema.safeParse(metricsInput);
   if (!fullMetrics.success) {
     return NextResponse.json({ error: "incomplete_review", message: "历史复盘缺少必要指标，请补齐后再保存。", issues: fullMetrics.error.flatten() }, { status: 400 });
@@ -102,11 +113,36 @@ async function saveReview(req: Request, { params }: { params: { draftId: string 
       { status: 409 },
     );
   }
+  if (reviewWindow === "business_7d") {
+    const publishedMs = Date.parse(publishedAt);
+    const businessAvailableAt = new Date(publishedMs + BUSINESS_REVIEW_DELAY_MS);
+    if (Date.now() < businessAvailableAt.getTime()) {
+      return NextResponse.json(
+        { error: "business_review_not_ready", message: "发布满7天后才能确认有效咨询并进入方法学习。", availableAt: businessAvailableAt.toISOString() },
+        { status: 409 },
+      );
+    }
+    if (fullMetrics.data.qualified_inquiries === undefined) {
+      return NextResponse.json(
+        { error: "qualified_inquiries_unconfirmed", message: "请确认有效咨询数量；确认没有时填写0，不能留空。" },
+        { status: 400 },
+      );
+    }
+  }
+  if (reviewWindow === "attribution_30d") {
+    const attributionAvailableAt = new Date(Date.parse(publishedAt) + ATTRIBUTION_REVIEW_DELAY_MS);
+    if (Date.now() < attributionAvailableAt.getTime()) {
+      return NextResponse.json(
+        { error: "attribution_review_not_ready", message: "发布满30天后才能补充成交归因。", availableAt: attributionAvailableAt.toISOString() },
+        { status: 409 },
+      );
+    }
+  }
 
   const notes = await store.listDrafts(draft.account_id);
   const existingReviews = await store.listReviewsByAccount(draft.account_id);
 
-  const { review, usage } = await reviewDraft({
+  const generated = await reviewDraft({
     tenantId: DEFAULT_TENANT_ID,
     draft,
     metrics: { ...fullMetrics.data, published_at: publishedAt, snapshot_at: new Date().toISOString() },
@@ -114,6 +150,14 @@ async function saveReview(req: Request, { params }: { params: { draftId: string 
     notes,
     reviews: existingReviews,
   });
+  const snapshot = createReviewSnapshot({
+    window: reviewWindow,
+    metrics: metricsPatch as GrowthReviewMetrics,
+    inputSource: fullMetrics.data.input_source,
+    previous: existingReview ?? undefined,
+  });
+  const review = appendReviewSnapshot(generated.review, snapshot, existingReview ?? undefined);
+  const usage = generated.usage;
   review.owner_user_id = review.owner_user_id ?? guard.auth.user.id;
   await store.saveReview(review);
   const reviewedDraft = {

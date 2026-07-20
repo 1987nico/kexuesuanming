@@ -10,9 +10,12 @@ import type {
   GrowthPersona,
   GrowthPlan,
   GrowthReview,
+  GrowthReviewWindow,
   GrowthRun,
   MethodAggregate,
   MethodGenerationMode,
+  ThreeDayReviewCycle,
+  ThreeDayTrafficStatus,
   TitleMethodGroup,
   TitleMethodId,
   TopicCandidate,
@@ -33,6 +36,12 @@ import {
   type TitleMethodDefinition,
 } from "@/lib/growth/methods";
 import { visibleBusinessText } from "@/lib/growth/businessCompatibility";
+import {
+  inquiryQualificationRate,
+  perThousandImpressions,
+  resolveReviewProgress,
+  type ReviewTaskState,
+} from "@/lib/growth/reviewCenter";
 
 interface BootstrapData {
   businessLine: GrowthBusinessLine;
@@ -45,6 +54,7 @@ interface BootstrapData {
   currentDrafts: ContentDraft[];
   historicalDrafts: ContentDraft[];
   reviews: Record<string, GrowthReview>;
+  threeDayReviewCycles: ThreeDayReviewCycle[];
   weeklyReview: WeeklyReviewResult | null;
   capabilities: { reviewScreenshot: boolean };
   preview: { enabled: boolean; banner?: string; productionDataConnected?: boolean };
@@ -82,13 +92,32 @@ interface SourceForm {
   verified_by_operator: boolean;
 }
 
-const numericReviewFields = [
+interface BackfillForm {
+  title: string;
+  title_promise: string;
+  published_at: string;
+  method_id: TitleMethodId;
+}
+
+interface ReviewExcelImport {
+  fileName: string;
+  detectedFields: string[];
+  warnings: string[];
+}
+
+const contentReviewFields = [
   ["impressions", "曝光"], ["reads", "阅读"], ["average_view_seconds", "平均阅读秒数"], ["likes", "点赞"],
   ["saves", "收藏"], ["comments", "评论"], ["shares", "分享"], ["profile_visits", "主页访问"],
-  ["follows", "关注"], ["private_messages", "主动私信"], ["qualified_inquiries", "有效咨询"],
+  ["follows", "关注"],
+] as const;
+
+const businessReviewFields = [
+  ["private_messages", "主动私信"], ["qualified_inquiries", "有效咨询"],
   ["diagnosis_199_entries", "199诊断进入"], ["diagnosis_199_sales", "199诊断成交"],
   ["deep_6999_qualified", "6999适配"], ["deep_6999_sales", "6999成交"],
 ] as const;
+
+const numericReviewFields = [...contentReviewFields, ...businessReviewFields] as const;
 
 const emptyAccount: AccountForm = {
   name: "面霸君",
@@ -122,10 +151,17 @@ const emptySource: SourceForm = {
 
 const emptyReview = () => Object.fromEntries([
   ["note_url", ""],
-  ["note_status", "normal"],
-  ["promoted", false],
+  ["note_status", ""],
+  ["promoted", "unknown"],
   ...numericReviewFields.map(([key]) => [key, ""]),
 ]) as Record<string, string | boolean>;
+
+const emptyBackfill = (): BackfillForm => ({
+  title: "",
+  title_promise: "",
+  published_at: asLocalDateTime(),
+  method_id: "human_pain",
+});
 
 const STATUS_LABEL: Record<string, string> = {
   draft: "草稿",
@@ -176,8 +212,8 @@ function reviewForm(review?: GrowthReview): Record<string, string | boolean> {
   if (!review) return emptyReview();
   const form = emptyReview();
   form.note_url = review.metrics.note_url || "";
-  form.note_status = review.metrics.note_status || "normal";
-  form.promoted = review.metrics.promoted ?? false;
+  form.note_status = review.metrics.note_status || "";
+  form.promoted = review.metrics.promoted === undefined ? "unknown" : review.metrics.promoted ? "paid" : "organic";
   for (const [key] of numericReviewFields) {
     form[key] = review.metrics[key] === undefined ? "" : String(review.metrics[key]);
   }
@@ -231,8 +267,14 @@ export default function GrowthPage() {
   const [message, setMessage] = useState("");
   const [topicMessage, setTopicMessage] = useState("");
   const [reviewDraft, setReviewDraft] = useState<ContentDraft | null>(null);
+  const [reviewWindow, setReviewWindow] = useState<GrowthReviewWindow>("content_24h");
+  const [reviewTab, setReviewTab] = useState<"tasks" | "single" | "strategy">("tasks");
+  const [backfillOpen, setBackfillOpen] = useState(false);
+  const [backfill, setBackfill] = useState<BackfillForm>(emptyBackfill());
   const [reviewValues, setReviewValues] = useState<Record<string, string | boolean>>(emptyReview());
   const [reviewBaseline, setReviewBaseline] = useState<Record<string, string | boolean>>(emptyReview());
+  const [reviewExcel, setReviewExcel] = useState<ReviewExcelImport | null>(null);
+  const [reviewExcelError, setReviewExcelError] = useState("");
   const [personaOpen, setPersonaOpen] = useState(false);
   const [personaEditing, setPersonaEditing] = useState(false);
   const [businessEditOpen, setBusinessEditOpen] = useState(false);
@@ -259,8 +301,14 @@ export default function GrowthPage() {
     setSource(emptySource);
     setTopicMessage("");
     setReviewDraft(null);
+    setReviewWindow("content_24h");
+    setReviewTab("tasks");
+    setBackfillOpen(false);
+    setBackfill(emptyBackfill());
     setReviewValues(emptyReview());
     setReviewBaseline(emptyReview());
+    setReviewExcel(null);
+    setReviewExcelError("");
     setPersonaOpen(false);
     setPersonaEditing(false);
     setBusinessEditOpen(false);
@@ -335,16 +383,32 @@ export default function GrowthPage() {
 
   useEffect(() => {
     const sections = [...document.querySelectorAll<HTMLElement>("section[data-step]")];
-    if (!sections.length || typeof IntersectionObserver === "undefined") return;
-    const observer = new IntersectionObserver((entries) => {
-      const visible = entries
-        .filter((entry) => entry.isIntersecting)
-        .sort((a, b) => Math.abs(a.boundingClientRect.top) - Math.abs(b.boundingClientRect.top))[0];
-      const step = (visible?.target as HTMLElement | undefined)?.dataset.step;
-      if (step) setVisibleStep(step);
-    }, { rootMargin: "-90px 0px -65% 0px", threshold: 0 });
-    for (const section of sections) observer.observe(section);
-    return () => observer.disconnect();
+    if (!sections.length) return;
+    let frame = 0;
+    const updateVisibleStep = () => {
+      frame = 0;
+      // 页面数据加载后，上方长正文会发生少量布局位移；以视口上方260px作为阅读锚点，
+      // 避免用户已经看到下一步骤标题时仍高亮上一项。
+      const anchorY = Math.min(260, window.innerHeight * 0.4);
+      let current = sections[0];
+      for (const section of sections) {
+        if (section.getBoundingClientRect().top <= anchorY) current = section;
+        else break;
+      }
+      if (current.dataset.step) setVisibleStep(current.dataset.step);
+    };
+    const scheduleUpdate = () => {
+      if (frame) return;
+      frame = window.requestAnimationFrame(updateVisibleStep);
+    };
+    updateVisibleStep();
+    window.addEventListener("scroll", scheduleUpdate, { passive: true });
+    window.addEventListener("resize", scheduleUpdate);
+    return () => {
+      window.removeEventListener("scroll", scheduleUpdate);
+      window.removeEventListener("resize", scheduleUpdate);
+      if (frame) window.cancelAnimationFrame(frame);
+    };
   }, [businessLine, data?.account?.id, persona]);
 
   const businessDefinition = GROWTH_BUSINESS_DEFINITIONS[businessLine];
@@ -361,14 +425,33 @@ export default function GrowthPage() {
     () => methodsForPersona(persona, "explore", data?.account?.method_overrides),
     [data?.account?.method_overrides, persona],
   );
+  const backfillMethods = useMemo(
+    () => [...defaultMethods, ...exploreMethods].sort((a, b) => a.order - b.order),
+    [defaultMethods, exploreMethods],
+  );
   const reviewDrafts = useMemo(
     () => (data?.currentDrafts || []).filter((draft) =>
       draft.schema_version !== "legacy_v1" && (draft.status === "published" || draft.status === "reviewed")),
     [data?.currentDrafts],
   );
+  const reviewItems = useMemo(() => reviewDrafts.map((draft) => {
+    const review = data?.reviews[draft.id];
+    return { draft, review, progress: resolveReviewProgress(draft, review) };
+  }), [data?.reviews, reviewDrafts]);
+  const reviewTaskCounts = useMemo(() => {
+    const counts: Record<ReviewTaskState, number> = {
+      waiting_content: 0,
+      content_due: 0,
+      waiting_business: 0,
+      business_due: 0,
+      complete: 0,
+    };
+    for (const item of reviewItems) counts[item.progress.state] += 1;
+    return counts;
+  }, [reviewItems]);
   const workflowSteps = [
     ["0", "业务定位"], ["1", "三家视角"], ["2", "人设"], ["3", "选题"],
-    ["4", "正文"], ["5", "单篇复盘"], ["6", "周复盘"],
+    ["4", "正文"], ["5", "三日复盘"],
   ] as const;
 
   function switchBusiness(next: GrowthBusinessLine) {
@@ -686,7 +769,7 @@ export default function GrowthPage() {
         body: JSON.stringify({ published_at: new Date(publishedAt).toISOString() }),
       });
       await load(businessLine, persona, true);
-      setMessage("已记录实际发布时间，这篇内容已进入单篇复盘；满24小时后可保存复盘数据。");
+      setMessage("已记录实际发布时间；这篇内容会进入下一轮三日复盘的官方Excel匹配范围。");
     } catch (error) {
       setMessage((error as Error).message);
     } finally {
@@ -694,35 +777,55 @@ export default function GrowthPage() {
     }
   }
 
-  function openReview(draft: ContentDraft) {
+  function openReview(draft: ContentDraft, window: GrowthReviewWindow) {
     const values = reviewForm(data?.reviews[draft.id]);
     setReviewDraft(draft);
+    setReviewWindow(window);
     setReviewValues(values);
     setReviewBaseline({ ...values });
+    setReviewExcel(null);
+    setReviewExcelError("");
   }
 
-  async function extractScreenshot(files: FileList | null) {
-    if (!files?.length) return;
-    setBusy("extract");
+  async function importReviewExcel(file: File | null) {
+    if (!file) return;
+    setReviewExcelError("");
+    setBusy("excel-import");
     try {
-      const images = await Promise.all([...files].slice(0, 6).map((file) =>
-        new Promise<{ dataUrl: string; name: string }>((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onload = () => resolve({ dataUrl: String(reader.result), name: file.name });
-          reader.onerror = reject;
-          reader.readAsDataURL(file);
-        })));
-      const result = await requestJSON<{ prefill: Record<string, number> }>("/api/growth/reviews/extract", {
+      const formData = new FormData();
+      formData.append("file", file);
+      const response = await fetch("/api/growth/reviews/import-excel", {
         method: "POST",
-        body: JSON.stringify({ images }),
+        body: formData,
       });
+      const result = await response.json().catch(() => ({})) as {
+        prefill?: Record<string, number | string>;
+        detected_fields?: string[];
+        warnings?: string[];
+        file_name?: string;
+        message?: string;
+        error?: string;
+      };
+      if (!response.ok) throw new Error(result.message || result.error || "Excel解析失败");
+      const prefill = result.prefill ?? {};
       setReviewValues((current) => ({
         ...current,
-        ...Object.fromEntries(Object.entries(result.prefill).map(([key, value]) => [key, String(value)])),
+        ...Object.fromEntries(Object.entries(prefill)
+          .filter(([, value]) => typeof value === "number")
+          .map(([key, value]) => [key, String(value)])),
       }));
-      setMessage("截图中高置信度字段已预填，请人工核对后保存。");
+      setReviewExcel({
+        fileName: result.file_name || file.name,
+        detectedFields: result.detected_fields ?? [],
+        warnings: result.warnings ?? [],
+      });
+      setReviewExcelError("");
+      setMessage("单篇笔记Excel已读取，可直接保存24小时内容复盘。");
     } catch (error) {
-      setMessage((error as Error).message);
+      setReviewExcel(null);
+      const errorMessage = (error as Error).message;
+      setReviewExcelError(errorMessage);
+      setMessage(errorMessage);
     } finally {
       setBusy(null);
     }
@@ -733,22 +836,37 @@ export default function GrowthPage() {
     const existing = data.reviews[reviewDraft.id];
     const changed = changedKeys(reviewValues, reviewBaseline);
     const payload: Record<string, unknown> = {};
-    const keys = existing ? changed : Object.keys(reviewValues);
+    const windowKeys: string[] = reviewWindow === "content_24h"
+      ? contentReviewFields.map(([key]) => key)
+      : businessReviewFields.map(([key]) => key);
+    const baseKeys = existing ? changed : Object.keys(reviewValues);
+    const keys = Array.from(new Set(
+      reviewWindow === "content_24h" && reviewExcel
+        ? [...baseKeys, ...reviewExcel.detectedFields]
+        : baseKeys,
+    )).filter((key) => windowKeys.includes(key));
     for (const key of keys) {
       const value = reviewValues[key];
       if (value === "") continue;
-      payload[key] = numericReviewFields.some(([item]) => item === key) ? Number(value) : value;
+      if (key === "promoted") {
+        if (value === "unknown") continue;
+        payload.promoted = value === "paid";
+      } else {
+        payload[key] = numericReviewFields.some(([item]) => item === key) ? Number(value) : value;
+      }
     }
-    if (!existing) payload.input_source = "manual";
+    payload.review_window = reviewWindow;
+    if (reviewWindow === "content_24h") payload.input_source = "excel";
+    else if (!existing) payload.input_source = "manual";
     setBusy(`review-${reviewDraft.id}`);
     try {
       const result = await requestJSON<{ changedFields: string[] }>(
-        `/api/growth/drafts/${reviewDraft.id}/review`,
+        `/api/growth/drafts/${reviewDraft.id}/review-snapshots`,
         { method: existing ? "PATCH" : "POST", body: JSON.stringify(payload) },
       );
       setReviewDraft(null);
       await load(businessLine, persona, true);
-      setMessage(`复盘已保存；本次更新：${result.changedFields.join("、") || "无指标变化"}。`);
+      setMessage(`${reviewWindow === "content_24h" ? "24小时内容复盘" : reviewWindow === "business_7d" ? "7天商业结果" : "30天成交归因"}已保存；本次更新：${result.changedFields.join("、") || "无指标变化"}。`);
     } catch (error) {
       setMessage((error as Error).message);
     } finally {
@@ -760,12 +878,68 @@ export default function GrowthPage() {
     if (!data?.account) return;
     setBusy("weekly");
     try {
-      await requestJSON("/api/growth/weekly-review", {
+      await requestJSON("/api/growth/cycle-reviews", {
         method: "POST",
         body: JSON.stringify({ accountId: data.account.id, snapshot: true }),
       });
       await load(businessLine, persona, true);
+      setReviewTab("strategy");
       setMessage("已保存固定周期快照；实时汇总不会覆盖上一周期。");
+    } catch (error) {
+      setMessage((error as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function resolveCycleExperiment(experimentId: string, status: "confirmed" | "rejected") {
+    if (!data?.account) return;
+    setBusy(`experiment-${experimentId}`);
+    try {
+      await requestJSON(`/api/growth/cycle-experiments/${experimentId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ accountId: data.account.id, status }),
+      });
+      await load(businessLine, persona, true);
+      setReviewTab("strategy");
+      setMessage(status === "confirmed" ? "下一周期实验卡已确认，将作为下一轮选题生成依据。" : "实验卡已拒绝，不会影响下一轮选题。");
+    } catch (error) {
+      setMessage((error as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  function openBackfill() {
+    const firstMethod = backfillMethods[0]?.id ?? "human_pain";
+    setBackfill({ ...emptyBackfill(), method_id: firstMethod });
+    setBackfillOpen(true);
+  }
+
+  async function submitBackfill() {
+    if (!data?.account) return;
+    const method = backfillMethods.find((item) => item.id === backfill.method_id);
+    if (!method) return;
+    const generationMode: MethodGenerationMode = defaultMethods.some((item) => item.id === method.id)
+      ? "default"
+      : "explore";
+    setBusy("backfill");
+    try {
+      const result = await requestJSON<{ message: string }>("/api/growth/drafts/backfill", {
+        method: "POST",
+        body: JSON.stringify({
+          accountId: data.account.id,
+          title: backfill.title.trim(),
+          titlePromise: backfill.title_promise.trim(),
+          publishedAt: new Date(backfill.published_at).toISOString(),
+          methodId: method.id,
+          generationMode,
+        }),
+      });
+      setBackfillOpen(false);
+      await load(businessLine, persona, true);
+      setReviewTab("tasks");
+      setMessage(result.message);
     } catch (error) {
       setMessage((error as Error).message);
     } finally {
@@ -788,7 +962,7 @@ export default function GrowthPage() {
             <div className="text-xs font-semibold tracking-[0.24em] text-slate-500">小红书内容工厂</div>
             <h1 className="serif mt-3 text-4xl leading-tight md:text-5xl">小红书笔记</h1>
             <p className="mt-3 max-w-3xl text-sm leading-7 text-slate-600">
-              业务定位 → 三家视角 → 人设 → 选题 → 正文 → 24小时单篇复盘 → 周复盘。人工确认后复制发布，系统不自动发帖。
+              业务定位 → 三家视角 → 人设 → 选题 → 正文 → 三日复盘。人工确认后复制发布，系统不自动发帖。
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -807,6 +981,7 @@ export default function GrowthPage() {
               <a
                 key={number}
                 href={`#growth-step-${number}`}
+                onClick={() => setVisibleStep(number)}
                 aria-current={visibleStep === number ? "step" : undefined}
                 className={`flex min-h-10 items-center rounded-xl px-3 text-sm font-medium transition ${
                   visibleStep === number
@@ -1190,49 +1365,17 @@ export default function GrowthPage() {
 
                 <Section
                   number="5"
-                  title="单篇复盘"
-                  subtitle="只展示当前业务、当前视角的新流程已发布或已复盘内容。首次复盘与更新复盘使用同一入口。"
+                  title="三日复盘"
+                  subtitle="每72小时集中上传一次小红书官方笔记列表明细表；前台只做周期决策，后台继续保留单篇数据证据。"
                 >
-                  {reviewDrafts.length ? (
-                    <div className="space-y-3">
-                      {reviewDrafts.map((draft) => (
-                        <ReviewRow
-                          key={draft.id}
-                          draft={draft}
-                          review={data.reviews[draft.id]}
-                          onOpen={() => openReview(draft)}
-                        />
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="rounded-2xl border border-dashed border-slate-300 p-6 text-center text-sm text-slate-500">
-                      暂无新流程已发布内容。请先在正文中填写实际发布时间并标记发布。
-                    </div>
-                  )}
-                </Section>
-
-                <Section
-                  number="6"
-                  title="周复盘"
-                  subtitle="按当前视角 × 原生/对标方法 × 默认/探索复盘。北极星指标固定为有效咨询率。"
-                >
-                  <div className="flex flex-col gap-4 rounded-2xl bg-slate-50 p-4 sm:flex-row sm:items-center sm:justify-between">
-                    <div>
-                      <div className="font-semibold">v3.2 新有效样本：{data.learningSummary.newLearningSamples}/30</div>
-                      <p className="mt-1 text-sm text-slate-600">30篇前只展示数据，不推荐最佳方法；旧版样本不进入新方法胜率。</p>
-                    </div>
-                    <PrimaryButton disabled={Boolean(busy) || reviewDrafts.length === 0} onClick={runWeeklyReview}>
-                      {reviewDrafts.length === 0 ? "有发布内容后可保存" : "保存固定周期快照"}
-                    </PrimaryButton>
-                  </div>
-
-                  {data.weeklyReview ? (
-                    <WeeklyReview review={data.weeklyReview} />
-                  ) : (
-                    <div className="mt-5 rounded-2xl border border-dashed border-slate-300 p-6 text-center text-sm text-slate-500">
-                      尚无本视角周复盘快照。保存后将按13种标题方法展示描述性数据。
-                    </div>
-                  )}
+                  <ThreeDayReviewPanel
+                    account={data.account}
+                    cycles={data.threeDayReviewCycles}
+                    busy={busy}
+                    onBusy={setBusy}
+                    onMessage={setMessage}
+                    onRefresh={() => load(businessLine, persona, true)}
+                  />
                 </Section>
               </>
             )}
@@ -1240,59 +1383,125 @@ export default function GrowthPage() {
       </div>
 
       {reviewDraft && (
-        <Modal title={`复盘：${reviewDraft.title}`} onClose={() => setReviewDraft(null)}>
+        <Modal title={`${reviewWindow === "content_24h" ? "24小时内容复盘" : reviewWindow === "business_7d" ? "7天商业结果" : "30天成交归因"}：${reviewDraft.title}`} onClose={() => setReviewDraft(null)}>
           <div className="mb-4 rounded-xl bg-slate-50 p-3 text-xs text-slate-600">
-            已完整预填已有数据。本次变更：{changedKeys(reviewValues, reviewBaseline).join("、") || "尚未修改"}
+            {reviewWindow === "content_24h"
+              ? "上传Excel后，系统会保存新的24小时数据快照；缺失字段保持未检查，不会按0计算。"
+              : `这篇笔记的已有数据会保留。本次变更：${changedKeys(reviewValues, reviewBaseline).join("、") || "尚未修改"}。未检查与确认0会分别保存。`}
           </div>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <TextInput label="小红书原帖链接" value={String(reviewValues.note_url)} onChange={(value) => setReviewValues({ ...reviewValues, note_url: value })} />
-            <Select
-              label="分发状态"
-              value={String(reviewValues.note_status)}
-              onChange={(value) => setReviewValues({ ...reviewValues, note_status: value })}
-              options={[
-                { value: "normal", label: "正常" },
-                { value: "limited", label: "限流" },
-                { value: "violation", label: "违规" },
-                { value: "deleted", label: "删除" },
-              ]}
-            />
-            {numericReviewFields.map(([key, label]) => (
-              <TextInput
-                key={key}
-                label={label}
-                type="number"
-                value={String(reviewValues[key])}
-                onChange={(value) => setReviewValues({ ...reviewValues, [key]: value })}
+          {reviewWindow === "content_24h" ? (
+            <div className="rounded-2xl border border-dashed border-slate-300 p-4">
+              <div className="text-sm font-medium">上传单篇笔记Excel</div>
+              <p className="mt-1 text-xs leading-5 text-slate-500">上传小红书导出的单篇笔记.xlsx文件，系统会直接读取内容表现数据；缺失字段保持未检查，不会按0计算。</p>
+              <input
+                className="mt-3 block w-full text-sm"
+                type="file"
+                accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                disabled={Boolean(busy)}
+                onChange={(event) => {
+                  void importReviewExcel(event.target.files?.[0] ?? null);
+                  event.currentTarget.value = "";
+                }}
               />
-            ))}
-          </div>
-          <label className="mt-4 flex items-center gap-2 text-sm">
-            <input type="checkbox" checked={Boolean(reviewValues.promoted)} onChange={(event) => setReviewValues({ ...reviewValues, promoted: event.target.checked })} />
-            本篇有投流
-          </label>
-          <div className="mt-4 rounded-2xl border border-dashed border-slate-300 p-4">
-            <div className="text-sm font-medium">上传数据截图预填</div>
-            <p className="mt-1 text-xs text-slate-500">只填高置信度字段，保存前仍需人工核对。</p>
-            <input
-              className="mt-3 block w-full text-sm"
-              type="file"
-              accept="image/png,image/jpeg,image/webp"
-              multiple
-              disabled={!data?.capabilities.reviewScreenshot || Boolean(busy)}
-              onChange={(event) => extractScreenshot(event.target.files)}
-            />
-            {!data?.capabilities.reviewScreenshot && (
-              <p className="mt-2 text-xs text-amber-700">当前本地模型未配置视觉能力，上传入口保留但暂不可识别。</p>
-            )}
-          </div>
+              {reviewExcelError && <p className="mt-3 text-xs leading-5 text-red-700">{reviewExcelError}</p>}
+              {reviewExcel && (
+                <div className="mt-4 rounded-xl bg-emerald-50 p-3 text-xs text-emerald-900">
+                  <div className="font-semibold">已读取：{reviewExcel.fileName}</div>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {reviewExcel.detectedFields.map((field) => {
+                      const label = contentReviewFields.find(([key]) => key === field)?.[1] || field;
+                      return <span key={field} className="rounded-full bg-white px-2.5 py-1">{label} {String(reviewValues[field] ?? "")}</span>;
+                    })}
+                  </div>
+                  {reviewExcel.warnings.map((warning) => <p key={warning} className="mt-2 leading-5 text-amber-800">{warning}</p>)}
+                </div>
+              )}
+              <p className="mt-3 text-xs leading-5 text-amber-800">
+                Excel未提供原帖链接、分发或投流信息时，本篇仍可完成内容复盘，但不会进入标题方法胜率。
+              </p>
+            </div>
+          ) : (
+            <>
+              <div className="rounded-2xl border border-[#ead7b5] bg-[#fffaf0] p-4 text-sm leading-6">
+                <b>有效咨询口径：</b>用户符合目标人群，并主动说出具体处境、候选路径或决策冲突，愿意继续站内沟通或接受适配判断。确认没有时请填写0，留空代表尚未检查。
+              </div>
+              <div className="mt-5 grid gap-3 sm:grid-cols-2">
+                {businessReviewFields.map(([key, label]) => (
+                  <TextInput
+                    key={key}
+                    label={key === "qualified_inquiries" ? `${label}（必须确认）` : label}
+                    type="number"
+                    value={String(reviewValues[key])}
+                    onChange={(value) => setReviewValues({ ...reviewValues, [key]: value })}
+                  />
+                ))}
+              </div>
+            </>
+          )}
           <div className="mt-5">
             <PrimaryButton
-              disabled={Boolean(busy) || !reviewValues.note_url || (Boolean(data?.reviews[reviewDraft.id]) && changedKeys(reviewValues, reviewBaseline).length === 0)}
+              disabled={Boolean(busy)
+                || (reviewWindow === "content_24h" && (!reviewExcel || reviewValues.impressions === "" || reviewValues.reads === ""))
+                || (reviewWindow === "business_7d" && reviewValues.qualified_inquiries === "")
+                || (Boolean(data?.reviews[reviewDraft.id])
+                  && changedKeys(reviewValues, reviewBaseline).length === 0
+                  && !(reviewWindow === "content_24h" && reviewExcel))}
               onClick={submitReview}
             >
-              {data?.reviews[reviewDraft.id] ? "只保存变更字段" : "保存首次复盘"}
+              {reviewWindow === "content_24h" ? "保存24小时内容复盘" : reviewWindow === "business_7d" ? "确认7天商业结果" : "保存30天成交归因"}
             </PrimaryButton>
+          </div>
+        </Modal>
+      )}
+
+      {backfillOpen && (
+        <Modal title="补录已发布笔记" onClose={() => setBackfillOpen(false)}>
+          <div className="rounded-2xl bg-slate-50 p-4 text-sm leading-6 text-slate-600">
+            只补录当前“{businessDefinition.label} · {GROWTH_PERSONA_LABELS[persona]}”空间。原帖正文不会被系统改写；后续数据仍按24小时内容结果和7天商业结果分开确认。
+          </div>
+          <div className="mt-5 grid gap-4 sm:grid-cols-2">
+            <TextInput
+              label="原帖标题（20字内）"
+              value={backfill.title}
+              onChange={(value) => setBackfill({ ...backfill, title: Array.from(value).slice(0, 20).join("") })}
+            />
+            <TextInput
+              label="实际发布时间"
+              type="datetime-local"
+              value={backfill.published_at}
+              onChange={(value) => setBackfill({ ...backfill, published_at: value })}
+            />
+            <Select
+              label="人工确认标题方法"
+              value={backfill.method_id}
+              onChange={(value) => setBackfill({ ...backfill, method_id: value as TitleMethodId })}
+              options={backfillMethods.map((method) => ({
+                value: method.id,
+                label: `${method.order}. ${method.label} · ${defaultMethods.some((item) => item.id === method.id) ? "默认" : "探索"}`,
+              }))}
+            />
+          </div>
+          <div className="mt-4">
+            <TextArea
+              label="标题承诺（用于后续判断正文是否兑现）"
+              value={backfill.title_promise}
+              onChange={(value) => setBackfill({ ...backfill, title_promise: value })}
+              placeholder="例如：帮助正在转型的中高管自查离职前必须确认的3项变量"
+            />
+          </div>
+          {TITLE_METHOD_BY_ID[backfill.method_id]?.group === "benchmark" && (
+            <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs leading-5 text-amber-900">
+              对标法补录没有原始母题链接时，只进入历史统计，不进入方法胜率；不会反推或虚构来源。
+            </div>
+          )}
+          <div className="mt-5 flex flex-wrap gap-3">
+            <PrimaryButton
+              disabled={Boolean(busy) || !backfill.title.trim() || !backfill.title_promise.trim() || !backfill.published_at}
+              onClick={submitBackfill}
+            >
+              保存并生成复盘待办
+            </PrimaryButton>
+            <SecondaryButton disabled={Boolean(busy)} onClick={() => setBackfillOpen(false)}>取消</SecondaryButton>
           </div>
         </Modal>
       )}
@@ -1869,47 +2078,546 @@ function FinalDraft({
   );
 }
 
-function ReviewRow({ draft, review, onOpen }: { draft: ContentDraft; review?: GrowthReview; onOpen: () => void }) {
-  const publishedMs = Date.parse(draft.published_at || draft.distributed_at || draft.updated_at);
-  const availableAt = Number.isFinite(publishedMs) ? publishedMs + 24 * 60 * 60 * 1000 : Number.NaN;
-  const ready = draft.status === "reviewed" || Boolean(review) || (Number.isFinite(availableAt) && Date.now() >= availableAt);
+function reviewTaskPriority(state: ReviewTaskState) {
+  return ({ content_due: 0, business_due: 1, waiting_content: 2, waiting_business: 3, complete: 4 } as Record<ReviewTaskState, number>)[state];
+}
+
+function ReviewTabButton({ active, title, detail, onClick }: { active: boolean; title: string; detail: string; onClick: () => void }) {
   return (
-    <div className="flex flex-col gap-3 rounded-2xl border border-slate-200 p-4 md:flex-row md:items-center md:justify-between">
+    <button
+      type="button"
+      onClick={onClick}
+      className={`min-h-20 rounded-2xl border p-4 text-left transition ${active ? "border-slate-900 bg-slate-900 text-white" : "border-slate-200 bg-white hover:border-slate-300"}`}
+    >
+      <div className="font-semibold">{title}</div>
+      <div className={`mt-1 text-xs ${active ? "text-slate-300" : "text-slate-500"}`}>{detail}</div>
+    </button>
+  );
+}
+
+function ThreeDayReviewPanel({
+  account,
+  cycles,
+  busy,
+  onBusy,
+  onMessage,
+  onRefresh,
+}: {
+  account: GrowthAccount;
+  cycles: ThreeDayReviewCycle[];
+  busy: string | null;
+  onBusy: (value: string | null) => void;
+  onMessage: (value: string) => void;
+  onRefresh: () => Promise<void>;
+}) {
+  const active = [...cycles].reverse().find((cycle) => cycle.status === "draft");
+  const completed = [...cycles]
+    .filter((cycle) => cycle.status === "completed")
+    .sort((a, b) => (b.completed_at || "").localeCompare(a.completed_at || ""));
+  const latest = completed[0];
+  const dueAt = latest?.next_due_at || new Date().toISOString();
+  const due = Date.now() >= Date.parse(dueAt);
+  const [trafficConfirmed, setTrafficConfirmed] = useState(false);
+  const [trafficExceptions, setTrafficExceptions] = useState<Record<string, ThreeDayTrafficStatus>>({});
+  const [confirmedSuggested, setConfirmedSuggested] = useState<Record<string, boolean>>({});
+  const [excluded, setExcluded] = useState<Record<string, boolean>>({});
+  const [qualifiedInquiries, setQualifiedInquiries] = useState("");
+  const [diagnosis199Entries, setDiagnosis199Entries] = useState("");
+  const [diagnosis199Sales, setDiagnosis199Sales] = useState("");
+  const [deep6999Qualified, setDeep6999Qualified] = useState("");
+  const [deep6999Sales, setDeep6999Sales] = useState("");
+  const [attributions, setAttributions] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    setTrafficConfirmed(active?.traffic_confirmed ?? false);
+    setTrafficExceptions({});
+    setConfirmedSuggested({});
+    setExcluded({});
+    setQualifiedInquiries("");
+    setDiagnosis199Entries("");
+    setDiagnosis199Sales("");
+    setDeep6999Qualified("");
+    setDeep6999Sales("");
+    setAttributions({});
+  }, [active?.id, active?.traffic_confirmed]);
+
+  async function importOfficialExcel(file: File | null) {
+    if (!file) return;
+    onBusy("three-day-import");
+    try {
+      const form = new FormData();
+      form.append("accountId", account.id);
+      form.append("file", file);
+      const response = await fetch("/api/growth/review-cycles/import", { method: "POST", body: form });
+      const result = await response.json().catch(() => ({})) as { message?: string; error?: string; counts?: Record<string, number> };
+      if (!response.ok) throw new Error(result.message || result.error || "官方Excel导入失败");
+      await onRefresh();
+      onMessage(`官方Excel已导入：自动匹配${result.counts?.matched || 0}篇，建议确认${result.counts?.suggested || 0}篇，未匹配${result.counts?.unmatched || 0}篇。`);
+    } catch (error) {
+      onMessage((error as Error).message);
+    } finally {
+      onBusy(null);
+    }
+  }
+
+  async function completeCycle() {
+    if (!active || qualifiedInquiries === "") return;
+    onBusy("three-day-complete");
+    try {
+      const payload = {
+        accountId: account.id,
+        trafficConfirmed,
+        trafficExceptions,
+        confirmedSuggested: Object.entries(confirmedSuggested).filter(([, value]) => value).map(([key]) => key),
+        excludedSourceKeys: Object.entries(excluded).filter(([, value]) => value).map(([key]) => key),
+        qualifiedInquiries: Number(qualifiedInquiries),
+        attributions: Object.fromEntries(Object.entries(attributions)
+          .filter(([, value]) => value !== "")
+          .map(([key, value]) => [key, Number(value)])),
+        diagnosis199Entries: diagnosis199Entries === "" ? undefined : Number(diagnosis199Entries),
+        diagnosis199Sales: diagnosis199Sales === "" ? undefined : Number(diagnosis199Sales),
+        deep6999Qualified: deep6999Qualified === "" ? undefined : Number(deep6999Qualified),
+        deep6999Sales: deep6999Sales === "" ? undefined : Number(deep6999Sales),
+      };
+      await requestJSON(`/api/growth/review-cycles/${active.id}/complete`, {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+      await onRefresh();
+      onMessage("本轮三日复盘已完成；下一轮将在72小时后开放。");
+    } catch (error) {
+      onMessage((error as Error).message);
+    } finally {
+      onBusy(null);
+    }
+  }
+
+  const matchedCount = active?.notes.filter((note) => note.match_status === "matched").length ?? 0;
+  const suggestedCount = active?.notes.filter((note) => note.match_status === "suggested").length ?? 0;
+  const unmatchedCount = active?.notes.filter((note) => note.match_status === "unmatched").length ?? 0;
+  const attributionTotal = Object.values(attributions).reduce((sum, value) => sum + (value === "" ? 0 : Number(value)), 0);
+  const eligibleHistoryCount = new Set(completed
+    .flatMap((cycle) => cycle.notes)
+    .filter((note) => note.commercial_eligible)
+    .map((note) => note.draft_id || note.source_key)).size;
+
+  return (
+    <div className="space-y-5">
+      <div className={`rounded-2xl border p-5 ${due || active ? "border-amber-300 bg-amber-50" : "border-slate-200 bg-slate-50"}`}>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <div className="text-xs font-semibold text-[#9a6b24]">{active ? `第${active.cycle_number}轮 · 数据待确认` : due ? "本轮已到期" : "等待下一轮"}</div>
+            <div className="mt-1 text-lg font-semibold">{active ? "完成这一次三日复盘" : due ? "上传官方笔记列表明细表" : `下次开放：${formatDateTime(dueAt)}`}</div>
+            <p className="mt-2 text-sm leading-6 text-slate-600">一次上传、一轮决策；不再逐篇填写24小时、7天或30天复盘。</p>
+          </div>
+          <div className="rounded-xl bg-white px-4 py-3 text-sm">
+            <div className="text-xs text-slate-500">新机制商业有效样本</div>
+            <div className="mt-1 text-xl font-semibold">{eligibleHistoryCount}/30</div>
+          </div>
+        </div>
+      </div>
+
+      {!active && due && (
+        <div className="rounded-2xl border border-dashed border-slate-300 p-5">
+          <div className="font-semibold">1. 上传小红书官方Excel</div>
+          <p className="mt-2 text-sm leading-6 text-slate-600">只接受“笔记列表明细表.xlsx”，系统严格读取官方13列表头，不要求你补改Excel。</p>
+          <input
+            className="mt-4 block w-full text-sm"
+            type="file"
+            accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            disabled={Boolean(busy)}
+            onChange={(event) => {
+              void importOfficialExcel(event.target.files?.[0] ?? null);
+              event.currentTarget.value = "";
+            }}
+          />
+        </div>
+      )}
+
+      {active && (
+        <>
+          <div className="rounded-2xl border border-slate-200 p-5">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <div className="font-semibold">1. 官方Excel已读取</div>
+                <p className="mt-1 text-sm text-slate-600">{active.source_file_name} · {active.source_row_count}条 · 上传于{formatDateTime(active.imported_at)}</p>
+              </div>
+              <label className="cursor-pointer rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium">
+                重新上传
+                <input
+                  className="hidden"
+                  type="file"
+                  accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                  onChange={(event) => void importOfficialExcel(event.target.files?.[0] ?? null)}
+                />
+              </label>
+            </div>
+            <div className="mt-4 grid gap-3 sm:grid-cols-3">
+              <ReviewCount label="自动匹配" value={matchedCount} />
+              <ReviewCount label="建议确认" value={suggestedCount} emphasize={suggestedCount > 0} />
+              <ReviewCount label="未匹配" value={unmatchedCount} emphasize={unmatchedCount > 0} />
+            </div>
+            <details className="mt-4 rounded-xl border border-slate-200">
+              <summary className="cursor-pointer p-4 text-sm font-medium">查看全部{active.notes.length}条匹配结果</summary>
+              <div className="max-h-96 space-y-2 overflow-y-auto px-4 pb-4">
+                {active.notes.map((note) => (
+                  <div key={note.source_key} className="rounded-xl bg-slate-50 p-3 text-sm">
+                    <div className="flex flex-wrap items-start justify-between gap-2">
+                      <div>
+                        <div className="font-medium">{note.source_title || "标题为空"}</div>
+                        <div className="mt-1 text-xs text-slate-500">{note.content_format} · {formatDateTime(note.published_at)} · {note.match_reason}</div>
+                      </div>
+                      <Badge>{note.match_status === "matched" ? "已匹配" : note.match_status === "suggested" ? "待确认" : "未匹配"}</Badge>
+                    </div>
+                    <div className="mt-2 text-xs text-slate-600">曝光 {note.metrics.impressions.toLocaleString()} · 观看 {note.metrics.views.toLocaleString()} · 封面点击率 {formatPercent(note.metrics.cover_ctr)}</div>
+                    {note.match_status === "suggested" && (
+                      <label className="mt-3 flex items-center gap-2 text-xs">
+                        <input type="checkbox" checked={Boolean(confirmedSuggested[note.source_key])} onChange={(event) => setConfirmedSuggested({ ...confirmedSuggested, [note.source_key]: event.target.checked })} />
+                        确认绑定这篇系统笔记
+                      </label>
+                    )}
+                    {note.match_status !== "matched" && note.match_status !== "suggested" && (
+                      <label className="mt-3 flex items-center gap-2 text-xs">
+                        <input type="checkbox" checked={Boolean(excluded[note.source_key])} onChange={(event) => setExcluded({ ...excluded, [note.source_key]: event.target.checked })} />
+                        本轮排除，不进入方法学习
+                      </label>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </details>
+          </div>
+
+          <div className="rounded-2xl border border-slate-200 p-5">
+            <div className="font-semibold">2. 批次流量确认</div>
+            <label className="mt-4 flex items-start gap-3 rounded-xl bg-slate-50 p-4 text-sm leading-6">
+              <input className="mt-1" type="checkbox" checked={trafficConfirmed} onChange={(event) => setTrafficConfirmed(event.target.checked)} />
+              <span><b>本批次默认均为自然流量且正常分发。</b><br /><span className="text-slate-500">不确认也能完成描述性复盘，但所有笔记不会进入13种方法胜率。</span></span>
+            </label>
+            {trafficConfirmed && active.notes.some((note) => note.match_status === "matched") && (
+              <details className="mt-3 rounded-xl border border-slate-200">
+                <summary className="cursor-pointer p-4 text-sm font-medium">标记投流、限流或其他例外笔记</summary>
+                <div className="grid gap-3 px-4 pb-4 md:grid-cols-2">
+                  {active.notes.filter((note) => note.match_status === "matched").map((note) => (
+                    <Select
+                      key={note.source_key}
+                      label={note.source_title || "未命名笔记"}
+                      value={trafficExceptions[note.source_key] || "organic_normal"}
+                      onChange={(value) => setTrafficExceptions({ ...trafficExceptions, [note.source_key]: value as ThreeDayTrafficStatus })}
+                      options={[
+                        { value: "organic_normal", label: "自然流量·正常分发" },
+                        { value: "paid", label: "包含投流" },
+                        { value: "limited", label: "限流" },
+                        { value: "violation", label: "违规" },
+                        { value: "deleted", label: "已删除" },
+                        { value: "unknown", label: "无法确认" },
+                      ]}
+                    />
+                  ))}
+                </div>
+              </details>
+            )}
+          </div>
+
+          <div className="rounded-2xl border border-slate-200 p-5">
+            <div className="font-semibold">3. 有效咨询与归因</div>
+            <p className="mt-2 text-sm leading-6 text-slate-600">填写过去72小时新增结果。确认没有时填0；暂时不知道来自哪篇，可以保留为未归因。</p>
+            <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              <TextInput label="新增有效咨询（必填）" type="number" value={qualifiedInquiries} onChange={setQualifiedInquiries} />
+              <TextInput label="199诊断进入" type="number" value={diagnosis199Entries} onChange={setDiagnosis199Entries} />
+              <TextInput label="199诊断成交" type="number" value={diagnosis199Sales} onChange={setDiagnosis199Sales} />
+              <TextInput label="6999服务适配" type="number" value={deep6999Qualified} onChange={setDeep6999Qualified} />
+              <TextInput label="6999成交" type="number" value={deep6999Sales} onChange={setDeep6999Sales} />
+            </div>
+            {Number(qualifiedInquiries) > 0 && active.notes.some((note) => note.match_status === "matched") && (
+              <details className="mt-4 rounded-xl border border-slate-200">
+                <summary className="cursor-pointer p-4 text-sm font-medium">可选：把有效咨询归因到具体笔记</summary>
+                <div className="grid gap-3 px-4 pb-4 md:grid-cols-2">
+                  {active.notes.filter((note) => note.match_status === "matched").map((note) => (
+                    <TextInput
+                      key={note.source_key}
+                      label={note.source_title || "未命名笔记"}
+                      type="number"
+                      value={attributions[note.source_key] || ""}
+                      onChange={(value) => setAttributions({ ...attributions, [note.source_key]: value })}
+                    />
+                  ))}
+                </div>
+                <div className="border-t border-slate-100 px-4 py-3 text-xs text-slate-500">已归因 {attributionTotal} · 暂未归因 {Math.max(0, Number(qualifiedInquiries) - attributionTotal)}</div>
+              </details>
+            )}
+            <div className="mt-5">
+              <PrimaryButton disabled={Boolean(busy) || qualifiedInquiries === "" || attributionTotal > Number(qualifiedInquiries)} onClick={completeCycle}>
+                {busy === "three-day-complete" ? "正在生成…" : "确认并生成本轮复盘"}
+              </PrimaryButton>
+            </div>
+          </div>
+        </>
+      )}
+
+      {latest?.decision && (
+        <div className="rounded-2xl border border-slate-200 p-5">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <div className="text-xs font-semibold text-[#9a6b24]">最近完成 · 第{latest.cycle_number}轮</div>
+              <div className="mt-1 font-semibold">{latest.decision.summary}</div>
+            </div>
+            <div className="text-xs text-slate-500">完成于 {formatDateTime(latest.completed_at)}</div>
+          </div>
+          <div className="mt-4 grid gap-3 lg:grid-cols-3">
+            <CycleDecisionCard title="本轮继续" items={latest.decision.keep.length ? latest.decision.keep : ["样本不足，暂不放大任何方法。"]} tone="green" />
+            <CycleDecisionCard title="本轮复测或暂停" items={latest.decision.retest_or_pause} tone="amber" />
+            <CycleDecisionCard title="下一周期唯一变量" items={[experimentVariableLabel(latest.decision.next_variable), latest.decision.next_variable_reason]} tone="slate" />
+          </div>
+          <details className="mt-4 rounded-xl border border-slate-200">
+            <summary className="cursor-pointer p-4 text-sm font-medium">查看本轮单篇数据证据</summary>
+            <div className="overflow-x-auto px-4 pb-4">
+              <table className="min-w-[760px] w-full text-left text-xs">
+                <thead className="text-slate-500"><tr><th className="py-2">笔记</th><th>方法</th><th>曝光</th><th>观看</th><th>封面点击率</th><th>收藏率</th><th>分享率</th><th>学习状态</th></tr></thead>
+                <tbody>
+                  {latest.notes.map((note) => (
+                    <tr key={note.source_key} className="border-t border-slate-100">
+                      <td className="max-w-56 py-3 pr-3">{note.source_title || "标题为空"}</td>
+                      <td>{note.method_label || "未确认"}</td>
+                      <td>{note.metrics.impressions.toLocaleString()}</td>
+                      <td>{note.metrics.views.toLocaleString()}</td>
+                      <td>{formatPercent(note.metrics.cover_ctr)}</td>
+                      <td>{formatOptionalPercent(note.derived.save_rate)}</td>
+                      <td>{formatOptionalPercent(note.derived.share_rate)}</td>
+                      <td>{note.commercial_eligible ? "商业有效" : note.content_eligible ? "内容有效" : note.eligibility_reasons.join("；") || "只展示"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </details>
+        </div>
+      )}
+
+      {completed.length > 1 && (
+        <details className="rounded-2xl border border-slate-200">
+          <summary className="cursor-pointer p-5 font-semibold">历史三日复盘（{completed.length}轮）</summary>
+          <div className="space-y-3 px-5 pb-5">
+            {completed.map((cycle) => (
+              <div key={cycle.id} className="rounded-xl bg-slate-50 p-4 text-sm">
+                第{cycle.cycle_number}轮 · {formatDateTime(cycle.completed_at)} · {cycle.source_row_count}条平台数据 · 有效咨询 {cycle.qualified_inquiries ?? "未确认"}
+              </div>
+            ))}
+          </div>
+        </details>
+      )}
+
+      {!active && !due && !latest && (
+        <div className="rounded-2xl border border-dashed border-slate-300 p-6 text-center text-sm text-slate-500">当前没有可展示的三日复盘。</div>
+      )}
+    </div>
+  );
+}
+
+function CycleDecisionCard({ title, items, tone }: { title: string; items: string[]; tone: "green" | "amber" | "slate" }) {
+  const className = tone === "green"
+    ? "border-emerald-200 bg-emerald-50"
+    : tone === "amber"
+      ? "border-amber-200 bg-amber-50"
+      : "border-slate-200 bg-slate-50";
+  return (
+    <div className={`rounded-xl border p-4 ${className}`}>
+      <div className="text-sm font-semibold">{title}</div>
+      <ul className="mt-3 space-y-2 text-sm leading-6 text-slate-700">
+        {items.map((item) => <li key={item}>· {item}</li>)}
+      </ul>
+    </div>
+  );
+}
+
+function ReviewCount({ label, value, emphasize = false }: { label: string; value: number; emphasize?: boolean }) {
+  return (
+    <div className={`rounded-2xl border p-4 ${emphasize && value > 0 ? "border-amber-300 bg-amber-50" : "border-slate-200 bg-slate-50"}`}>
+      <div className="text-xs text-slate-500">{label}</div>
+      <div className="mt-1 text-2xl font-semibold">{value}</div>
+    </div>
+  );
+}
+
+function ReviewEmptyState() {
+  return (
+    <div className="rounded-2xl border border-dashed border-slate-300 p-6 text-center text-sm text-slate-500">
+      暂无新流程已发布内容。请先在正文中填写实际发布时间并标记发布。
+      <div><a className="mt-3 inline-flex min-h-10 items-center rounded-xl border border-slate-200 px-3 font-medium text-slate-700" href="#growth-step-4">返回正文与发布</a></div>
+    </div>
+  );
+}
+
+function ReviewTaskCard({
+  draft,
+  progress,
+  onOpen,
+}: {
+  draft: ContentDraft;
+  progress: ReturnType<typeof resolveReviewProgress>;
+  onOpen: (window: GrowthReviewWindow) => void;
+}) {
+  const stateCopy: Record<ReviewTaskState, { title: string; detail: string }> = {
+    waiting_content: { title: "等待24小时", detail: `可复盘时间：${formatDateTime(progress.content_available_at)}` },
+    content_due: { title: "今日可做内容复盘", detail: "录入平台数据，诊断标题入口和正文兑现。" },
+    waiting_business: { title: "等待7天商业结果", detail: `可确认时间：${formatDateTime(progress.business_available_at)}` },
+    business_due: { title: "待补7天商业结果", detail: "确认有效咨询；没有时明确填写0，不能留空。" },
+    complete: { title: "数据已完成", detail: "这篇内容已进入方法学习和周期策略证据池。" },
+  };
+  const copy = stateCopy[progress.state];
+  return (
+    <div className="flex flex-col gap-4 rounded-2xl border border-slate-200 p-4 md:flex-row md:items-center md:justify-between">
       <div>
         <div className="flex flex-wrap gap-2">
           <Badge>{draft.method_group === "native" ? "原生法" : "对标法"}</Badge>
           <Badge>{draft.generation_mode === "default" ? "默认" : "探索"}</Badge>
-          <Badge>{STATUS_LABEL[draft.status]}</Badge>
+          <Badge>{copy.title}</Badge>
         </div>
         <div className="mt-2 font-semibold">{draft.title}</div>
-        <div className="mt-1 text-xs text-slate-500">
-          {draft.method_label} · 实际发布于 {new Date(draft.published_at || draft.distributed_at || draft.updated_at).toLocaleString("zh-CN")}
-        </div>
+        <div className="mt-1 text-xs text-slate-500">{draft.method_label} · 发布于 {formatDateTime(progress.published_at)}</div>
+        <div className="mt-2 text-xs text-slate-600">{copy.detail}</div>
       </div>
-      <div>
-        {ready ? (
-          <SecondaryButton onClick={onOpen}>{review ? "更新复盘" : "首次复盘"}</SecondaryButton>
-        ) : (
-          <div className="text-right text-xs text-slate-500">
-            等待24小时<br />{Number.isFinite(availableAt) ? new Date(availableAt).toLocaleString("zh-CN") : "发布时间缺失"}
-          </div>
-        )}
+      <div className="shrink-0">
+        {progress.state === "content_due" && <PrimaryButton onClick={() => onOpen("content_24h")}>开始24小时复盘</PrimaryButton>}
+        {progress.state === "business_due" && <PrimaryButton onClick={() => onOpen("business_7d")}>补充7天结果</PrimaryButton>}
+        {progress.state === "complete" && <span className="inline-flex min-h-11 items-center rounded-xl bg-emerald-50 px-4 text-sm font-semibold text-emerald-700">已完成</span>}
+        {(progress.state === "waiting_content" || progress.state === "waiting_business") && <span className="text-xs text-slate-400">尚未到期</span>}
       </div>
     </div>
   );
 }
 
-function WeeklyReview({ review }: { review: WeeklyReviewResult }) {
+function SingleReviewCard({
+  draft,
+  review,
+  progress,
+  onOpen,
+}: {
+  draft: ContentDraft;
+  review?: GrowthReview;
+  progress: ReturnType<typeof resolveReviewProgress>;
+  onOpen: (window: GrowthReviewWindow) => void;
+}) {
+  return (
+    <div className="rounded-2xl border border-slate-200 p-5">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <div className="flex flex-wrap gap-2">
+            <Badge>{draft.method_group === "native" ? "原生法" : "对标法"}</Badge>
+            <Badge>{draft.method_label}</Badge>
+            <Badge>{draft.generation_mode === "default" ? "默认" : "探索"}</Badge>
+          </div>
+          <h3 className="mt-3 font-semibold">{draft.title}</h3>
+          <p className="mt-1 text-xs text-slate-500">发布于 {formatDateTime(progress.published_at)}</p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {progress.content_complete
+            ? <SecondaryButton onClick={() => onOpen("content_24h")}>更新24小时数据</SecondaryButton>
+            : progress.state === "content_due" && <PrimaryButton onClick={() => onOpen("content_24h")}>开始复盘</PrimaryButton>}
+          {progress.content_complete && (progress.state === "business_due" || progress.business_complete) && (
+            <SecondaryButton onClick={() => onOpen("business_7d")}>{progress.business_complete ? "更新7天结果" : "补充7天结果"}</SecondaryButton>
+          )}
+          {progress.business_complete && progress.attribution_ready && (
+            <SecondaryButton onClick={() => onOpen("attribution_30d")}>
+              {progress.attribution_complete ? "更新30天归因" : "补充30天归因"}
+            </SecondaryButton>
+          )}
+        </div>
+      </div>
+      {review ? <SingleReviewResult review={review} /> : (
+        <div className="mt-4 rounded-xl bg-slate-50 p-4 text-sm text-slate-500">尚未形成单篇诊断。</div>
+      )}
+    </div>
+  );
+}
+
+function SingleReviewResult({ review }: { review: GrowthReview }) {
+  const metrics = review.metrics;
+  const sampleText = ({
+    valid: "有效样本",
+    low_sample: "低样本",
+    paid: "投流样本",
+    limited: "限流样本",
+    violation: "违规样本",
+    deleted: "已删除",
+    historical_unknown: "数据不完整",
+    not_ready: "尚未到期",
+  } as Record<string, string>)[review.sample?.status || "historical_unknown"];
+  const commercialComplete = review.business_metrics_status && review.business_metrics_status !== "unknown";
+  const qualificationRate = inquiryQualificationRate(metrics);
+  const qualificationRateText = metrics.private_messages === undefined || metrics.qualified_inquiries === undefined
+    ? "待7天确认"
+    : metrics.private_messages === 0
+      ? "无私信，无法计算"
+      : formatOptionalPercent(qualificationRate);
+  return (
+    <div className="mt-4 border-t border-slate-100 pt-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="rounded-full bg-slate-900 px-3 py-1 text-xs font-medium text-white">{sampleText}</span>
+        <span className="text-xs text-slate-500">{review.sample?.reasons?.join("；") || "数据条件完整"}</span>
+      </div>
+      <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <MetricCard label="阅读率" value={formatPercent(review.derived_metrics?.ctr)} />
+        <MetricCard label="阅读→有效咨询率" value={commercialComplete ? formatPercent(review.derived_metrics?.inquiry_rate) : "待7天确认"} />
+        <MetricCard label="每千曝光有效咨询" value={formatOptionalNumber(perThousandImpressions(metrics))} />
+        <MetricCard label="私信→有效咨询率" value={qualificationRateText} />
+      </div>
+      <div className="mt-4 grid gap-3 md:grid-cols-2">
+        <ReviewJudgement label="入口判断" value={review.entry_judgement} />
+        <ReviewJudgement label="正文兑现" value={review.body_judgement || review.value_judgement} />
+        <ReviewJudgement label="人群判断" value={review.audience_judgement} />
+        <ReviewJudgement label="商业承接" value={review.conversion_judgement || review.follow_judgement} />
+      </div>
+      <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm">
+        <b>下一篇只改一个变量：</b>{review.next_variable}
+      </div>
+    </div>
+  );
+}
+
+function MetricCard({ label, value }: { label: string; value: string }) {
+  return <div className="rounded-xl bg-slate-50 p-3"><div className="text-xs text-slate-500">{label}</div><div className="mt-1 font-semibold">{value}</div></div>;
+}
+
+function ReviewJudgement({ label, value }: { label: string; value: string }) {
+  return <div className="rounded-xl border border-slate-200 p-3"><div className="text-xs font-medium text-slate-500">{label}</div><div className="mt-2 text-sm leading-6 text-slate-700">{value}</div></div>;
+}
+
+function formatDateTime(value?: string) {
+  return value ? new Date(value).toLocaleString("zh-CN") : "时间缺失";
+}
+
+function formatOptionalNumber(value?: number) {
+  return value === undefined ? "待确认" : value.toLocaleString("zh-CN", { maximumFractionDigits: 2 });
+}
+
+function formatOptionalPercent(value?: number) {
+  return value === undefined ? "待确认" : `${(value * 100).toFixed(2)}%`;
+}
+
+function WeeklyReview({
+  review,
+  onResolveExperiment,
+  busy,
+}: {
+  review: WeeklyReviewResult;
+  onResolveExperiment: (experimentId: string, status: "confirmed" | "rejected") => void;
+  busy: string | null;
+}) {
   if (!Array.isArray(review.by_method) || !review.decision) return null;
   const promotionSuggestions = Array.isArray(review.promotion_suggestions)
     ? review.promotion_suggestions
     : [];
   return (
     <div className="mt-5">
-      <div className="rounded-2xl border border-slate-200 p-4 text-sm leading-7">
-        <b>本周期结论：</b>{review.decision.summary}<br />
-        <b>新有效样本：</b>{review.eligible_total || 0}/30<br />
-        <b>规则：</b>{(review.eligible_total || 0) < 30 ? "只展示描述性数据，不推荐最佳方法。" : review.decision.scale_direction}
+      <div className="grid gap-3 sm:grid-cols-3">
+        <MetricCard label="发布内容" value={String(review.note_total || 0)} />
+        <MetricCard label="28天已复盘" value={String(review.reviewed_total || 0)} />
+        <MetricCard label="新有效样本" value={`${review.eligible_total || 0}/30`} />
+      </div>
+      <div className="mt-4 rounded-2xl border border-slate-200 p-4 text-sm leading-7">
+        <div><b>本周期结论：</b>{review.decision.summary}</div>
+        <div><b>证据规则：</b>{(review.eligible_total || 0) < 30 ? "只展示描述性数据，不推荐最佳方法。" : review.decision.scale_direction}</div>
       </div>
 
       {(["native", "benchmark"] as TitleMethodGroup[]).map((group) => {
@@ -1919,26 +2627,8 @@ function WeeklyReview({ review }: { review: WeeklyReviewResult }) {
           <div key={group} className="mt-5">
             <h3 className="font-semibold">{group === "native" ? "原生法" : "对标法"}</h3>
             {rows.length ? (
-              <div className="mt-3 overflow-x-auto rounded-2xl border border-slate-200">
-                <table className="min-w-[980px] w-full text-left text-xs">
-                  <thead className="bg-slate-50 text-slate-500">
-                    <tr>
-                      <th className="px-3 py-3">方法</th>
-                      <th className="px-3 py-3">模式</th>
-                      <th className="px-3 py-3">有效/复盘</th>
-                      <th className="px-3 py-3">有效咨询率</th>
-                      <th className="px-3 py-3">曝光</th>
-                      <th className="px-3 py-3">阅读</th>
-                      <th className="px-3 py-3">收藏</th>
-                      <th className="px-3 py-3">分享</th>
-                      <th className="px-3 py-3">主页访问</th>
-                      <th className="px-3 py-3">成交</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {rows.map((item) => <WeeklyMethodRow key={`${item.method_id}-${item.generation_mode}`} item={item} />)}
-                  </tbody>
-                </table>
+              <div className="mt-3 grid gap-3 md:grid-cols-2">
+                {rows.map((item) => <WeeklyMethodCard key={`${item.method_id}-${item.generation_mode}`} item={item} />)}
               </div>
             ) : (
               <div className="mt-3 rounded-xl border border-dashed border-slate-300 p-4 text-sm text-slate-400">本周期暂无该类方法样本。</div>
@@ -1955,24 +2645,78 @@ function WeeklyReview({ review }: { review: WeeklyReviewResult }) {
           </ul>
         </div>
       )}
+      <div className="mt-5 rounded-2xl border border-[#ead7b5] bg-[#fffaf0] p-4 text-sm leading-7">
+        <div><b>下一周期唯一假设：</b>{review.decision.strategic_hypothesis || "继续积累有效样本后再确定。"}</div>
+        <div><b>下一步：</b>{review.decision.next_focus}</div>
+        <p className="mt-2 text-xs text-slate-500">周期策略只提出继续、复测或暂缓建议；方法状态仍需运营人工确认。</p>
+      </div>
+      {review.experiment_card && (
+        <div className="mt-5 rounded-2xl border border-slate-900 bg-slate-900 p-5 text-white">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <div className="text-xs font-semibold tracking-wider text-amber-200">下一周期实验卡</div>
+              <h3 className="mt-2 text-lg font-semibold">{review.experiment_card.hypothesis}</h3>
+            </div>
+            <span className="rounded-full bg-white/10 px-3 py-1 text-xs">
+              {review.experiment_card.status === "pending" ? "待人工确认" : review.experiment_card.status === "confirmed" ? "已确认" : review.experiment_card.status === "rejected" ? "已拒绝" : "已应用"}
+            </span>
+          </div>
+          <div className="mt-4 grid gap-3 text-sm sm:grid-cols-2">
+            <div><span className="text-slate-400">方法：</span>{review.experiment_card.method_label || "继续积累方法证据"}</div>
+            <div><span className="text-slate-400">唯一变量：</span>{experimentVariableLabel(review.experiment_card.experiment_variable)}</div>
+            <div><span className="text-slate-400">预期信号：</span>{review.experiment_card.expected_signal}</div>
+            <div><span className="text-slate-400">停止条件：</span>{review.experiment_card.stop_condition}</div>
+          </div>
+          {review.experiment_card.status === "pending" && (
+            <div className="mt-5 flex flex-wrap gap-2">
+              <button
+                type="button"
+                disabled={Boolean(busy)}
+                onClick={() => onResolveExperiment(review.experiment_card!.id, "confirmed")}
+                className="min-h-11 rounded-xl bg-white px-4 py-2 text-sm font-semibold text-slate-900 disabled:opacity-40"
+              >确认并带入下一轮选题</button>
+              <button
+                type="button"
+                disabled={Boolean(busy)}
+                onClick={() => onResolveExperiment(review.experiment_card!.id, "rejected")}
+                className="min-h-11 rounded-xl border border-white/30 px-4 py-2 text-sm font-semibold text-white disabled:opacity-40"
+              >拒绝本次实验卡</button>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
 
-function WeeklyMethodRow({ item }: { item: MethodAggregate }) {
+function experimentVariableLabel(value: string) {
+  return ({
+    title_cover: "标题与封面",
+    opening: "开头",
+    audience_expression: "人群表达",
+    body_structure: "正文结构",
+    evidence: "证据",
+    closing: "结尾承接",
+    length: "篇幅",
+  } as Record<string, string>)[value] || value;
+}
+
+function WeeklyMethodCard({ item }: { item: MethodAggregate }) {
+  const confidence = item.confidence === "decision_ready" ? "可进入复测判断" : item.confidence === "trend" ? "仅描述趋势" : "样本不足，只展示";
   return (
-    <tr className="border-t border-slate-100">
-      <td className="px-3 py-3 font-medium">{item.method_label}</td>
-      <td className="px-3 py-3">{item.generation_mode === "default" ? "默认" : "探索"}</td>
-      <td className="px-3 py-3">{item.valid_count}/{item.reviewed_count}</td>
-      <td className="px-3 py-3 font-semibold text-[#9a6b24]">{formatPercent(item.median_inquiry_rate)}</td>
-      <td className="px-3 py-3">{formatNumber(item.median_impressions)}</td>
-      <td className="px-3 py-3">{formatNumber(item.median_reads)}</td>
-      <td className="px-3 py-3">{formatNumber(item.median_saves)}</td>
-      <td className="px-3 py-3">{formatNumber(item.median_shares)}</td>
-      <td className="px-3 py-3">{formatNumber(item.median_profile_visits)}</td>
-      <td className="px-3 py-3">{formatNumber(item.median_sales)}</td>
-    </tr>
+    <div className="rounded-2xl border border-slate-200 p-4">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div className="font-semibold">{item.method_label}</div>
+        <Badge>{item.generation_mode === "default" ? "默认" : "探索"}</Badge>
+      </div>
+      <div className="mt-2 text-xs text-slate-500">有效/复盘 {item.valid_count}/{item.reviewed_count} · {confidence}</div>
+      <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
+        <MetricCard label="有效咨询率" value={formatPercent(item.median_inquiry_rate)} />
+        <MetricCard label="阅读率" value={formatPercent(item.median_ctr)} />
+        <MetricCard label="收藏 / 分享" value={`${formatNumber(item.median_saves)} / ${formatNumber(item.median_shares)}`} />
+        <MetricCard label="主页 / 成交" value={`${formatNumber(item.median_profile_visits)} / ${formatNumber(item.median_sales)}`} />
+      </div>
+    </div>
   );
 }
 

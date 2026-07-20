@@ -147,7 +147,7 @@ function draftBase(account: GrowthAccount, id: string, status: ContentDraft["sta
     validation_checks: [],
     test_variable: "标题入口",
     expected_signal: "用户说出具体处境、候选路径或决策冲突",
-    title: overseas ? "投了15家，为何只有3个AI面" : "年薪百万，为何更不敢离职",
+    title: overseas ? "留学生海投，为何只有少数AI面" : "年薪百万，为何更不敢离职",
     alternative_titles: [],
     target_user: account.target_user,
     cover_text: overseas ? "海投越多，回音越少？" : "职位越高，越不敢动？",
@@ -211,6 +211,28 @@ function methodDraft(account: GrowthAccount): ContentDraft {
   };
 }
 
+function methodPublishedDraft(account: GrowthAccount, suffix: string, daysAgo: number): ContentDraft {
+  const item = methodDraft(account);
+  const publishedAt = isoBefore(daysAgo);
+  return {
+    ...item,
+    id: `${account.id}-method-v33-${suffix}`,
+    run_id: `${account.id}-method-v33-${suffix}-run`,
+    status: "published",
+    title: suffix === "content-due"
+      ? (account.business_line === "overseas_student" ? "留学生海投，问题可能不在简历" : "中高管离职前，先算清平台红利")
+      : suffix === "business-due"
+        ? (account.business_line === "overseas_student" ? "回国还是留下，先别急着二选一" : "留在高位，还是出去重新定价")
+        : suffix === "attribution-due"
+          ? (account.business_line === "overseas_student" ? "秋招结束35天后，我看到了真正结果" : "转型35天后，再看当初的职业选择")
+          : item.title,
+    published_at: publishedAt,
+    distributed_at: publishedAt,
+    created_at: publishedAt,
+    updated_at: publishedAt,
+  };
+}
+
 function reviewFor(draft: ContentDraft, index: number): GrowthReview {
   const metrics = {
     published_at: draft.published_at,
@@ -258,6 +280,64 @@ function reviewFor(draft: ContentDraft, index: number): GrowthReview {
     created_at: isoBefore(1),
     updated_at: isoBefore(0),
   };
+}
+
+function windowedReviewFor(draft: ContentDraft, index: number, businessComplete: boolean): GrowthReview {
+  const item = reviewFor(draft, index);
+  item.id = `${draft.id}-review`;
+  item.draft_id = draft.id;
+  const contentCapturedAt = isoBefore(Math.max(1, Number(((Date.now() - Date.parse(draft.published_at || draft.created_at)) / 86_400_000) - 1)));
+  item.snapshots = [{
+    id: `${draft.id}-content-24h`,
+    review_window: "content_24h",
+    metrics: {
+      note_url: item.metrics.note_url,
+      note_status: item.metrics.note_status,
+      promoted: item.metrics.promoted,
+      impressions: item.metrics.impressions,
+      reads: item.metrics.reads,
+      average_view_seconds: item.metrics.average_view_seconds,
+      likes: item.metrics.likes,
+      saves: item.metrics.saves,
+      comments: item.metrics.comments,
+      shares: item.metrics.shares,
+      profile_visits: item.metrics.profile_visits,
+      follows: item.metrics.follows,
+    },
+    input_source: "manual",
+    captured_at: contentCapturedAt,
+  }];
+  item.content_reviewed_at = contentCapturedAt;
+  if (businessComplete) {
+    const businessCapturedAt = isoBefore(1);
+    item.snapshots.push({
+      id: `${draft.id}-business-7d`,
+      review_window: "business_7d",
+      metrics: {
+        private_messages: item.metrics.private_messages,
+        qualified_inquiries: item.metrics.qualified_inquiries,
+        diagnosis_199_entries: item.metrics.diagnosis_199_entries,
+        diagnosis_199_sales: item.metrics.diagnosis_199_sales,
+        deep_6999_qualified: item.metrics.deep_6999_qualified,
+        deep_6999_sales: item.metrics.deep_6999_sales,
+      },
+      input_source: "manual",
+      captured_at: businessCapturedAt,
+    });
+    item.business_reviewed_at = businessCapturedAt;
+    item.business_metrics_status = item.metrics.qualified_inquiries === 0 ? "confirmed_zero" : "confirmed_value";
+  } else {
+    delete item.metrics.private_messages;
+    delete item.metrics.qualified_inquiries;
+    delete item.metrics.diagnosis_199_entries;
+    delete item.metrics.diagnosis_199_sales;
+    delete item.metrics.deep_6999_qualified;
+    delete item.metrics.deep_6999_sales;
+    item.derived_metrics = computeDerivedMetrics(item.metrics);
+    item.sample = evaluateReviewSample(item.metrics, draft.published_at);
+    item.business_metrics_status = "unknown";
+  }
+  return item;
 }
 
 export interface GrowthPreviewFixture {
@@ -326,8 +406,25 @@ export function createGrowthPreviewFixture(): GrowthPreviewFixture {
   const drafts: ContentDraft[] = [];
   const reviews: GrowthReview[] = [];
   for (const item of accounts) {
-    drafts.push(legacyDraft(item, 6, "ready"), legacyDraft(item, 7, "published"), methodDraft(item));
+    const contentDue = methodPublishedDraft(item, "content-due", 2);
+    const businessDue = methodPublishedDraft(item, "business-due", 9);
+    const complete = methodPublishedDraft(item, "complete", 10);
+    // 独立的35天样本用于本地验收可选的30天成交归因入口。
+    const attributionDue = methodPublishedDraft(item, "attribution-due", 35);
+    drafts.push(legacyDraft(item, 6, "ready"), legacyDraft(item, 7, "published"), methodDraft(item), contentDue, businessDue, complete, attributionDue);
+    reviews.push(windowedReviewFor(businessDue, 20, false), windowedReviewFor(complete, 21, true), windowedReviewFor(attributionDue, 22, true));
   }
+  // 对齐用户提供的小红书官方「笔记列表明细表」前四行，便于本地验收批量自动匹配与三日决策。
+  const officialPreviewRows = [
+    ["离职前先过一遍验尸清单", "2026-07-13T23:34:35.000Z"],
+    ["做了5年总监，连选方向都拿不准", "2026-07-13T13:52:58.000Z"],
+    ["换方向前先做失败验尸清单", "2026-07-13T07:25:42.000Z"],
+    ["离开平台，你到底值多少？", "2026-07-13T00:50:27.000Z"],
+  ] as const;
+  officialPreviewRows.forEach(([title, publishedAt], index) => {
+    const item = methodPublishedDraft(executiveBuyer, `official-${index + 1}`, 6);
+    drafts.push({ ...item, title, published_at: publishedAt, distributed_at: publishedAt, created_at: publishedAt, updated_at: publishedAt });
+  });
   for (let index = 0; index < 6; index += 1) {
     const item = legacyDraft(executiveExpert, index, "reviewed");
     drafts.push(item);

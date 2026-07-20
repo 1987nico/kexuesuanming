@@ -66,6 +66,7 @@ export function evaluateReviewSample(metrics: GrowthReviewMetrics, publishedAt?:
   if (metrics.note_status !== "normal") return { status: metrics.note_status, strategy_eligible: false, reasons: [metrics.note_status === "limited" ? "笔记限流" : metrics.note_status === "violation" ? "笔记违规" : "笔记已删除"] };
   if (metrics.promoted === undefined) return { status: "historical_unknown", strategy_eligible: false, reasons: ["缺少投流状态"] };
   if (metrics.promoted) return { status: "paid", strategy_eligible: false, reasons: ["包含投流，不能与自然流量混算"] };
+  if (metrics.qualified_inquiries === undefined) return { status: "historical_unknown", strategy_eligible: false, reasons: ["7天有效咨询尚未确认"] };
   if (finite(metrics.impressions) < LOW_SAMPLE_IMPRESSIONS || finite(metrics.reads) < LOW_SAMPLE_READS) return { status: "low_sample", strategy_eligible: false, reasons: [`曝光需≥${LOW_SAMPLE_IMPRESSIONS}且阅读需≥${LOW_SAMPLE_READS}`] };
   return { status: "valid", strategy_eligible: true, reasons: [] };
 }
@@ -145,6 +146,7 @@ function aggregateMethod(methodId: TitleMethodId | "legacy", notes: ContentDraft
     median_profile_visits: median(metrics.map((item) => finite(item.profile_visits))),
     median_sales: median(metrics.map((item) => finite(item.diagnosis_199_sales) + finite(item.deep_6999_sales))),
     above_persona_inquiry_median: valid.length > 0 && median(derived.map((item) => item.inquiry_rate)) > personaMedian,
+    confidence: valid.length >= 5 ? "decision_ready" : valid.length >= 3 ? "trend" : "display_only",
     evidence_review_ids: valid.map((review) => review.id),
   };
 }
@@ -195,7 +197,7 @@ export function buildWeeklyReviewResult(input: { account: GrowthAccount; notes: 
     .filter((item) => previousCycleComplete && item.generation_mode === "explore" && item.valid_count >= 5 && item.above_persona_inquiry_median && previousByMethod.get(item.method_id)?.above_persona_inquiry_median)
     .map((item) => ({ method_id: item.method_id as TitleMethodId, method_label: item.method_label, reason: "连续两个复盘周期的有效咨询率高于本视角中位数，且至少有5篇有效样本；仍需运营人工确认。", valid_count: item.valid_count, median_inquiry_rate: item.median_inquiry_rate }));
 
-  const topMethod = valid.length >= 30 ? [...byMethod].filter((item) => item.valid_count > 0).sort((a, b) => b.median_inquiry_rate - a.median_inquiry_rate)[0] : undefined;
+  const topMethod = valid.length >= 30 ? [...byMethod].filter((item) => item.valid_count >= 5).sort((a, b) => b.median_inquiry_rate - a.median_inquiry_rate)[0] : undefined;
   const repeatTitles = unique(rolling.filter((review) => review.entry_diagnosis?.performance === "strong_aligned").map((review) => review.entry_judgement));
   const avoidTitles = unique(rolling.filter((review) => ["weak_entry_strong_content", "weak_both"].includes(review.entry_diagnosis?.performance || "")).map((review) => review.entry_judgement));
   const bodyPatterns = unique(rolling.map((review) => review.body_judgement || review.writer_instruction));
@@ -207,7 +209,7 @@ export function buildWeeklyReviewResult(input: { account: GrowthAccount; notes: 
     source_review_ids: rolling.map((review) => review.id), by_method: byMethod, by_tag: byTag,
     promotion_suggestions: promotionSuggestions, by_direction: [],
     decision: {
-      scale_direction: topMethod ? `描述性领先：${topMethod.method_label}，有效咨询率中位数${(topMethod.median_inquiry_rate * 100).toFixed(2)}%。` : "有效样本不足30篇，只展示数据，不评选最佳方法。",
+      scale_direction: topMethod ? `可复测领先：${topMethod.method_label}，有效咨询率中位数${(topMethod.median_inquiry_rate * 100).toFixed(2)}%。` : valid.length < 30 ? "有效样本不足30篇，只展示数据，不评选最佳方法。" : "尚无单个方法达到5篇有效样本，不提出放大建议。",
       pause_direction: "不基于模型评分暂停方法。",
       next_focus: valid.length < 30 ? `继续积累有效样本（当前${valid.length}/30）。` : "复测咨询率较高的方法，同时保留单变量实验。",
       reusable_pattern: repeatTitles[0] || bodyPatterns[0] || "样本不足，尚未形成稳定模板。",
@@ -242,11 +244,16 @@ export function buildLearningBrief(input: { account: GrowthAccount; notes: Conte
   const relevant = canonicalizeReviews(input.reviews).filter((review) => !input.methodId || noteById.get(review.draft_id)?.method_id === input.methodId).filter((review) => review.sample?.strategy_eligible).slice(0, 10);
   const aggregate = input.methodId ? input.weekly.by_method.find((item) => item.method_id === input.methodId) : undefined;
   const latest = relevant[0];
-  const experiment = latest?.experiment_variable || normalizeExperimentVariable(latest?.next_variable);
-  const basis = unique([input.weekly.decision.summary, aggregate ? `${aggregate.method_label}有${aggregate.valid_count}篇有效样本。` : input.weekly.decision.next_focus, latest?.manager_instruction]);
+  const confirmedExperiment = [...(input.account.cycle_experiments ?? [])]
+    .reverse()
+    .find((item) => item.status === "confirmed" || item.status === "applied");
+  const experiment = confirmedExperiment?.experiment_variable || latest?.experiment_variable || normalizeExperimentVariable(latest?.next_variable);
+  const basis = unique([input.weekly.decision.summary, aggregate ? `${aggregate.method_label}有${aggregate.valid_count}篇有效样本。` : input.weekly.decision.next_focus, confirmedExperiment?.hypothesis, latest?.manager_instruction]);
   return {
     trace: { version: input.weekly.learning_version || `weekly-${input.weekly.generated_at}`, generated_at: new Date().toISOString(), weekly_review_generated_at: input.weekly.generated_at, source_review_ids: unique([...(aggregate?.evidence_review_ids || []), ...relevant.map((review) => review.id)], 12), basis },
-    weekly_strategy: `${input.weekly.decision.next_focus} ${input.weekly.decision.strategic_hypothesis || ""}`.trim(),
+    weekly_strategy: confirmedExperiment
+      ? `已确认实验：${confirmedExperiment.hypothesis}；停止条件：${confirmedExperiment.stop_condition}`
+      : `${input.weekly.decision.next_focus} ${input.weekly.decision.strategic_hypothesis || ""}`.trim(),
     topic_guidance: unique(relevant.map((review) => review.topic_instruction)),
     title_guidance: unique([...(input.weekly.decision.title_patterns_to_repeat || []), ...relevant.map((review) => review.entry_judgement)]),
     body_guidance: unique([...(input.weekly.decision.body_patterns_to_repeat || []), ...relevant.map((review) => review.writer_instruction)]),

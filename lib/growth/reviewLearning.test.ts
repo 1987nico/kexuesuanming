@@ -34,7 +34,10 @@ describe("有效样本口径", () => {
     expect(computeDerivedMetrics(base).inquiry_rate).toBe(0.01);
     expect(evaluateReviewSample(base, base.published_at, NOW).status).toBe("valid");
     expect(evaluateReviewSample({ ...base, note_url: undefined }, base.published_at, NOW).status).toBe("historical_unknown");
+    expect(evaluateReviewSample({ ...base, note_status: undefined }, base.published_at, NOW).status).toBe("historical_unknown");
+    expect(evaluateReviewSample({ ...base, promoted: undefined }, base.published_at, NOW).status).toBe("historical_unknown");
     expect(evaluateReviewSample({ ...base, promoted: true }, base.published_at, NOW).status).toBe("paid");
+    expect(evaluateReviewSample({ ...base, qualified_inquiries: undefined }, base.published_at, NOW).reasons).toContain("7天有效咨询尚未确认");
     expect(evaluateReviewSample({ ...base, reads: 49 }, base.published_at, NOW).status).toBe("low_sample");
   });
 
@@ -91,7 +94,16 @@ describe("方法与开放标签复盘", () => {
       median_shares: 30,
       median_profile_visits: 80,
       median_sales: 2,
+      confidence: "display_only",
     });
+  });
+
+  it("总样本达到30但单方法不足5篇时不生成领先方法", () => {
+    const methodIds: TitleMethodId[] = ["human_pain", "tug_of_war", "contrarian", "inventory", "viral_framework", "similar_audience", "same_outcome", "same_effect"];
+    const notes = Array.from({ length: 30 }, (_, index) => draft(index + 1, methodIds[index % methodIds.length]));
+    const weekly = buildWeeklyReviewResult({ account, notes, reviews: notes.map((note, index) => review(note, index, index % 4)), at: NOW });
+    expect(weekly.eligible_total).toBe(30);
+    expect(weekly.decision.scale_direction).toContain("尚无单个方法达到5篇");
   });
 
   it("探索方法只有连续两周期超过中位数才提出人工晋升", () => {
@@ -111,5 +123,35 @@ describe("方法与开放标签复盘", () => {
     const brief = buildLearningBrief({ account, notes, reviews, weekly, methodId: "human_pain" });
     expect(brief.trace.source_review_ids.length).toBeGreaterThan(0);
     expect(brief.body_guidance.length).toBeGreaterThan(0);
+  });
+
+  it("人工确认的周期实验会进入下一轮生成简报", () => {
+    const notes = [draft(1)];
+    const reviews = [review(notes[0], 1)];
+    const weekly = buildWeeklyReviewResult({ account, notes, reviews, at: NOW });
+    const withExperiment: GrowthAccount = {
+      ...account,
+      cycle_experiments: [{
+        id: "experiment-1",
+        account_id: account.id,
+        period_id: "week-2026-07-13",
+        target_user: account.target_user,
+        method_id: "human_pain",
+        method_label: "行业人性痛点",
+        generation_mode: "default",
+        hypothesis: "只改变标题冲突强度",
+        experiment_variable: "title_cover",
+        expected_signal: "有效咨询率提升",
+        stop_condition: "完成5篇后再判断",
+        evidence_review_ids: [reviews[0].id],
+        status: "confirmed",
+        created_at: NOW.toISOString(),
+      }],
+    };
+    const brief = buildLearningBrief({ account: withExperiment, notes, reviews, weekly });
+
+    expect(brief.weekly_strategy).toContain("只改变标题冲突强度");
+    expect(brief.weekly_strategy).toContain("完成5篇后再判断");
+    expect(brief.experiment_variable).toBe("title_cover");
   });
 });

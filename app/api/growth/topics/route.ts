@@ -112,6 +112,21 @@ export async function POST(req: Request) {
 
   run.owner_user_id = run.owner_user_id ?? guard.auth.user.id;
   await store.saveRun(run);
+  const confirmedExperiment = [...(account.cycle_experiments ?? [])].reverse().find((item) => item.status === "confirmed");
+  if (confirmedExperiment) {
+    const applied = { ...confirmedExperiment, status: "applied" as const, resolved_at: timestamp };
+    const cycleExperiments = (account.cycle_experiments ?? []).map((item) => item.id === applied.id ? applied : item);
+    const weekly = weeklyReview.experiment_card?.id === applied.id
+      ? { ...weeklyReview, experiment_card: applied }
+      : weeklyReview;
+    await store.saveAccount({
+      ...account,
+      cycle_experiments: cycleExperiments,
+      weekly_review: weekly,
+      stage_review: weekly,
+      updated_at: timestamp,
+    });
+  }
   if (usage) {
     await store.saveUsage({
       tenant_id: DEFAULT_TENANT_ID,
