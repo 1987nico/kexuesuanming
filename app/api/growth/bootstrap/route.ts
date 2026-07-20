@@ -12,7 +12,7 @@ import {
 import { isVisionConfigured } from "@/lib/llm/router";
 import { growthPreviewEnabled } from "@/lib/growth/previewFixture";
 import { methodsForPersona } from "@/lib/growth/methods";
-import { sourceIsUsable } from "@/lib/growth/validation";
+import { sourceIsUsable, validateDraftHardChecks } from "@/lib/growth/validation";
 import { isMethodWeeklyReview } from "@/lib/growth/reviewLearning";
 import {
   businessPositionsFromSettings,
@@ -79,7 +79,13 @@ export async function GET(req: Request) {
   // 旧版按 A/B/C 方向生成的周复盘仅保留在历史数据中，不能交给 v3.2 方法表渲染。
   const weeklyReview = isMethodWeeklyReview(storedWeeklyReview) ? storedWeeklyReview : null;
   const historicalDrafts = drafts.filter((draft) => draft.schema_version === "legacy_v1" || !draft.schema_version);
-  const currentDrafts = drafts.filter((draft) => draft.schema_version === "method_v3_2");
+  const currentDrafts = drafts
+    .filter((draft) => draft.schema_version === "method_v3_2")
+    .map((draft) => ({
+      ...draft,
+      // 兼容旧草稿：读取时按当前三项规则重算展示，不回写、不覆盖历史原始数据。
+      validation_checks: validateDraftHardChecks(draft, persona),
+    }));
   const validReviewDraftIds = new Set(reviewList.filter((review) => review.sample?.strategy_eligible).map((review) => review.draft_id));
   const historicalEffectiveSamples = historicalDrafts.filter((draft) => validReviewDraftIds.has(draft.id)).length;
   const newLearningSamples = currentDrafts.filter((draft) => draft.eligible_for_method_learning !== false && validReviewDraftIds.has(draft.id)).length;
