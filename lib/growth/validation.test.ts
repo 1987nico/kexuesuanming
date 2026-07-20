@@ -43,10 +43,17 @@ describe("growth publish validation", () => {
     expect(hardChecksAllowPublishing(checks)).toBe(false);
   });
 
-  it("blocks publishing when more than one primary CTA is present", () => {
-    const checks = validateDraftHardChecks(hardCheckDraft("中高管离职前先看这组冲突。\n1. 能力\n2. 现金流\n3. 市场\n4. 停止条件\n5. 证据\n\n可在站内补充职位和路径。也可从服务入口提交处境和冲突。"), "expert");
-    expect(checks.find((item) => item.key === "compliance")?.status).toBe("blocked");
+  it("keeps only identity, fulfillment and conversion checks for a body", () => {
+    const checks = validateDraftHardChecks(hardCheckDraft("中高管离职前先看这组冲突。\n1. 能力\n2. 现金流\n3. 市场\n4. 停止条件\n5. 证据\n\n可在站内补充职位和路径。"), "expert");
+    expect(checks.map((item) => item.key)).toEqual(["identity", "fulfillment", "conversion"]);
+    expect(checks.find((item) => item.key === "conversion")?.status).toBe("needs_edit");
     expect(hardChecksAllowPublishing(checks)).toBe(false);
+  });
+
+  it("passes conversion when professional service is naturally embedded", () => {
+    const checks = validateDraftHardChecks(hardCheckDraft("中高管离职前先看这组冲突。\n1. 能力\n2. 现金流\n3. 市场\n4. 停止条件\n5. 证据\n\n后来我请职业决策顾问一起梳理，先把能力和市场机会拆开判断。"), "expert");
+    expect(checks.find((item) => item.key === "conversion")?.status).toBe("passed");
+    expect(hardChecksAllowPublishing(checks)).toBe(true);
   });
   it("对标来源同时要求7天内母题和24小时内快照", () => {
     const at = new Date("2026-07-19T12:00:00.000Z");

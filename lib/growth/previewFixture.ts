@@ -181,10 +181,9 @@ function methodDraft(account: GrowthAccount): ContentDraft {
     ],
     tagging_status: "tagged",
     validation_checks: [
-      { key: "source", status: "passed", message: "该方法不要求外部来源" },
       { key: "identity", status: "passed", message: "符合当前视角" },
       { key: "fulfillment", status: "passed", message: "正文兑现三项检查" },
-      { key: "compliance", status: "passed", message: "一个站内承接动作" },
+      { key: "conversion", status: "passed", message: "自然说明专业服务如何介入" },
     ],
   };
 }

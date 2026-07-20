@@ -284,10 +284,13 @@ function openingRespondsToTitle(draft: ContentDraft) {
   return identityTokens.some((token) => opening.includes(token)) && conflictTokens.some((token) => `${draft.title}${opening}`.includes(token));
 }
 
-function primaryCtaCount(body: string) {
-  const closing = body.slice(-180);
-  const units = closing.split(/[。！？!?；;\n]+/).map((item) => item.trim()).filter(Boolean);
-  return units.filter((item) => /站内|服务入口|提交.{0,20}(?:处境|职位|路径|冲突)|补充.{0,20}(?:处境|职位|路径|冲突)|先把.{0,20}(?:变量|路径|处境)/.test(item)).length;
+function hasNaturalConversionBridge(body: string) {
+  const normalized = body.replace(/\s+/g, "");
+  return [
+    /(?:找|请|跟着|由|让).{0,16}(?:专业的?)?(?:求职机构|求职老师|辅导老师|职业顾问|职业决策顾问|咨询师|教练|专业团队).{0,20}(?:带|陪跑|辅导|指导|帮助|梳理|诊断|规划|复盘|判断)/,
+    /(?:专业的?)?(?:求职机构|求职老师|辅导老师|职业顾问|职业决策顾问|咨询师|教练|专业团队).{0,20}(?:带|陪跑|辅导|指导|帮助|梳理|诊断|规划|复盘|判断)/,
+    /(?:咨询|服务)(?:中|里|过程).{0,24}(?:梳理|诊断|判断|规划|陪跑|验证)/,
+  ].some((pattern) => pattern.test(normalized));
 }
 
 export function validateDraftHardChecks(draft: ContentDraft, persona: GrowthPersona): ValidationCheck[] {
@@ -311,40 +314,39 @@ export function validateDraftHardChecks(draft: ContentDraft, persona: GrowthPers
     priority: "A",
   };
   const topicChecks = validateTopicCandidate(topicLike, persona);
-  const issues = scanDraftCompliance(draft);
   const count = promisedCount(draft.title);
   const hasPromisedMaterial = /清单|路线图|资料|盘点|表|步骤/.test(draft.title);
   const countFulfilled = count === undefined || numberedItemCount(draft.body) === count;
   const materialFulfilled = !hasPromisedMaterial || numberedItemCount(draft.body) > 0 || draft.body.length >= 280;
   const opensOnPromise = openingRespondsToTitle(draft);
   const fulfillmentPassed = countFulfilled && materialFulfilled && opensOnPromise;
-  const ctaCount = primaryCtaCount(draft.body);
+  const identity = topicChecks.find((check) => check.key === "identity") ?? {
+    key: "identity" as const,
+    status: "needs_edit" as const,
+    message: "尚未确认当前正文身份",
+  };
+  const conversionPassed = hasNaturalConversionBridge(draft.body);
 
-  return topicChecks.map((check) => {
-    if (check.key === "compliance") {
-      return {
-        key: "compliance" as const,
-        status: issues.length || ctaCount !== 1 ? "blocked" as const : "passed" as const,
-        message: issues.length
-          ? [...new Set(issues.map((issue) => issue.message))].join("；")
-          : ctaCount !== 1
-            ? `正文需且只能保留一个主要承接动作，当前识别到${ctaCount}个`
-            : "未发现互动诱导或导流风险，且只有一个主要承接动作",
-      };
-    }
-    if (check.key === "fulfillment") {
-      return {
-        key: "fulfillment" as const,
-        status: fulfillmentPassed ? "passed" as const : "needs_edit" as const,
-        message: fulfillmentPassed
-          ? `正文已覆盖标题承诺：${draft.title_promise}`
-          : "正文尚未做到：数字逐项一致、资料/路线图实际交付、前30字回应人物与冲突",
-      };
-    }
-    return check;
-  });
+  return [
+    identity,
+    {
+      key: "fulfillment" as const,
+      status: fulfillmentPassed ? "passed" as const : "needs_edit" as const,
+      message: fulfillmentPassed
+        ? `正文已覆盖标题承诺：${draft.title_promise}`
+        : "正文尚未做到：数字逐项一致、资料/路线图实际交付、前30字回应人物与冲突",
+    },
+    {
+      key: "conversion" as const,
+      status: conversionPassed ? "passed" as const : "needs_edit" as const,
+      message: conversionPassed
+        ? "正文已自然说明专业老师、求职机构或职业顾问如何介入并提供帮助"
+        : "正文缺少自然的专业服务介入；可说明找了专业老师、求职机构或职业顾问后，具体如何梳理、指导或陪跑",
+    },
+  ];
 }
 
 export function hardChecksAllowPublishing(checks: ValidationCheck[]) {
-  return checks.length === 4 && checks.every((check) => check.status === "passed");
+  const required: ValidationCheck["key"][] = ["identity", "fulfillment", "conversion"];
+  return required.every((key) => checks.some((check) => check.key === key && check.status === "passed"));
 }

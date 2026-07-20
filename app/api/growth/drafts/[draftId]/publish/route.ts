@@ -53,7 +53,7 @@ export async function POST(req: Request, { params }: { params: { draftId: string
   const isLegacy = checkedDraft.schema_version === "legacy_v1" || !checkedDraft.schema_version;
   const validationChecks = isLegacy ? checkedDraft.validation_checks ?? [] : validateDraftHardChecks(checkedDraft, account.persona);
   if (!isLegacy && !hardChecksAllowPublishing(validationChecks)) {
-    return NextResponse.json({ error: "hard_validation_blocked", message: "来源、身份、兑现或合规校验未通过，不能标记发布。", checks: validationChecks }, { status: 422 });
+    return NextResponse.json({ error: "hard_validation_blocked", message: "身份、兑现或转化植入检查未通过，不能标记发布。", checks: validationChecks }, { status: 422 });
   }
 
   const published = {

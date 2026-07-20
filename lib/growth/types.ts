@@ -125,7 +125,7 @@ export interface TopicSourceSnapshot {
 }
 
 export interface ValidationCheck {
-  key: "source" | "identity" | "fulfillment" | "compliance";
+  key: "source" | "identity" | "fulfillment" | "compliance" | "conversion";
   status: "passed" | "needs_edit" | "blocked";
   message: string;
 }

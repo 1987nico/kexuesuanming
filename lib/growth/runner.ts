@@ -350,8 +350,11 @@ function fallbackBody(topic: TopicCandidate, long: boolean, cta: ContentDraft["c
     : "职位、收入和平台资源，都可能让人误判自己的市场价格。真正要看的，是离开当前岗位后，哪些能力、成果和客户信任仍能被单独识别。";
   const core = `${topic.target_user}先看这里：${topic.title_promise}。\n\n${judgement}${list}`;
   const detail = long ? "\n\n执行时不要一次验证所有假设。先选成本最低、最能推翻自己判断的一项，约定一个观察周期，再用访谈、试做或真实付费反馈判断。没有证据之前，保留选择权比急着表态更重要。" : "";
+  const serviceBridge = businessLine === "overseas_student"
+    ? "\n\n后来我们找了专业的求职机构老师带，先把方向、岗位地图和招聘节奏梳理清楚，再逐项调整简历和面试准备。"
+    : "\n\n这类问题适合请职业决策顾问一起梳理，先把个人能力、市场机会和失败风险拆开验证，再决定是否转向。";
   const closing = cta === "soft_bridge" ? "\n\n先把这些变量写下来，再看哪条路值得迈出第一步。" : cta === "on_platform_consult" ? "\n\n如果你卡在两条具体路径之间，可在站内补充当前职位、候选方向和最担心的冲突，先做适配判断。" : "\n\n如果你的处境已经具体，可从站内服务入口提交职位、候选路径和决策冲突，先确认服务是否适配。";
-  return `${core}${detail}${closing}`;
+  return `${core}${detail}${serviceBridge}${closing}`;
 }
 
 async function generateSingleDraft(input: {

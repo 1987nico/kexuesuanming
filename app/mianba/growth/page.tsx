@@ -1646,7 +1646,8 @@ function FinalDraft({
   const bodyWithHashtags = hashtagsText ? `${draft.body}\n\n${hashtagsText}` : draft.body;
   const packageText = `${draft.title}\n\n${bodyWithHashtags}`;
   const feedback = `标题：${draft.title}\n方法：${draft.method_label}\n承诺：${draft.title_promise}\n复盘重点：${draft.review_points.join("、")}`;
-  const publishable = draft.validation_checks.length === 4 && draft.validation_checks.every((check) => check.status === "passed");
+  const publishable = (["identity", "fulfillment", "conversion"] as const).every((key) =>
+    draft.validation_checks.some((check) => check.key === key && check.status === "passed"));
   return (
     <div className="rounded-2xl border border-slate-200 p-5">
       <div className="flex flex-wrap gap-2">
@@ -1824,7 +1825,7 @@ const formatPercent = (value?: number) => `${((value || 0) * 100).toFixed(2)}%`;
 const formatNumber = (value?: number) => Math.round(value || 0).toLocaleString("zh-CN");
 
 function Check({ check }: { check: ContentDraft["validation_checks"][number] }) {
-  const label = ({ source: "来源", identity: "身份", fulfillment: "兑现", compliance: "合规" } as Record<string, string>)[check.key];
+  const label = ({ source: "来源", identity: "身份", fulfillment: "兑现", compliance: "合规", conversion: "转化植入" } as Record<string, string>)[check.key];
   return (
     <div className={`rounded-xl px-3 py-2 text-xs ${check.status === "passed" ? "bg-emerald-50 text-emerald-800" : "bg-red-50 text-red-700"}`}>
       <b>{label}</b> · {check.status === "passed" ? "通过" : "需修改"}
