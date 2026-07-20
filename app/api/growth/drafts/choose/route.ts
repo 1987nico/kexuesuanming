@@ -48,9 +48,6 @@ export async function POST(req: Request) {
     updated_at: timestamp,
   } as ContentDraft);
   draft = { ...draft, validation_checks: validateDraftHardChecks(draft, account.persona) };
-  if (draft.compliance?.status === "blocked" || draft.validation_checks.some((check) => check.status === "blocked")) {
-    return NextResponse.json({ error: "validation_blocked", message: "正文未通过发布硬校验，请修改后再选定。", issues: [...(draft.compliance?.issues ?? []), ...draft.validation_checks.filter((check) => check.status === "blocked").map((check) => check.message)] }, { status: 422 });
-  }
 
   const tagging = await generateOpenBodyTags(draft);
   draft = { ...draft, raw_body_tags: [...(existing?.raw_body_tags ?? []).map((tag) => ({ ...tag, active: false })), ...tagging.tags], tagging_status: tagging.status };

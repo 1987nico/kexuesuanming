@@ -638,13 +638,21 @@ export default function GrowthPage() {
   }
 
   async function chooseDraft(draft: ContentDraft) {
+    const previousVariants = variants;
+    const previousChosen = chosen;
     setBusy(`choose-${draft.id}`);
+    setVariants([draft]);
+    setChosen(draft);
+    setMessage("已选定这个版本；未选版本已收起，复制按钮已显示。");
+    window.setTimeout(() => {
+      document.getElementById("selected-final-draft")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 0);
     try {
       const result = await requestJSON<{ draft: ContentDraft }>("/api/growth/drafts/choose", {
         method: "POST",
         body: JSON.stringify({ draft }),
       });
-      setVariants([]);
+      setVariants([result.draft]);
       setChosen(result.draft);
       setData((current) => current ? {
         ...current,
@@ -656,11 +664,10 @@ export default function GrowthPage() {
           ? { ...item, status: "ready", draft: result.draft }
           : item),
       } : current);
-      setMessage("已选定最终正文；下方已显示复制标题和复制正文按钮。");
-      window.setTimeout(() => {
-        document.getElementById("selected-final-draft")?.scrollIntoView({ behavior: "smooth", block: "start" });
-      }, 0);
+      setMessage("已选定这个版本；现在可以复制标题和复制正文＋话题。");
     } catch (error) {
+      setVariants(previousVariants);
+      setChosen(previousChosen);
       setMessage((error as Error).message);
     } finally {
       setBusy(null);
@@ -1126,15 +1133,26 @@ export default function GrowthPage() {
                     : "先在选题槽位中选择一个标题，再生成短版和长版正文。"}
                 >
                   {variants.length > 0 ? (
-                    <div className="grid gap-5 lg:grid-cols-2">
+                    <div className={`grid gap-5 ${chosen ? "grid-cols-1" : "lg:grid-cols-2"}`}>
                       {variants.map((draft) => (
-                        <DraftCard key={draft.id} draft={draft} busy={busy} onChoose={chooseDraft} />
+                        <DraftCard
+                          key={draft.id}
+                          draft={draft}
+                          busy={busy}
+                          selected={chosen?.id === draft.id}
+                          onChoose={chooseDraft}
+                          onPublish={markPublished}
+                        />
                       ))}
                     </div>
                   ) : chosen ? (
-                    <div className="rounded-2xl bg-slate-50 p-4 text-sm text-slate-600">
-                      当前已有一篇待发布正文，完整内容与发布校验显示在下方。
-                    </div>
+                    <DraftCard
+                      draft={chosen}
+                      busy={busy}
+                      selected
+                      onChoose={chooseDraft}
+                      onPublish={markPublished}
+                    />
                   ) : selectedTopic ? (
                     <div className="rounded-2xl border border-dashed border-slate-300 p-5 text-sm text-slate-500">
                       <div className="font-medium text-slate-800">标题已选定，等待生成正文</div>
@@ -1149,15 +1167,6 @@ export default function GrowthPage() {
                     </div>
                   )}
 
-                  {chosen && (
-                    <div id="selected-final-draft" className="scroll-mt-24 mt-7 border-t border-slate-200 pt-6">
-                      <h3 className="text-lg font-semibold">已选最终正文</h3>
-                      <p className="mt-1 text-sm text-slate-500">发布前只做来源、身份、兑现、合规四项硬校验。</p>
-                      <div className="mt-4">
-                        <FinalDraft key={chosen.id} draft={chosen} busy={busy} onPublish={markPublished} />
-                      </div>
-                    </div>
-                  )}
                 </Section>
 
                 <Section
@@ -1587,12 +1596,24 @@ function SourceEditor({
 function DraftCard({
   draft,
   busy,
+  selected = false,
   onChoose,
+  onPublish,
 }: {
   draft: ContentDraft;
   busy: string | null;
+  selected?: boolean;
   onChoose: (draft: ContentDraft) => void;
+  onPublish?: (draft: ContentDraft, publishedAt: string) => void;
 }) {
+  if (selected && onPublish) {
+    return (
+      <div id="selected-final-draft" className="scroll-mt-24">
+        <FinalDraft draft={draft} busy={busy} onPublish={onPublish} />
+      </div>
+    );
+  }
+
   return (
     <div className="rounded-2xl border border-slate-200 p-5">
       <div className="flex gap-2">
@@ -1654,13 +1675,13 @@ function FinalDraft({
         <div className="mt-3 grid gap-2 sm:grid-cols-2">
           <CopyButton
             text={draft.title}
-            label="1　复制标题"
+            label="复制标题"
             copiedLabel="标题已复制"
             primary
           />
           <CopyButton
             text={bodyWithHashtags}
-            label="2　复制正文（含话题）"
+            label="复制正文＋话题"
             copiedLabel="正文已复制"
             primary
           />
