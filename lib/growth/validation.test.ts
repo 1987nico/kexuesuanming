@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  bodyHasConversionEvidence,
+  bodyOpeningMeetsTitle,
   countPublishChars,
   enforceDraftCompliance,
   extractPromisedCount,
@@ -79,6 +81,16 @@ describe("growth publish validation", () => {
     const body = "中高管离职前先看这组冲突。\n1. 能力\n2. 现金流\n3. 市场\n4. 停止条件\n5. 证据\n\n后来我请职业决策顾问一起梳理，先把能力和市场机会拆开判断。";
     const checks = validateDraftHardChecks(hardCheckDraft(body), "expert");
     expect(checks.find((item) => item.key === "conversion")?.status).toBe("needs_edit");
+  });
+
+  it("正文骨架只有同时包含服务动作和阶段结果才算完整", () => {
+    expect(bodyHasConversionEvidence("后来请一位求职老师梳理岗位和招聘节奏。孩子不再拿一份简历乱投，也明确了下一步。")).toBe(true);
+    expect(bodyHasConversionEvidence("后来请一位求职老师梳理了一下。")).toBe(false);
+  });
+
+  it("正文骨架开头必须自然回应标题人物与冲突", () => {
+    expect(bodyOpeningMeetsTitle("留学生秋招节奏表", "前阵子陪孩子忙秋招，我们把两边截止时间写在了一张纸上。")).toBe(true);
+    expect(bodyOpeningMeetsTitle("留学生秋招节奏表", "作为留学生家长，我来分享一张表。")).toBe(false);
   });
 
   it("rejects formulaic self-introductions even when the structure is complete", () => {

@@ -1,6 +1,7 @@
 import { llmJSON } from "@/lib/llm/router";
 import {
   buildAccountPlanUserPrompt,
+  buildDraftBlueprintUserPrompt,
   buildBodyTagUserPrompt,
   buildDraftUserPrompt,
   buildReviewUserPrompt,
@@ -9,6 +10,7 @@ import {
   buildTopicPoolUserPrompt,
   GROWTH_SYSTEM_PROMPT,
   type AccountContext,
+  type DraftBlueprintContext,
   type ReportPrices,
 } from "./agents";
 import { methodsForPersona, type TitleMethodDefinition } from "./methods";
@@ -47,6 +49,8 @@ import {
   PERSONA_SPECIFIC_FIELDS,
 } from "./types";
 import {
+  bodyHasConversionEvidence,
+  bodyOpeningMeetsTitle,
   countPublishChars,
   enforceDraftCompliance,
   extractPromisedCount,
@@ -434,51 +438,263 @@ export async function generateTopicPool(input: {
 const ctaType = (persona: GrowthPersona): ContentDraft["cta_type"] =>
   persona === "buyer" ? "soft_bridge" : persona === "expert" ? "on_platform_consult" : "service_entry";
 
-function fallbackBody(topic: TopicCandidate, long: boolean, cta: ContentDraft["cta_type"], businessLine: GrowthBusinessLine, persona: GrowthPersona) {
-  const promisedCount = extractPromisedCount(topic.title);
-  const count = promisedCount ? Math.max(1, Math.min(10, promisedCount)) : /清单|路线图|资料|盘点|表|步骤/.test(topic.title) ? 3 : 0;
-  const items = businessLine === "overseas_student"
-    ? ["把专业背景与目标岗位要求逐项对齐", "写清回国与留当地两条路径的最小验证动作", "确认签证、时间线与招聘周期", "用真实岗位反馈校准求职定位", "准备能被验证的项目与实习证据", "核对目标行业的入场门槛", "找到三位真实从业者访谈", "记录拒绝反馈而非只看成功案例", "先投递小样本验证简历版本", "到期后按证据调整路径"]
-    : ["把可迁移能力与平台资源分开", "写清每条候选路径的最小验证动作", "提前设定失败成本与停止条件", "确认家庭现金流能承受的验证周期", "用真实市场反馈校准职业定价", "核对目标行业的进入门槛", "准备能被验证的成果证据", "找到第一批真实访谈对象", "记录反对证据而非只找支持", "到期后按证据作出取舍"];
-  const list = count ? `\n\n${items.slice(0, count).map((item, index) => `${index + 1}. ${item}`).join("\n")}` : "";
-  const judgement = businessLine === "overseas_student"
-    ? "学校、专业和留学投入，都可能让人误判自己的岗位匹配度。真正要看的，是目标岗位是否认可你的经历、技能和可验证成果。"
-    : "职位、收入和平台资源，都可能让人误判自己的市场价格。真正要看的，是离开当前岗位后，哪些能力、成果和客户信任仍能被单独识别。";
-  const core = `${identityOpening(persona, businessLine)}\n\n${fallbackFulfillment(topic, businessLine)}${judgement}${list}`;
-  const serviceBridge = `\n\n${serviceBridgeSentence(persona, businessLine)}`;
-  const detail = long ? `\n\n${fallbackVerificationDetail(businessLine)}` : "";
-  const closing = cta === "soft_bridge" ? "\n\n先把这些变量写下来，再看哪条路值得迈出第一步。" : cta === "on_platform_consult" ? "\n\n如果你卡在两条具体路径之间，可在站内补充当前职位、候选方向和最担心的冲突，先做适配判断。" : "\n\n如果你的处境已经具体，可从站内服务入口提交职位、候选路径和决策冲突，先确认服务是否适配。";
-  return `${core}${serviceBridge}${detail}${closing}`;
+interface PromiseDeliverySpec {
+  format: DraftBlueprintContext["delivery_format"];
+  minimumSections: number;
+  exactSections?: number;
+  rule: string;
 }
 
-function fallbackFulfillment(topic: TopicCandidate, businessLine: GrowthBusinessLine) {
-  if (topic.method_id === "tug_of_war") {
-    return businessLine === "overseas_student"
-      ? "我们后来把两条路摆在一张纸上：留当地，要看签证、岗位数量和当地经历；回国，要看招聘窗口、岗位匹配和时间成本。"
-      : "我后来把两条路摆在一张纸上：留下，要看平台还有多少空间；离开，要看可迁移能力、市场报价和家庭现金流。";
+function promiseDeliverySpec(topic: TopicCandidate): PromiseDeliverySpec {
+  const count = extractPromisedCount(topic.title);
+  if (count) {
+    return {
+      format: "numbered",
+      minimumSections: count,
+      exactSections: count,
+      rule: `标题承诺${count}项，delivery_sections必须正好${count}段，每段兑现一项，不能多也不能少。`,
+    };
   }
+  if (/时间表|节奏表|路线图|资料|清单|盘点|步骤|表格|这张表|这份表/.test(`${topic.title}${topic.title_promise}`)) {
+    return {
+      format: "numbered",
+      minimumSections: 3,
+      rule: "标题承诺表格、清单、资料或路线图，delivery_sections至少3段，每段必须包含可直接执行的时间、动作、判断标准或注意事项，不能只描述整理过程。",
+    };
+  }
+  if (topic.method_id === "tug_of_war") {
+    return {
+      format: "numbered",
+      minimumSections: 2,
+      exactSections: 2,
+      rule: "拔河式标题必须正好比较两条路径，各写一段适用条件、代价和验证动作。",
+    };
+  }
+  return {
+    format: "paragraphs",
+    minimumSections: 2,
+    rule: "至少用2个具体段落完成标题承诺：先给核心判断，再给事实、场景或可执行动作，不能只复述标题。",
+  };
+}
+
+function fallbackDeliverySections(
+  topic: TopicCandidate,
+  businessLine: GrowthBusinessLine,
+  spec: PromiseDeliverySpec,
+) {
+  const overseas = businessLine === "overseas_student";
+  if (/时间表|节奏表/.test(`${topic.title}${topic.title_promise}`)) {
+    return overseas
+      ? [
+        "7—8月：先定国内外各自的目标岗位和简历版本，国内提前批开始后用小样本投递看回音，不要等开学再准备。",
+        "9—10月：国内秋招进入高峰，海外岗位陆续开放；每周分开记录投递、笔试和面试节点，避免两边截止时间撞在一起。",
+        "11—12月：国内进入补录和终面，海外继续网申与测评；根据真实反馈收窄岗位，不再拿同一份简历投所有方向。",
+        "1月以后：没拿到满意结果就复盘拒绝原因，同时准备春招；只保留有反馈证据的方向，不因为焦虑继续扩大海投。",
+      ]
+      : [
+        "第1周：列出留任、跳槽和转型候选项，把收入、平台资源和个人能力分开记录。",
+        "第2周：访谈目标方向的真实从业者，核对岗位门槛、市场报价和最常见失败原因。",
+        "第3—4周：做一次低成本试做或小样本验证，用真实反馈决定继续、调整还是停止。",
+      ];
+  }
+  const items = overseas
+    ? [
+      "把专业背景与目标岗位要求逐项对齐，先删掉只靠学校光环的方向。",
+      "把回国与留当地两条路径分别写出招聘周期、身份限制和最小验证动作。",
+      "为不同岗位准备对应的项目证据和简历版本，用真实回音校准定位。",
+      "记录笔试、面试和拒绝反馈，不再只看成功案例判断岗位。",
+      "到约定日期后按证据收窄方向，避免因为焦虑继续扩大海投。",
+      "核对目标行业的真实入场门槛，不把学校排名直接等同于岗位匹配。",
+      "找三位真实从业者核对日常工作，先排除想象中很美的方向。",
+      "每周只复盘一个关键变量，分清是方向、材料还是表达出了问题。",
+      "先投递一小批验证简历版本，收到反馈后再扩大样本。",
+      "提前写下停止条件，到期后按反馈调整，不无限延长海投。",
+    ]
+    : [
+      "把可迁移能力与当前平台资源分开，确认离开职位后还能被识别的成果。",
+      "给每条候选路径写出最小验证动作、失败成本和停止条件。",
+      "用真实访谈、试做或市场报价校准职业定价，不只听熟人评价。",
+      "确认家庭现金流能承受的验证周期，再决定留任、跳槽或转型。",
+      "记录反对证据，到约定日期后按事实作出取舍。",
+      "核对目标行业的进入门槛，不把过去的职位头衔直接当作新岗位筹码。",
+      "准备能被外部验证的成果证据，分清个人能力和公司品牌贡献。",
+      "找到第一批真实访谈对象，确认目标客户、雇主或合作方是否愿意付费。",
+      "每周记录一次反对证据，避免只收集支持自己转型的声音。",
+      "提前写下停止条件，到期后按真实反馈继续、调整或放弃。",
+    ];
+  if (topic.method_id === "tug_of_war") return items.slice(0, 2);
+  const needed = spec.exactSections ?? spec.minimumSections;
+  if (spec.format === "numbered") return items.slice(0, Math.max(needed, 3));
   const promise = topic.title_promise
     .replace(/[。！？!?]+$/u, "")
-    .replace(/^(?:真实)?(?:解释|呈现|说明|展示|梳理|比较|提供|交付|盘点|列出|给出|帮助)/u, "")
+    .replace(/^(?:讲清|解释|呈现|说明|展示|分享|梳理|比较|提供|交付|盘点|列出|给出)/u, "")
     .trim();
-  return `后来把信息一项项摊开，才发现真正卡住我们的，是${promise || "眼前这个选择该用什么证据判断"}。`;
+  return [
+    `${promise || "眼前这个选择"}，真正需要的不是再搜更多信息，而是先确定哪些变量能用现实反馈验证。`,
+    overseas
+      ? "学校、专业和留学投入都可能制造错觉，最后仍要回到岗位要求、项目证据和招聘节奏。"
+      : "职位、收入和平台资源都可能制造错觉，最后仍要回到可迁移能力、市场报价和失败成本。",
+  ];
 }
 
-function fallbackVerificationDetail(businessLine: GrowthBusinessLine) {
-  return businessLine === "overseas_student"
-    ? "后面我们也没再同时试所有方向，只挑两个最可能的岗位，各用一版简历投一小批，再根据真实回音调整。这样做慢一点，但每次没回应都能留下有用的信息。"
-    : "后面我也没急着一次验证所有猜想，只选成本最低、最可能推翻自己的那一项，约定一个观察周期，再用访谈、试做或真实反馈判断。证据没出来之前，先保留选择权。";
+function fallbackClosing(cta: ContentDraft["cta_type"], businessLine: GrowthBusinessLine) {
+  if (cta === "soft_bridge") return businessLine === "overseas_student"
+    ? "先把自己的毕业时间、两边目标岗位和最近一次真实反馈写在同一页，再决定下一步补哪一块。"
+    : "先把当前职位、两条候选路径和最担心的代价写在同一页，再决定先验证哪一项。";
+  if (cta === "on_platform_consult") return "如果你的处境已经具体，可以从站内补充当前背景、候选路径和最担心的冲突，先做适配判断。";
+  return "如果已经有明确处境和候选路径，可以从站内服务入口提交信息，先确认服务是否适配。";
+}
+
+function fallbackStageResult(persona: GrowthPersona, businessLine: GrowthBusinessLine) {
+  if (businessLine === "overseas_student") {
+    if (persona === "buyer") return "孩子不再拿一份简历乱投，也明确了下一步先验证哪类岗位。";
+    if (persona === "expert") return "岗位范围收窄了，后面的投递反馈也终于能用来复盘。";
+    return "目标岗位收窄了，不同简历版本也终于有了明确去向。";
+  }
+  if (persona === "buyer") return "我先排除了一个看似体面的方向，也明确了下一步要验证什么。";
+  if (persona === "expert") return "三个方向收窄到一个先验证，下一步也有了明确顺序。";
+  return "客户排除了一个高风险方向，并明确了下一步验证顺序。";
+}
+
+function fallbackDraftBlueprint(
+  account: GrowthAccount,
+  topic: TopicCandidate,
+  cta: ContentDraft["cta_type"],
+  spec: PromiseDeliverySpec,
+): DraftBlueprintContext {
+  const businessLine = account.business_line ?? "executive";
+  return {
+    opening: identityOpening(account.persona, businessLine),
+    core_judgement: businessLine === "overseas_student"
+      ? "秋招真正难的不是同时准备两边，而是没有把岗位、材料和截止时间放进同一套节奏里。"
+      : "职业选择真正难的不是缺少选项，而是没有把能力证据、市场机会和失败成本放在一起判断。",
+    delivery_format: spec.format,
+    delivery_sections: fallbackDeliverySections(topic, businessLine, spec),
+    service_bridge: serviceBridgeSentence(account.persona, businessLine),
+    stage_result: fallbackStageResult(account.persona, businessLine),
+    closing: fallbackClosing(cta, businessLine),
+  };
+}
+
+function normalizeBlueprintSections(raw: unknown) {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((item) => {
+    if (typeof item === "string") return item.trim();
+    if (item && typeof item === "object") {
+      const row = item as Record<string, unknown>;
+      return asText(row.paragraph) || asText(row.content) || asText(row.text);
+    }
+    return "";
+  }).filter(Boolean);
+}
+
+function normalizeDraftBlueprint(
+  raw: unknown,
+  fallback: DraftBlueprintContext,
+  spec: PromiseDeliverySpec,
+  title: string,
+): DraftBlueprintContext {
+  const value = raw && typeof raw === "object" ? raw as Record<string, unknown> : {};
+  const openingCandidate = asText(value.opening);
+  const opening = openingCandidate && bodyOpeningMeetsTitle(title, openingCandidate)
+    ? openingCandidate
+    : fallback.opening;
+  let sections = normalizeBlueprintSections(value.delivery_sections);
+  if (spec.exactSections && sections.length !== spec.exactSections) sections = fallback.delivery_sections.slice(0, spec.exactSections);
+  if (sections.length < spec.minimumSections) {
+    sections = [...sections, ...fallback.delivery_sections].slice(0, spec.minimumSections);
+  }
+  const serviceCandidate = asText(value.service_bridge);
+  const serviceBridge = bodyHasConversionEvidence(serviceCandidate) ? serviceCandidate : fallback.service_bridge;
+  const stageResultCandidate = asText(value.stage_result);
+  return {
+    opening,
+    core_judgement: asText(value.core_judgement) || fallback.core_judgement,
+    delivery_format: spec.format,
+    delivery_sections: sections,
+    service_bridge: serviceBridge,
+    stage_result: stageResultCandidate || fallback.stage_result,
+    closing: asText(value.closing) || fallback.closing,
+  };
+}
+
+async function generateDraftBlueprint(input: {
+  account: GrowthAccount;
+  topic: TopicCandidate;
+  cta: ContentDraft["cta_type"];
+}) {
+  const spec = promiseDeliverySpec(input.topic);
+  const fallback = fallbackDraftBlueprint(input.account, input.topic, input.cta, spec);
+  try {
+    const result = await llmJSON<any>({
+      system: GROWTH_SYSTEM_PROMPT,
+      user: buildDraftBlueprintUserPrompt({
+        persona: input.account.persona,
+        context: accountContext(input.account),
+        targetUser: input.topic.target_user,
+        trustSource: input.account.trust_source,
+        methodId: input.topic.method_id,
+        methodLabel: input.topic.method_label,
+        title: input.topic.title,
+        titlePromise: input.topic.title_promise,
+        deliveryRule: spec.rule,
+        ctaType: input.cta,
+      }),
+      maxTokens: 1800,
+      temperature: 0.45,
+    });
+    return {
+      blueprint: normalizeDraftBlueprint(result.data?.blueprint ?? result.data, fallback, spec, input.topic.title),
+      spec,
+      usage: resultUsage(result),
+    };
+  } catch (error) {
+    console.warn("[growth] draft blueprint fallback:", (error as Error).message);
+    return { blueprint: fallback, spec, usage: undefined };
+  }
+}
+
+function cleanDeliverySection(value: string) {
+  return value.replace(/^\s*(?:\d{1,2}[.、)]|[一二三四五六七八九十]+[、.])\s*/u, "").trim();
+}
+
+function composeBlueprintBody(
+  blueprint: DraftBlueprintContext,
+  spec: PromiseDeliverySpec,
+  rawStructure?: unknown,
+) {
+  const structure = rawStructure && typeof rawStructure === "object"
+    ? rawStructure as Record<string, unknown>
+    : {};
+  const opening = blueprint.opening;
+  let sections = normalizeBlueprintSections(structure.delivery_sections);
+  if (spec.exactSections && sections.length !== spec.exactSections) sections = blueprint.delivery_sections.slice(0, spec.exactSections);
+  if (!spec.exactSections && sections.length > 5) sections = sections.slice(0, 5);
+  if (sections.length < spec.minimumSections) {
+    const fallbackCount = spec.exactSections ?? Math.max(spec.minimumSections, Math.min(5, blueprint.delivery_sections.length));
+    sections = blueprint.delivery_sections.slice(0, fallbackCount);
+  }
+  const renderedSections = spec.format === "numbered"
+    ? sections.map((section, index) => `${index + 1}. ${cleanDeliverySection(section)}`).join("\n\n")
+    : sections.join("\n\n");
+  const serviceCandidate = asText(structure.service_bridge);
+  const serviceBridge = bodyHasConversionEvidence(serviceCandidate) ? serviceCandidate : blueprint.service_bridge;
+  const closing = asText(structure.closing) || blueprint.closing;
+  return [opening, blueprint.core_judgement, serviceBridge, renderedSections, closing]
+    .map((section) => section.trim())
+    .filter(Boolean)
+    .join("\n\n");
 }
 
 function serviceBridgeSentence(persona: GrowthPersona, businessLine: GrowthBusinessLine) {
   if (businessLine === "overseas_student") {
     if (persona === "buyer") return "我们自己折腾了几轮还是没理顺，后来才找了一位求职老师一起梳理现有材料。她没有先改文案，而是先把岗位和招聘节奏对齐；至少孩子不再拿一份简历乱投，下一步该验证什么也有了顺序。";
-    if (persona === "expert") return "我当时没有先改简历，而是和学生一起梳理目标岗位、项目证据和招聘节奏。直接变化不是立刻拿到 Offer，而是岗位范围收窄了，后面的投递反馈也终于能用来复盘。";
-    return "我们当时先停下改简历，把岗位匹配、项目证据和招聘时间线一起梳理了一遍。第一步变化不是立刻拿到 Offer，而是目标岗位收窄了，不同简历版本也终于有了明确去向。";
+    if (persona === "expert") return "那次求职咨询里，我没有先改简历，而是和学生一起梳理目标岗位、项目证据和招聘节奏。直接变化不是立刻拿到 Offer，而是岗位范围收窄了，后面的投递反馈也终于能用来复盘。";
+    return "那次求职辅导服务里，我们先停下改简历，把岗位匹配、项目证据和招聘时间线一起梳理了一遍。第一步变化不是立刻拿到 Offer，而是目标岗位收窄了，不同简历版本也终于有了明确去向。";
   }
   if (persona === "buyer") return "我自己越想越乱，后来才请一位职业决策顾问陪我梳理能力、市场机会和失败成本。最后没有被催着辞职，反而先排除了一个看似体面的方向，也知道下一步该验证什么。";
-  if (persona === "expert") return "我当时没有替来访者直接选答案，而是先把候选方向、能力证据和失败成本拆开，再安排最小验证。直接变化不是马上做决定，而是三个方向收窄到一个先验证，下一步也有了明确顺序。";
-  return "我们当时没有催客户马上选方向，而是先把能力证据、市场机会和失败成本拆开，再安排最小验证。阶段结果不是一个漂亮结论，而是排除了一个高风险方向，并定下了下一步验证顺序。";
+  if (persona === "expert") return "那次职业咨询里，我没有替来访者直接选答案，而是先把候选方向、能力证据和失败成本拆开，再安排最小验证。直接变化不是马上做决定，而是三个方向收窄到一个先验证，下一步也有了明确顺序。";
+  return "那次职业决策服务里，我们没有催客户马上选方向，而是先把能力证据、市场机会和失败成本拆开，再安排最小验证。阶段结果不是一个漂亮结论，而是排除了一个高风险方向，并定下了下一步验证顺序。";
 }
 
 function identityOpening(persona: GrowthPersona, businessLine: GrowthBusinessLine) {
@@ -515,6 +731,8 @@ function deterministicDraftRepair(
 async function rewriteDraftForValidation(
   draft: ContentDraft,
   account: GrowthAccount,
+  blueprint: DraftBlueprintContext,
+  spec: PromiseDeliverySpec,
 ) {
   const persona = account.persona;
   const businessLine = account.business_line ?? "executive";
@@ -524,7 +742,7 @@ async function rewriteDraftForValidation(
     .join("\n");
   const result = await llmJSON<any>({
     system: GROWTH_SYSTEM_PROMPT,
-    user: `请修正下面这篇小红书正文，只输出 JSON：{"body":"修正后的完整正文"}。\n\n标题：${draft.title}\n标题承诺：${draft.title_promise}\n当前身份：${persona}\n业务：${businessLine}\n账号人设：${account.one_liner}\n账号语气：${account.tone_style}\n目标用户：${account.target_user}\n未通过项：\n${failedChecks}\n\n修正规则：\n1. 保持原账号人设和口吻，像同一个真人继续讲，不要改成标准化营销文案。\n2. 开头像真人自然开口，从动作、现场、念头或矛盾切入并回应标题。禁止以“作为××”“身为××”“我的判断是”“先看这里”“我们做××服务时”自报身份，也不要机械复述标题。\n3. 标题以“X项、X条、X步、X个方法”等作数量承诺时，正文必须用同等数量的编号内容逐项兑现；投递数、薪资、日期等背景数字不算清单承诺。\n4. 专业服务必须放在故事因果里：先有具体卡点或自己试过的动作，再写老师、机构或顾问做了什么，紧接着交代一个克制、可验证的阶段结果。不要在结尾突然加广告句。\n5. 阶段结果优先写岗位收窄、简历对齐、排除方向、明确下一步或反馈可复盘；没有真实依据不得编造 Offer、薪资、录取数量或保证成功。\n6. 保留原正文有价值的信息，不加入互动诱导或站外导流。\n\n原正文：\n${draft.body}`,
+    user: `请修正下面这篇小红书正文，只输出 JSON：{"body":"修正后的完整正文"}。\n\n标题：${draft.title}\n标题承诺：${draft.title_promise}\n当前身份：${persona}\n业务：${businessLine}\n账号人设：${account.one_liner}\n账号语气：${account.tone_style}\n目标用户：${account.target_user}\n未通过项：\n${failedChecks}\n\n原始生成骨架（修正后仍必须完整保留这些环节）：\n${JSON.stringify(blueprint, null, 2)}\n标题兑现结构：${spec.rule}\n\n修正规则：\n1. 保持原账号人设和口吻，像同一个真人继续讲，不要改成标准化营销文案。\n2. 必须按“自然开头→核心判断→服务因果与阶段结果→标题承诺实际交付→唯一收束动作”重写，不能只在原文结尾补一句老师或顾问。\n3. 开头像真人自然开口，从动作、现场、念头或矛盾切入并回应标题。禁止以“作为××”“身为××”“我的判断是”“先看这里”“我们做××服务时”自报身份，也不要机械复述标题。\n4. 标题以“X项、X条、X步、X个方法”等作数量承诺时，正文必须用同等数量的编号内容逐项兑现；投递数、薪资、日期等背景数字不算清单承诺。\n5. 专业服务必须放在故事因果里：先有具体卡点或自己试过的动作，再写老师、机构或顾问做了什么，紧接着交代一个克制、可验证的阶段结果。不要在结尾突然加广告句。\n6. 阶段结果优先写岗位收窄、简历对齐、排除方向、明确下一步或反馈可复盘；没有真实依据不得编造 Offer、薪资、录取数量或保证成功。\n7. 保留原正文有价值的信息，不加入互动诱导或站外导流。\n\n原正文：\n${draft.body}`,
     maxTokens: draft.selected_body_version === "long" ? 3500 : 1800,
     temperature: 0.35,
   });
@@ -533,20 +751,30 @@ async function rewriteDraftForValidation(
 
 async function passDraftValidationGate(
   initial: ContentDraft,
-  input: { account: GrowthAccount; persona: GrowthPersona; businessLine: GrowthBusinessLine; topic: TopicCandidate; cta: ContentDraft["cta_type"] },
+  input: {
+    account: GrowthAccount;
+    persona: GrowthPersona;
+    businessLine: GrowthBusinessLine;
+    topic: TopicCandidate;
+    cta: ContentDraft["cta_type"];
+    blueprint: DraftBlueprintContext;
+    spec: PromiseDeliverySpec;
+  },
 ) {
   let draft = withDraftValidation(initial, input.persona, 0);
   for (let attempt = 1; attempt <= 2 && draft.validation_report?.status !== "passed"; attempt += 1) {
     let repairedBody = "";
-    try {
-      repairedBody = await rewriteDraftForValidation(draft, input.account);
-      if (!repairedBody) throw new Error("validation_rewrite_empty");
-    } catch (error) {
-      console.warn("[growth] validation rewrite fallback:", (error as Error).message);
-      repairedBody = deterministicDraftRepair(draft, input.persona, input.businessLine);
-      if (!repairedBody) {
-        repairedBody = fallbackBody(input.topic, draft.selected_body_version === "long", input.cta, input.businessLine, input.persona);
+    if (attempt === 1) {
+      try {
+        repairedBody = await rewriteDraftForValidation(draft, input.account, input.blueprint, input.spec);
+        if (!repairedBody) throw new Error("validation_rewrite_empty");
+      } catch (error) {
+        console.warn("[growth] validation rewrite fallback:", (error as Error).message);
+        repairedBody = deterministicDraftRepair(draft, input.persona, input.businessLine);
       }
+    } else {
+      // 第二轮不再给自由正文打补丁，直接回到生成前骨架重组，确保三项要求是正文结构的一部分。
+      repairedBody = composeBlueprintBody(input.blueprint, input.spec);
     }
     const checked = enforceDraftCompliance({
       ...draft,
@@ -562,6 +790,7 @@ async function passDraftValidationGate(
 async function generateSingleDraft(input: {
   tenantId?: string; account: GrowthAccount; run: GrowthRun; topic: TopicCandidate;
   bodyVersion: "short" | "long"; excludeBodies?: string[]; learningBrief?: GrowthLearningBrief;
+  blueprint: DraftBlueprintContext; spec: PromiseDeliverySpec;
 }) {
   let payload: any;
   let usage: Record<string, unknown> | undefined;
@@ -578,7 +807,8 @@ async function generateSingleDraft(input: {
         expectedSignal: input.topic.expected_signal, followReason: input.topic.follow_reason,
         variantHint: input.bodyVersion === "short" ? "写150—300字短版。" : "写600—900字长版。",
         learningGuidance: input.learningBrief ? formatThreeDayLearningBrief(input.learningBrief) : undefined,
-        excludeBodies: input.excludeBodies, ctaType: cta,
+        excludeBodies: input.excludeBodies, blueprint: input.blueprint,
+        deliveryRule: input.spec.rule, ctaType: cta,
       }), maxTokens: input.bodyVersion === "long" ? 3500 : 1800, temperature: 0.65,
     });
     payload = result.data;
@@ -588,7 +818,7 @@ async function generateSingleDraft(input: {
   }
   const title = enforceTitleLimit(payload?.title || input.topic.title);
   const businessLine = input.account.business_line ?? "executive";
-  const body = asText(payload?.body) || fallbackBody(input.topic, input.bodyVersion === "long", cta, businessLine, input.account.persona);
+  const body = composeBlueprintBody(input.blueprint, input.spec, payload?.body_structure);
   const hashtags = normalizeTags(Array.isArray(payload?.hashtags) ? payload.hashtags : businessLine === "overseas_student" ? ["#留学生求职", "#海归求职", "#职业规划"] : ["#中高管", "#职业转型", "#职业决策"]);
   const timestamp = now();
   const raw: ContentDraft = {
@@ -618,6 +848,8 @@ async function generateSingleDraft(input: {
     businessLine,
     topic: input.topic,
     cta,
+    blueprint: input.blueprint,
+    spec: input.spec,
   });
   return { draft, usage };
 }
@@ -626,9 +858,12 @@ export async function generateDraftVariants(input: {
   tenantId?: string; account: GrowthAccount; run: GrowthRun; topic: TopicCandidate;
   count?: number; excludeBodies?: string[]; learningBrief?: GrowthLearningBrief;
 }) {
-  const short = await generateSingleDraft({ ...input, bodyVersion: "short" });
-  const long = await generateSingleDraft({ ...input, bodyVersion: "long", excludeBodies: [...(input.excludeBodies ?? []), short.draft.body] });
-  return { drafts: [short.draft, long.draft], usage: long.usage || short.usage };
+  const cta = ctaType(input.account.persona);
+  const planned = await generateDraftBlueprint({ account: input.account, topic: input.topic, cta });
+  const shared = { ...input, blueprint: planned.blueprint, spec: planned.spec };
+  const short = await generateSingleDraft({ ...shared, bodyVersion: "short" });
+  const long = await generateSingleDraft({ ...shared, bodyVersion: "long", excludeBodies: [...(input.excludeBodies ?? []), short.draft.body] });
+  return { drafts: [short.draft, long.draft], usage: long.usage || short.usage || planned.usage };
 }
 
 export async function generateDraft(input: {
@@ -637,9 +872,17 @@ export async function generateDraft(input: {
 }) {
   const topic = input.run.topic_pool.find((item) => item.id === input.selectedTopicId) || input.run.topic_pool[0];
   if (!topic) throw new Error("topic_pool_empty");
-  const generated = await generateSingleDraft({ ...input, topic, bodyVersion: "short" });
+  const cta = ctaType(input.account.persona);
+  const planned = await generateDraftBlueprint({ account: input.account, topic, cta });
+  const generated = await generateSingleDraft({
+    ...input,
+    topic,
+    bodyVersion: "short",
+    blueprint: planned.blueprint,
+    spec: planned.spec,
+  });
   const run: GrowthRun = { ...input.run, status: "ready", selected_topic: topic, draft: generated.draft, updated_at: now() };
-  return { run, draft: generated.draft, usage: generated.usage };
+  return { run, draft: generated.draft, usage: generated.usage || planned.usage };
 }
 
 export async function generateOpenBodyTags(draft: ContentDraft): Promise<{

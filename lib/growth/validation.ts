@@ -278,18 +278,22 @@ export function extractPromisedCount(title: string) {
   return match ? Number(match[1]) : undefined;
 }
 
-function openingRespondsToTitle(draft: ContentDraft) {
+function openingRespondsToTitle(draft: Pick<ContentDraft, "title" | "body">) {
   const opening = draft.body.slice(0, 30).replace(/\s/g, "");
   const identityTokens = ["中高管", "高管", "中层", "管理层", "总监", "负责人", "老板", "专家", "顾问", "留学生", "海归", "毕业生", "家长", "我", "孩子", "客户", "学员"];
   const conflictTokens = ["离职", "留任", "转型", "跳槽", "重新定价", "两条路", "职业", "平台", "选择", "求职", "投递", "回国", "留当地", "岗位", "秋招"];
   return identityTokens.some((token) => opening.includes(token)) && conflictTokens.some((token) => `${draft.title}${opening}`.includes(token));
 }
 
-function openingFeelsNatural(draft: ContentDraft) {
+function openingFeelsNatural(draft: Pick<ContentDraft, "body">) {
   const opening = draft.body.trimStart().slice(0, 64).replace(/\s+/g, "");
   if (!opening) return false;
   return !/^(?:作为|身为|我的判断是|我判断|先看这里|我们做.{0,16}(?:服务|咨询)时|在.{0,12}(?:咨询|服务)里，我会)/.test(opening)
     && !/(?:本文|这篇)(?:会|将|主要)?(?:讲|介绍|分享)/.test(opening);
+}
+
+export function bodyOpeningMeetsTitle(title: string, body: string) {
+  return openingRespondsToTitle({ title, body }) && openingFeelsNatural({ body });
 }
 
 interface IndexedBodyUnit {
@@ -352,8 +356,8 @@ function identityEvidence(draft: ContentDraft, persona: GrowthPersona) {
   return indexedBodyUnits(draft.body).find((unit) => patterns[persona].test(unit.quote));
 }
 
-function conversionEvidence(draft: ContentDraft) {
-  const units = indexedBodyUnits(draft.body);
+function conversionEvidenceInBody(body: string) {
+  const units = indexedBodyUnits(body);
   const role = /(?:专业的?)?(?:求职机构|求职老师|辅导老师|职业顾问|职业决策顾问|咨询师|教练|专业团队)|(?:咨询|服务)(?:中|里|过程)/;
   const action = /(?:带|陪跑|辅导|指导|帮助|梳理|诊断|规划|复盘|判断|验证)/;
   const target = /(?:方向|岗位|节奏|简历|面试|路径|能力|市场|风险|选择|证据|时间线|招聘|投递|项目|经历|材料)/;
@@ -364,10 +368,14 @@ function conversionEvidence(draft: ContentDraft) {
   if (!resultUnit) return undefined;
   const serviceUnit = units[serviceIndex];
   return {
-    quote: draft.body.slice(serviceUnit.start, resultUnit.end),
+    quote: body.slice(serviceUnit.start, resultUnit.end),
     start: serviceUnit.start,
     end: resultUnit.end,
   };
+}
+
+export function bodyHasConversionEvidence(body: string) {
+  return Boolean(conversionEvidenceInBody(body));
 }
 
 export function analyzeDraftValidation(
@@ -427,7 +435,7 @@ export function analyzeDraftValidation(
       0.98,
     )));
   }
-  const conversionUnit = conversionEvidence(draft);
+  const conversionUnit = conversionEvidenceInBody(draft.body);
   const conversionPassed = Boolean(conversionUnit);
   if (conversionUnit) {
     annotations.push(annotation(
