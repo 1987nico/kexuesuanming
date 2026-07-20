@@ -4,7 +4,7 @@ import { requireMianbaApiAuth } from "@/lib/auth/mianba";
 import { generateOpenBodyTags } from "@/lib/growth/runner";
 import { growthStore } from "@/lib/growth/store";
 import type { ContentDraft } from "@/lib/growth/types";
-import { enforceDraftCompliance, validateDraftHardChecks } from "@/lib/growth/validation";
+import { enforceDraftCompliance, withDraftValidation } from "@/lib/growth/validation";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -47,7 +47,14 @@ export async function POST(req: Request) {
     status: "ready",
     updated_at: timestamp,
   } as ContentDraft);
-  draft = { ...draft, validation_checks: validateDraftHardChecks(draft, account.persona) };
+  draft = withDraftValidation(draft, account.persona);
+  if (draft.validation_report?.status !== "passed") {
+    return NextResponse.json({
+      error: "validation_gate_failed",
+      message: "正文尚未通过身份、兑现和转化植入检查，请重新生成后再选择。",
+      checks: draft.validation_checks,
+    }, { status: 422 });
+  }
 
   const tagging = await generateOpenBodyTags(draft);
   draft = { ...draft, raw_body_tags: [...(existing?.raw_body_tags ?? []).map((tag) => ({ ...tag, active: false })), ...tagging.tags], tagging_status: tagging.status };

@@ -2,12 +2,15 @@ import { describe, expect, it } from "vitest";
 import {
   countPublishChars,
   enforceDraftCompliance,
+  extractPromisedCount,
   isPublishTextWithinLimit,
   normalizeTags,
   scanDraftCompliance,
   sourceIsUsable,
   hardChecksAllowPublishing,
+  analyzeDraftValidation,
   validateDraftHardChecks,
+  withDraftValidation,
 } from "./validation";
 import type { ContentDraft } from "./types";
 import { classifySourceStatus } from "./sourceValidation";
@@ -27,6 +30,12 @@ describe("growth publish validation", () => {
       created_at: timestamp, updated_at: timestamp,
     };
   }
+
+  it("只把真正的数量承诺当成逐项兑现要求", () => {
+    expect(extractPromisedCount("中高管离职前查这5项")).toBe(5);
+    expect(extractPromisedCount("这2条转型路，到底怎么选？")).toBe(2);
+    expect(extractPromisedCount("投了15家，为何只有3个AI面")).toBeUndefined();
+  });
 
   it("classifies live source responses", () => {
     expect(classifySourceStatus(200)).toBe("accessible");
@@ -51,9 +60,25 @@ describe("growth publish validation", () => {
   });
 
   it("passes conversion when professional service is naturally embedded", () => {
-    const checks = validateDraftHardChecks(hardCheckDraft("中高管离职前先看这组冲突。\n1. 能力\n2. 现金流\n3. 市场\n4. 停止条件\n5. 证据\n\n后来我请职业决策顾问一起梳理，先把能力和市场机会拆开判断。"), "expert");
+    const body = "中高管离职前先看这组冲突。\n1. 能力\n2. 现金流\n3. 市场\n4. 停止条件\n5. 证据\n\n后来我请职业决策顾问一起梳理，先把能力和市场机会拆开判断。";
+    const checks = validateDraftHardChecks(hardCheckDraft(body), "expert");
     expect(checks.find((item) => item.key === "conversion")?.status).toBe("passed");
     expect(hardChecksAllowPublishing(checks)).toBe(true);
+
+    const analysis = analyzeDraftValidation(hardCheckDraft(body), "expert", 1);
+    expect(analysis.report.status).toBe("passed");
+    expect(analysis.report.attempts).toBe(1);
+    expect(new Set(analysis.report.annotations.map((item) => item.key))).toEqual(new Set(["identity", "fulfillment", "conversion"]));
+    for (const item of analysis.report.annotations) {
+      expect(body.slice(item.start, item.end)).toBe(item.quote);
+    }
+  });
+
+  it("keeps the operator report failed until all three checks have exact evidence", () => {
+    const draft = withDraftValidation(hardCheckDraft("中高管离职前先看这组冲突。\n1. 能力\n2. 现金流\n3. 市场\n4. 停止条件\n5. 证据"), "expert", 2);
+    expect(draft.validation_report?.status).toBe("failed");
+    expect(draft.validation_report?.attempts).toBe(2);
+    expect(draft.validation_report?.annotations.some((item) => item.key === "conversion")).toBe(false);
   });
   it("对标来源同时要求7天内母题和24小时内快照", () => {
     const at = new Date("2026-07-19T12:00:00.000Z");

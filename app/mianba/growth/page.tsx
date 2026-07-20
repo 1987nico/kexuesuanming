@@ -629,7 +629,11 @@ export default function GrowthPage() {
         body: JSON.stringify({ runId: saved.run.id, topicId: saved.topic.id }),
       });
       setVariants(result.drafts);
-      setMessage("短版和长版已生成，两版使用同一核心判断。");
+      const passedCount = result.drafts.filter(draftReadyForOperator).length;
+      setMessage(passedCount
+        ? `正文生成与校验完成：${passedCount}个版本通过并已呈现。`
+        : "两个版本均未通过生成门禁，正文未呈现；可重新生成。"
+      );
     } catch (error) {
       setMessage((error as Error).message);
     } finally {
@@ -1130,7 +1134,7 @@ export default function GrowthPage() {
                   title="正文"
                   subtitle={(activeTopic || selectedTopic)
                     ? `已选标题：${titleEdits[(activeTopic || selectedTopic)!.topic.id] ?? (activeTopic || selectedTopic)!.topic.title}；标题承诺：${(activeTopic || selectedTopic)!.topic.title_promise}`
-                    : "先在选题槽位中选择一个标题，再生成短版和长版正文。"}
+                    : "先在选题槽位中选择一个标题；短版和长版只有通过三项校验后才会呈现。"}
                 >
                   {variants.length > 0 ? (
                     <div className={`grid gap-5 ${chosen ? "grid-cols-1" : "lg:grid-cols-2"}`}>
@@ -1142,6 +1146,10 @@ export default function GrowthPage() {
                           selected={chosen?.id === draft.id}
                           onChoose={chooseDraft}
                           onPublish={markPublished}
+                          onRetry={() => {
+                            const current = activeTopic || selectedTopic;
+                            if (current) void generateBodies(current.run, current.topic);
+                          }}
                         />
                       ))}
                     </div>
@@ -1152,13 +1160,24 @@ export default function GrowthPage() {
                       selected
                       onChoose={chooseDraft}
                       onPublish={markPublished}
+                      onRetry={() => {
+                        const current = activeTopic || selectedTopic;
+                        if (current) void generateBodies(current.run, current.topic);
+                      }}
                     />
                   ) : selectedTopic ? (
-                    <div className="rounded-2xl border border-dashed border-slate-300 p-5 text-sm text-slate-500">
-                      <div className="font-medium text-slate-800">标题已选定，等待生成正文</div>
-                      <p className="mt-2 leading-6">短版和长版将使用同一核心判断；正文不选择内容方向或正文阶段。</p>
-                      <a className="mt-3 inline-flex min-h-10 items-center rounded-xl border border-slate-200 px-3 font-medium text-slate-700" href="#growth-step-3">返回选题</a>
-                    </div>
+                    busy === `body-${selectedTopic.topic.id}` ? (
+                      <div className="rounded-2xl border border-sky-200 bg-sky-50 p-5 text-sm text-slate-600">
+                        <div className="font-semibold text-slate-900">正在生成并校验正文</div>
+                        <p className="mt-2 leading-6">短版和长版正在依次完成身份、兑现和转化植入检查；未通过的版本会自动修正，合格后才呈现。</p>
+                      </div>
+                    ) : (
+                      <div className="rounded-2xl border border-dashed border-slate-300 p-5 text-sm text-slate-500">
+                        <div className="font-medium text-slate-800">标题已选定，等待生成正文</div>
+                        <p className="mt-2 leading-6">短版和长版将使用同一核心判断；正文不选择内容方向或正文阶段。</p>
+                        <a className="mt-3 inline-flex min-h-10 items-center rounded-xl border border-slate-200 px-3 font-medium text-slate-700" href="#growth-step-3">返回选题</a>
+                      </div>
+                    )
                   ) : (
                     <div className="rounded-2xl border border-dashed border-slate-300 p-5 text-sm text-slate-500">
                       <div className="font-medium text-slate-800">待选择标题</div>
@@ -1593,19 +1612,162 @@ function SourceEditor({
   );
 }
 
+const BODY_VALIDATION_KEYS = ["identity", "fulfillment", "conversion"] as const;
+
+const BODY_VALIDATION_META = {
+  identity: { label: "身份", active: "border-sky-300 bg-sky-50 text-sky-800", mark: "bg-sky-100 decoration-sky-500" },
+  fulfillment: { label: "兑现", active: "border-emerald-300 bg-emerald-50 text-emerald-800", mark: "bg-emerald-100 decoration-emerald-500" },
+  conversion: { label: "转化植入", active: "border-amber-300 bg-amber-50 text-amber-800", mark: "bg-amber-100 decoration-amber-500" },
+} as const;
+
+function draftReadyForOperator(draft: ContentDraft) {
+  return draft.validation_report?.status === "passed"
+    && BODY_VALIDATION_KEYS.every((key) =>
+      draft.validation_checks.some((check) => check.key === key && check.status === "passed")
+      && draft.validation_report?.annotations.some((item) => item.key === key));
+}
+
+function annotationSegments(draft: ContentDraft) {
+  const annotations = (draft.validation_report?.annotations ?? []).filter((item) =>
+    item.start >= 0
+    && item.end > item.start
+    && item.end <= draft.body.length
+    && draft.body.slice(item.start, item.end) === item.quote);
+  const boundaries = [...new Set([0, draft.body.length, ...annotations.flatMap((item) => [item.start, item.end])])]
+    .sort((a, b) => a - b);
+  return boundaries.slice(0, -1).map((start, index) => {
+    const end = boundaries[index + 1];
+    return {
+      start,
+      end,
+      text: draft.body.slice(start, end),
+      annotations: annotations.filter((item) => item.start <= start && item.end >= end),
+    };
+  }).filter((item) => item.text);
+}
+
+function OperatorAnnotatedBody({
+  draft,
+  maxHeightClass,
+}: {
+  draft: ContentDraft;
+  maxHeightClass: string;
+}) {
+  const [visible, setVisible] = useState(true);
+  const [activeKey, setActiveKey] = useState<(typeof BODY_VALIDATION_KEYS)[number] | null>(null);
+  const segments = useMemo(() => annotationSegments(draft), [draft]);
+  const annotations = draft.validation_report?.annotations ?? [];
+  const activeAnnotation = activeKey ? annotations.find((item) => item.key === activeKey) : undefined;
+
+  function focusEvidence(key: (typeof BODY_VALIDATION_KEYS)[number]) {
+    setVisible(true);
+    setActiveKey(key);
+    window.setTimeout(() => {
+      document.querySelector<HTMLElement>(`[data-validation-draft="${draft.id}"][data-validation-keys~="${key}"]`)
+        ?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, 0);
+  }
+
+  return (
+    <div className="mt-3">
+      <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <div className="text-xs font-semibold text-slate-800">操作者校验层</div>
+            <div className="mt-0.5 text-[11px] text-slate-500">标注只在系统内显示，不进入复制内容</div>
+          </div>
+          <button
+            type="button"
+            aria-pressed={visible}
+            className="min-h-9 rounded-lg border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700"
+            onClick={() => setVisible((current) => !current)}
+          >
+            {visible ? "隐藏标注" : "显示标注"}
+          </button>
+        </div>
+        <div className="mt-3 flex flex-wrap gap-2">
+          {BODY_VALIDATION_KEYS.map((key) => {
+            const meta = BODY_VALIDATION_META[key];
+            const count = annotations.filter((item) => item.key === key).length;
+            return (
+              <button
+                key={key}
+                type="button"
+                aria-pressed={activeKey === key}
+                className={`min-h-9 rounded-lg border px-3 text-xs font-semibold ${activeKey === key ? meta.active : "border-slate-200 bg-white text-slate-700"}`}
+                onClick={() => focusEvidence(key)}
+              >
+                {meta.label} · {count}处
+              </button>
+            );
+          })}
+        </div>
+        {activeAnnotation && (
+          <div className="mt-2 text-xs leading-5 text-slate-600">
+            {BODY_VALIDATION_META[activeAnnotation.key].label}依据：{activeAnnotation.reason}
+          </div>
+        )}
+      </div>
+      <pre className={`mt-3 overflow-auto whitespace-pre-wrap font-sans text-sm leading-7 text-slate-700 ${maxHeightClass}`}>
+        {visible ? segments.map((segment) => {
+          const keys = [...new Set(segment.annotations.map((item) => item.key))];
+          if (!keys.length) return <span key={`${segment.start}-${segment.end}`}>{segment.text}</span>;
+          const primaryKey = activeKey && keys.includes(activeKey) ? activeKey : keys[0];
+          const reasons = segment.annotations.map((item) => item.reason).join("；");
+          return (
+            <mark
+              key={`${segment.start}-${segment.end}`}
+              data-validation-draft={draft.id}
+              data-validation-keys={keys.join(" ")}
+              title={reasons}
+              className={`rounded-sm text-inherit underline decoration-2 underline-offset-2 ${BODY_VALIDATION_META[primaryKey].mark} ${activeKey && !keys.includes(activeKey) ? "opacity-45" : ""}`}
+            >
+              {segment.text}
+            </mark>
+          );
+        }) : draft.body}
+      </pre>
+    </div>
+  );
+}
+
 function DraftCard({
   draft,
   busy,
   selected = false,
   onChoose,
   onPublish,
+  onRetry,
 }: {
   draft: ContentDraft;
   busy: string | null;
   selected?: boolean;
   onChoose: (draft: ContentDraft) => void;
   onPublish?: (draft: ContentDraft, publishedAt: string) => void;
+  onRetry: () => void;
 }) {
+  const readyForOperator = draftReadyForOperator(draft);
+  if (!readyForOperator) {
+    return (
+      <div className="rounded-2xl border border-amber-200 bg-amber-50/50 p-5">
+        <div className="flex flex-wrap gap-2">
+          <Badge>{draft.selected_body_version === "long" ? "长版" : "短版"}</Badge>
+          <Badge>校验未通过</Badge>
+        </div>
+        <h3 className="mt-4 text-lg font-semibold">正文暂不呈现</h3>
+        <p className="mt-2 text-sm leading-6 text-slate-600">
+          系统已自动修正{draft.validation_report?.attempts ?? 0}轮，仍有项目未通过。为避免操作者误选或误复制，正文内容已隐藏。
+        </p>
+        <div className="mt-4 grid gap-2 sm:grid-cols-3">
+          {draft.validation_checks.map((check) => <Check key={check.key} check={check} />)}
+        </div>
+        <div className="mt-4">
+          <PrimaryButton disabled={Boolean(busy)} onClick={onRetry}>重新生成两个版本</PrimaryButton>
+        </div>
+      </div>
+    );
+  }
+
   if (selected && onPublish) {
     return (
       <div id="selected-final-draft" className="scroll-mt-24">
@@ -1621,10 +1783,7 @@ function DraftCard({
         <Badge>同一核心判断</Badge>
       </div>
       <h3 className="mt-3 text-lg font-semibold">{draft.title}</h3>
-      <pre className="mt-3 max-h-[430px] overflow-auto whitespace-pre-wrap font-sans text-sm leading-7 text-slate-700">{draft.body}</pre>
-      <div className="mt-4 grid gap-2 sm:grid-cols-2">
-        {draft.validation_checks.map((check) => <Check key={check.key} check={check} />)}
-      </div>
+      <OperatorAnnotatedBody draft={draft} maxHeightClass="max-h-[430px]" />
       <div className="mt-4">
         <PrimaryButton disabled={Boolean(busy)} onClick={() => onChoose(draft)}>选定这个版本</PrimaryButton>
       </div>
@@ -1646,8 +1805,7 @@ function FinalDraft({
   const bodyWithHashtags = hashtagsText ? `${draft.body}\n\n${hashtagsText}` : draft.body;
   const packageText = `${draft.title}\n\n${bodyWithHashtags}`;
   const feedback = `标题：${draft.title}\n方法：${draft.method_label}\n承诺：${draft.title_promise}\n复盘重点：${draft.review_points.join("、")}`;
-  const publishable = (["identity", "fulfillment", "conversion"] as const).every((key) =>
-    draft.validation_checks.some((check) => check.key === key && check.status === "passed"));
+  const publishable = draftReadyForOperator(draft);
   return (
     <div className="rounded-2xl border border-slate-200 p-5">
       <div className="flex flex-wrap gap-2">
@@ -1663,16 +1821,13 @@ function FinalDraft({
         </div>
         <div>
           <h3 className="text-xl font-semibold">{draft.title}</h3>
-          <pre className="mt-3 max-h-[520px] overflow-auto whitespace-pre-wrap font-sans text-sm leading-7 text-slate-700">{draft.body}</pre>
+          <OperatorAnnotatedBody draft={draft} maxHeightClass="max-h-[520px]" />
           <div className="mt-3 text-sm text-[#9a6b24]">{draft.hashtags.join(" ")}</div>
         </div>
       </div>
-      <div className="mt-5 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-        {draft.validation_checks.map((check) => <Check key={check.key} check={check} />)}
-      </div>
       <div className="mt-5 rounded-2xl border border-[#ead7b5] bg-[#fffaf1] p-4">
         <div className="font-semibold text-slate-900">最终正文已选定，复制到小红书</div>
-        <p className="mt-1 text-xs leading-5 text-slate-600">按顺序复制标题和最终正文；未选中的正文版本不会提供发布复制入口。</p>
+        <p className="mt-1 text-xs leading-5 text-slate-600">复制只读取纯净标题、正文和话题；系统内的彩色校验标注不会进入剪贴板。</p>
         <div className="mt-3 grid gap-2 sm:grid-cols-2">
           <CopyButton
             text={draft.title}

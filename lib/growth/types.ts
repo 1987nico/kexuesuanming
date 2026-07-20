@@ -130,6 +130,25 @@ export interface ValidationCheck {
   message: string;
 }
 
+export type DraftValidationKey = "identity" | "fulfillment" | "conversion";
+
+export interface DraftValidationAnnotation {
+  id: string;
+  key: DraftValidationKey;
+  quote: string;
+  start: number;
+  end: number;
+  reason: string;
+  confidence: number;
+}
+
+export interface DraftValidationReport {
+  status: "passed" | "failed";
+  attempts: number;
+  checked_at: string;
+  annotations: DraftValidationAnnotation[];
+}
+
 export interface RawBodyTag {
   id: string;
   text: string;
@@ -372,6 +391,8 @@ export interface ContentDraft {
   canonical_tag_ids: string[];
   cta_type: "soft_bridge" | "on_platform_consult" | "service_entry";
   validation_checks: ValidationCheck[];
+  /** 仅供操作者查看的正文证据层；复制和发布始终读取纯净 body。 */
+  validation_report?: DraftValidationReport;
   /** v3.2兼容元数据：旧记录只做读取适配，不自动回写。 */
   schema_version?: GrowthSchemaVersion;
   method_attribution_status?: MethodAttributionStatus;

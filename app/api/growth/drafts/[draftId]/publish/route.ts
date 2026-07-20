@@ -3,7 +3,7 @@ import { z } from "zod";
 import { logActivity } from "@/lib/auth/activity";
 import { requireMianbaApiAuth } from "@/lib/auth/mianba";
 import { growthStore } from "@/lib/growth/store";
-import { enforceDraftCompliance, hardChecksAllowPublishing, validateDraftHardChecks } from "@/lib/growth/validation";
+import { enforceDraftCompliance, hardChecksAllowPublishing, withDraftValidation } from "@/lib/growth/validation";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -51,13 +51,14 @@ export async function POST(req: Request, { params }: { params: { draftId: string
   const account = await store.getAccount(draft.account_id);
   if (!account) return NextResponse.json({ error: "account_not_found" }, { status: 404 });
   const isLegacy = checkedDraft.schema_version === "legacy_v1" || !checkedDraft.schema_version;
-  const validationChecks = isLegacy ? checkedDraft.validation_checks ?? [] : validateDraftHardChecks(checkedDraft, account.persona);
-  if (!isLegacy && !hardChecksAllowPublishing(validationChecks)) {
+  const validatedDraft = isLegacy ? checkedDraft : withDraftValidation(checkedDraft, account.persona);
+  const validationChecks = validatedDraft.validation_checks ?? [];
+  if (!isLegacy && (!hardChecksAllowPublishing(validationChecks) || validatedDraft.validation_report?.status !== "passed")) {
     return NextResponse.json({ error: "hard_validation_blocked", message: "身份、兑现或转化植入检查未通过，不能标记发布。", checks: validationChecks }, { status: 422 });
   }
 
   const published = {
-    ...checkedDraft,
+    ...validatedDraft,
     validation_checks: validationChecks,
     owner_user_id: checkedDraft.owner_user_id ?? guard.auth.user.id,
     status: "published" as const,

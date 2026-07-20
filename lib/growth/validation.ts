@@ -1,6 +1,9 @@
 import type {
   ContentDraft,
   DraftCompliance,
+  DraftValidationAnnotation,
+  DraftValidationKey,
+  DraftValidationReport,
   GrowthPersona,
   TopicCandidate,
   TopicSourceSnapshot,
@@ -267,14 +270,12 @@ export function validateTopicCandidate(topic: TopicCandidate, persona: GrowthPer
   ];
 }
 
-function promisedCount(title: string) {
-  const match = title.match(/(?:^|\D)(\d{1,2})(?=\D|$)/);
+export function extractPromisedCount(title: string) {
+  const signalsCountedDelivery = /(?:这\s*\d|先查|必查|必看|清单|路线图|资料|盘点|步骤|方法|条路|种选择)/.test(title);
+  if (!signalsCountedDelivery) return undefined;
+  const matches = [...title.matchAll(/(\d{1,2})(?=\s*(?:项|条|步|种|个|份|类|大))/g)];
+  const match = matches.at(-1);
   return match ? Number(match[1]) : undefined;
-}
-
-function numberedItemCount(body: string) {
-  const matches = body.match(/(?:^|\n)\s*(?:\d{1,2}[.、)]|[一二三四五六七八九十]+[、.])/g);
-  return matches?.length ?? 0;
 }
 
 function openingRespondsToTitle(draft: ContentDraft) {
@@ -284,16 +285,79 @@ function openingRespondsToTitle(draft: ContentDraft) {
   return identityTokens.some((token) => opening.includes(token)) && conflictTokens.some((token) => `${draft.title}${opening}`.includes(token));
 }
 
-function hasNaturalConversionBridge(body: string) {
-  const normalized = body.replace(/\s+/g, "");
-  return [
-    /(?:找|请|跟着|由|让).{0,16}(?:专业的?)?(?:求职机构|求职老师|辅导老师|职业顾问|职业决策顾问|咨询师|教练|专业团队).{0,20}(?:带|陪跑|辅导|指导|帮助|梳理|诊断|规划|复盘|判断)/,
-    /(?:专业的?)?(?:求职机构|求职老师|辅导老师|职业顾问|职业决策顾问|咨询师|教练|专业团队).{0,20}(?:带|陪跑|辅导|指导|帮助|梳理|诊断|规划|复盘|判断)/,
-    /(?:咨询|服务)(?:中|里|过程).{0,24}(?:梳理|诊断|判断|规划|陪跑|验证)/,
-  ].some((pattern) => pattern.test(normalized));
+interface IndexedBodyUnit {
+  quote: string;
+  start: number;
+  end: number;
 }
 
-export function validateDraftHardChecks(draft: ContentDraft, persona: GrowthPersona): ValidationCheck[] {
+function indexedBodyUnits(body: string): IndexedBodyUnit[] {
+  let cursor = 0;
+  return textUnits(body).flatMap((raw) => {
+    const rawStart = body.indexOf(raw, cursor);
+    if (rawStart < 0) return [];
+    cursor = rawStart + raw.length;
+    const leading = raw.length - raw.trimStart().length;
+    const quote = raw.trim();
+    if (!quote) return [];
+    const start = rawStart + leading;
+    return [{ quote, start, end: start + quote.length }];
+  });
+}
+
+function annotation(
+  draft: ContentDraft,
+  key: DraftValidationKey,
+  unit: IndexedBodyUnit,
+  reason: string,
+  confidence: number,
+): DraftValidationAnnotation {
+  return {
+    id: `${draft.id}-${key}-${unit.start}-${unit.end}`,
+    key,
+    quote: unit.quote,
+    start: unit.start,
+    end: unit.end,
+    reason,
+    confidence,
+  };
+}
+
+function numberedBodyUnits(body: string): IndexedBodyUnit[] {
+  const units: IndexedBodyUnit[] = [];
+  const pattern = /(^|\n)(\s*(?:\d{1,2}[.、)]|[一二三四五六七八九十]+[、.])[^\n]*)/g;
+  for (const match of body.matchAll(pattern)) {
+    const raw = match[2] ?? "";
+    const leading = raw.length - raw.trimStart().length;
+    const quote = raw.trim();
+    const start = (match.index ?? 0) + (match[1]?.length ?? 0) + leading;
+    if (quote) units.push({ quote, start, end: start + quote.length });
+  }
+  return units;
+}
+
+function identityEvidence(draft: ContentDraft, persona: GrowthPersona) {
+  const patterns: Record<GrowthPersona, RegExp> = {
+    buyer: /(?:我|我们|我家|孩子|家长|自己).{0,36}(?:求职|秋招|投递|回国|留任|离职|转型|选择|岗位|职业|面试|简历)/,
+    expert: /(?:我的判断|我判断|我见过|咨询中|咨询里|建议|先看|关键是|真正要看|需要判断|适合先)/,
+    merchant: /(?:我们|本服务|服务中|交付中|客户|学员).{0,36}(?:服务|交付|陪跑|诊断|辅导|帮助|解决|梳理|规划)/,
+  };
+  return indexedBodyUnits(draft.body).find((unit) => patterns[persona].test(unit.quote));
+}
+
+function conversionEvidence(draft: ContentDraft) {
+  const role = /(?:专业的?)?(?:求职机构|求职老师|辅导老师|职业顾问|职业决策顾问|咨询师|教练|专业团队)|(?:咨询|服务)(?:中|里|过程)/;
+  const action = /(?:带|陪跑|辅导|指导|帮助|梳理|诊断|规划|复盘|判断|验证)/;
+  const outcome = /(?:方向|岗位|节奏|简历|面试|路径|能力|市场|风险|选择|证据|时间线|招聘|投递|清楚|理顺|收窄|验证)/;
+  return indexedBodyUnits(draft.body).find((unit) =>
+    role.test(unit.quote) && action.test(unit.quote) && outcome.test(unit.quote));
+}
+
+export function analyzeDraftValidation(
+  draft: ContentDraft,
+  persona: GrowthPersona,
+  attempts = 0,
+): { checks: ValidationCheck[]; report: DraftValidationReport } {
   const topicLike: TopicCandidate = {
     id: draft.id,
     method_group: draft.method_group,
@@ -314,21 +378,59 @@ export function validateDraftHardChecks(draft: ContentDraft, persona: GrowthPers
     priority: "A",
   };
   const topicChecks = validateTopicCandidate(topicLike, persona);
-  const count = promisedCount(draft.title);
+  const annotations: DraftValidationAnnotation[] = [];
+  const identityUnit = identityEvidence(draft, persona);
+  const applicabilityCheck = topicChecks.find((check) => check.key === "identity");
+  const identityPassed = applicabilityCheck?.status === "passed" && Boolean(identityUnit);
+  if (identityUnit) {
+    annotations.push(annotation(
+      draft,
+      "identity",
+      identityUnit,
+      `这句话使用了当前${persona === "buyer" ? "买家" : persona === "expert" ? "专家" : "商家"}视角表达具体处境或判断`,
+      0.96,
+    ));
+  }
+  const count = extractPromisedCount(draft.title);
   const hasPromisedMaterial = /清单|路线图|资料|盘点|表|步骤/.test(draft.title);
-  const countFulfilled = count === undefined || numberedItemCount(draft.body) === count;
-  const materialFulfilled = !hasPromisedMaterial || numberedItemCount(draft.body) > 0 || draft.body.length >= 280;
+  const numberedUnits = numberedBodyUnits(draft.body);
+  const countFulfilled = count === undefined || numberedUnits.length === count;
+  const materialFulfilled = !hasPromisedMaterial || numberedUnits.length > 0 || draft.body.length >= 280;
   const opensOnPromise = openingRespondsToTitle(draft);
   const fulfillmentPassed = countFulfilled && materialFulfilled && opensOnPromise;
-  const identity = topicChecks.find((check) => check.key === "identity") ?? {
-    key: "identity" as const,
-    status: "needs_edit" as const,
-    message: "尚未确认当前正文身份",
-  };
-  const conversionPassed = hasNaturalConversionBridge(draft.body);
+  const openingUnit = indexedBodyUnits(draft.body)[0];
+  if (fulfillmentPassed && openingUnit) {
+    annotations.push(annotation(draft, "fulfillment", openingUnit, "开头直接回应了标题中的人物和核心冲突", 0.94));
+    numberedUnits.slice(0, 10).forEach((unit, index) => annotations.push(annotation(
+      draft,
+      "fulfillment",
+      unit,
+      count ? `对应标题承诺的第${index + 1}项` : "正文直接交付了标题承诺的内容",
+      0.98,
+    )));
+  }
+  const conversionUnit = conversionEvidence(draft);
+  const conversionPassed = Boolean(conversionUnit);
+  if (conversionUnit) {
+    annotations.push(annotation(
+      draft,
+      "conversion",
+      conversionUnit,
+      "这句话同时说明了专业角色、介入动作和解决的具体问题",
+      0.96,
+    ));
+  }
 
-  return [
-    identity,
+  const checks: ValidationCheck[] = [
+    {
+      key: "identity" as const,
+      status: identityPassed ? "passed" as const : "needs_edit" as const,
+      message: identityPassed
+        ? `正文已体现当前${persona === "buyer" ? "买家" : persona === "expert" ? "专家" : "商家"}身份`
+        : applicabilityCheck?.status === "blocked"
+          ? applicabilityCheck.message
+          : "正文尚未用当前视角表达具体处境、经验或判断",
+    },
     {
       key: "fulfillment" as const,
       status: fulfillmentPassed ? "passed" as const : "needs_edit" as const,
@@ -344,6 +446,30 @@ export function validateDraftHardChecks(draft: ContentDraft, persona: GrowthPers
         : "正文缺少自然的专业服务介入；可说明找了专业老师、求职机构或职业顾问后，具体如何梳理、指导或陪跑",
     },
   ];
+  const status = hardChecksAllowPublishing(checks) && (["identity", "fulfillment", "conversion"] as const)
+    .every((key) => annotations.some((item) => item.key === key)) ? "passed" : "failed";
+  return {
+    checks,
+    report: {
+      status,
+      attempts,
+      checked_at: new Date().toISOString(),
+      annotations,
+    },
+  };
+}
+
+export function validateDraftHardChecks(draft: ContentDraft, persona: GrowthPersona): ValidationCheck[] {
+  return analyzeDraftValidation(draft, persona, draft.validation_report?.attempts ?? 0).checks;
+}
+
+export function withDraftValidation(
+  draft: ContentDraft,
+  persona: GrowthPersona,
+  attempts = draft.validation_report?.attempts ?? 0,
+): ContentDraft {
+  const analysis = analyzeDraftValidation(draft, persona, attempts);
+  return { ...draft, validation_checks: analysis.checks, validation_report: analysis.report };
 }
 
 export function hardChecksAllowPublishing(checks: ValidationCheck[]) {

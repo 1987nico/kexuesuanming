@@ -101,6 +101,31 @@ function account(
 function draftBase(account: GrowthAccount, id: string, status: ContentDraft["status"]): ContentDraft {
   const created = isoBefore(status === "ready" ? 1 : 4);
   const overseas = account.business_line === "overseas_student";
+  const identityOpening = overseas
+    ? account.persona === "buyer"
+      ? "作为留学生家长，我陪孩子准备秋招时，最先面对的是求职方向和岗位选择的冲突。"
+      : account.persona === "expert"
+        ? "作为留学生求职老师，我的判断是：秋招准备先看岗位匹配和招聘节奏。"
+        : "我们做留学生求职辅导服务时，会先判断求职方向、岗位匹配和秋招节奏。"
+    : account.persona === "buyer"
+      ? "作为正在转型的中高管，我面对离职与留任选择时，最先要看清职业路径冲突。"
+      : account.persona === "expert"
+        ? "作为职业决策顾问，我的判断是：中高管转型先看职业路径和市场验证。"
+        : "我们做中高管职业决策服务时，会先诊断候选方向、能力证据和市场风险。";
+  const serviceBridge = overseas
+    ? account.persona === "buyer"
+      ? "后来我们找了专业的求职机构老师带，先把方向、岗位地图和招聘节奏梳理清楚，再逐项调整简历和面试准备。"
+      : account.persona === "expert"
+        ? "在求职咨询里，我会先帮学生梳理目标岗位和招聘节奏，再用投递反馈验证简历与面试准备。"
+        : "在求职辅导服务中，我们会先诊断方向和岗位匹配，再按招聘时间线提供简历、面试和投递陪跑。"
+    : account.persona === "buyer"
+      ? "后来我请职业决策顾问一起梳理，先把个人能力、市场机会和失败风险拆开验证，再决定是否转向。"
+      : account.persona === "expert"
+        ? "在职业咨询里，我会先梳理候选方向、能力证据和市场风险，再用小样本验证帮助来访者作出判断。"
+        : "在职业决策服务中，我们会先诊断方向、能力证据和失败风险，再通过市场验证与咨询陪跑帮助客户作出选择。";
+  const coreBody = overseas
+    ? "正卡在回国与留当地求职之间的留学生，先别继续海投，真正的问题往往是三项岗位匹配没有算清。\n\n1. 专业和项目经历是否对应岗位要求。\n2. 简历证据能否通过AI筛选和人工追问。\n3. 招聘时间线是否给小样本验证留出调整空间。\n\n如果你已经有两个具体目标岗位，可在站内补充专业、毕业时间和投递反馈，先判断哪一项值得调整。"
+    : "正卡在离职与留任之间的中高管，真正困住你的往往不是勇气，而是三笔没有算清的账。\n\n1. 当前收入里有多少来自平台，而非可迁移能力。\n2. 家庭现金流能承受多久验证期。\n3. 下一条路是否得到过真实市场反馈。\n\n如果你已经有两条具体候选路径，可以在站内补充当前职位、候选方向和最担心的冲突，先判断哪一项值得验证。";
   return {
     id,
     tenant_id: GROWTH_PREVIEW_TENANT,
@@ -126,9 +151,7 @@ function draftBase(account: GrowthAccount, id: string, status: ContentDraft["sta
     alternative_titles: [],
     target_user: account.target_user,
     cover_text: overseas ? "海投越多，回音越少？" : "职位越高，越不敢动？",
-    body: overseas
-      ? "正卡在回国与留当地求职之间的留学生，先别继续海投，真正的问题往往是三项岗位匹配没有算清。\n\n1. 专业和项目经历是否对应岗位要求。\n2. 简历证据能否通过AI筛选和人工追问。\n3. 招聘时间线是否给小样本验证留出调整空间。\n\n如果你已经有两个具体目标岗位，可在站内补充专业、毕业时间和投递反馈，先判断哪一项值得调整。"
-      : "正卡在离职与留任之间的中高管，真正困住你的往往不是勇气，而是三笔没有算清的账。\n\n1. 当前收入里有多少来自平台，而非可迁移能力。\n2. 家庭现金流能承受多久验证期。\n3. 下一条路是否得到过真实市场反馈。\n\n如果你已经有两条具体候选路径，可以在站内补充当前职位、候选方向和最担心的冲突，先判断哪一项值得验证。",
+    body: `${identityOpening}\n\n${coreBody}\n\n${serviceBridge}`,
     hashtags: overseas ? ["#留学生求职", "#秋招", "#海归求职"] : ["#中高管", "#职业转型", "#职业决策"],
     comment_prompt: overseas ? "你更卡在求职方向，还是简历投递？" : "你更担心能力不能迁移，还是资源不能迁移？",
     word_count: { title: 14, body_and_tags: 186, total: 200, within_limit: true },
