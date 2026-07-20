@@ -229,18 +229,80 @@ const OVERSEAS_STUDENT_FALLBACK_TITLES: Record<TitleMethodId, [string, string]> 
   viral_framework: ["留学生缺的不是投递，是定位", "用爆款框架解释求职定位的实际价值"],
 };
 
+const EXECUTIVE_FALLBACK_TITLE_VARIANTS: Record<TitleMethodId, string[]> = {
+  traffic: ["热点刷屏，高管先别急着跟", "这波热搜，高管先查合同"],
+  human_pain: ["工资越高，辞职信越难写", "做到总监，反而不敢跳槽"],
+  tug_of_war: ["继续升职，还是出去试价？", "守住年薪，还是重做职业？"],
+  scarce_material: ["高管转型，我只看这张表", "离职前，把这份清单算完"],
+  superlative: ["高管最怕的不是降薪", "35岁后最贵的一次误判"],
+  contrarian: ["做到高管，经验反而会贬值", "人脉越多，离职越难转身"],
+  nostalgia: ["当年抢着升职，如今困在高位", "以前拼职位，现在拼定价权"],
+  inventory: ["高管转型前必算的5笔账", "离开平台前，盘点这5样"],
+  same_product: ["职业参谋先帮你排除什么", "决策咨询，不是替你选答案"],
+  same_effect: ["两份工作，先算哪一笔账？", "留任和创业，哪条胜率高？"],
+  similar_audience: ["敢离职的高管先看现金流", "能转型的人都先试后辞"],
+  same_outcome: ["拼升职，不如拼可迁移能力", "抢职位，不如让市场报价"],
+  viral_framework: ["高管缺的不是人脉，是验证", "你缺的不是经验，是市场回音"],
+};
+
+const OVERSEAS_STUDENT_FALLBACK_TITLE_VARIANTS: Record<TitleMethodId, string[]> = {
+  traffic: ["秋招提前，留学生先查时间", "AI筛简历，海归先改哪一处"],
+  human_pain: ["学历越好，秋招时越怕没回音", "帮孩子盯秋招，不敢多问怕吵架"],
+  tug_of_war: ["留英等工签，还是赶国内秋招？", "回国进大厂，还是海外留下？"],
+  scarce_material: ["海归秋招时间表，我摊开了", "回国求职前先看这张表"],
+  superlative: ["秋招最亏的，是太早改简历", "海归最怕的不是学历不够"],
+  contrarian: ["名校毕业，海投反而更吃亏", "实习越多，岗位反而越难选"],
+  nostalgia: ["当年海归吃香，现在先过AI筛", "以前拼学校，现在拼岗位证据"],
+  inventory: ["海归秋招前必查的5个日期", "回国投递前先盘点这5样"],
+  same_product: ["求职陪跑，第一步不是改简历", "海归求职军师先排除什么"],
+  same_effect: ["回国和留英，先算哪笔账？", "两份秋招路线，哪条回音快？"],
+  similar_audience: ["拿面试的海归都先收窄岗位", "秋招有回音的人都先改定位"],
+  same_outcome: ["抢大厂，不如抢成长最快岗位", "拼Offer，不如拼第一段履历"],
+  viral_framework: ["海归缺的不是简历，是方向", "秋招缺的不是海投，是反馈"],
+};
+
 function fallbackTitles(account: GrowthAccount) {
   return account.business_line === "overseas_student"
     ? OVERSEAS_STUDENT_FALLBACK_TITLES
     : EXECUTIVE_FALLBACK_TITLES;
 }
 
-function fallbackTopic(account: GrowthAccount, method: TitleMethodDefinition, mode: MethodGenerationMode, source?: TopicSourceSnapshot): TopicCandidate {
+function titleFingerprint(value: string) {
+  return enforceTitleLimit(value).toLocaleLowerCase().replace(/[\s，。！？、；：,.!?;:'"“”‘’（）()【】\[\]《》<>—\-|｜]/gu, "");
+}
+
+export function selectFreshTitle(
+  options: string[],
+  input: { currentTitles?: string[]; seenTitles?: string[]; reservedTitles?: string[] } = {},
+) {
+  const candidates = Array.from(new Set(options.map(enforceTitleLimit).filter(Boolean)));
+  const current = new Set((input.currentTitles ?? []).map(titleFingerprint));
+  const seen = new Set((input.seenTitles ?? []).map(titleFingerprint));
+  const reserved = new Set((input.reservedTitles ?? []).map(titleFingerprint));
+  const available = (title: string, avoidHistory: boolean) => {
+    const key = titleFingerprint(title);
+    return !current.has(key) && !reserved.has(key) && (!avoidHistory || !seen.has(key));
+  };
+  return candidates.find((title) => available(title, true))
+    ?? candidates.find((title) => available(title, false))
+    ?? candidates[0]
+    ?? "待补充标题";
+}
+
+function fallbackTitleOptions(account: GrowthAccount, methodId: TitleMethodId) {
+  const [primary] = fallbackTitles(account)[methodId];
+  const variants = account.business_line === "overseas_student"
+    ? OVERSEAS_STUDENT_FALLBACK_TITLE_VARIANTS[methodId]
+    : EXECUTIVE_FALLBACK_TITLE_VARIANTS[methodId];
+  return [primary, ...variants];
+}
+
+function fallbackTopic(account: GrowthAccount, method: TitleMethodDefinition, mode: MethodGenerationMode, source?: TopicSourceSnapshot, titleOverride?: string): TopicCandidate {
   const [title, promise] = fallbackTitles(account)[method.id];
   const isOverseas = account.business_line === "overseas_student";
   const topic: TopicCandidate = {
     id: id(), method_group: method.group, method_id: method.id, method_label: method.label, generation_mode: mode,
-    title: enforceTitleLimit(title), title_promise: promise, target_user: account.target_user, pain: account.core_problem,
+    title: enforceTitleLimit(titleOverride || title), title_promise: promise, target_user: account.target_user, pain: account.core_problem,
     hook: title, source_snapshot: source,
     internal_insight_source: method.group === "native" && !method.sourceRequired ? account.trust_source : undefined,
     origin_force: isOverseas ? "使用留学生熟悉的毕业、投递、回国或留当地求职场景。" : "使用中高管熟悉的职位、离职、跳槽或职业路径场景。",
@@ -254,15 +316,35 @@ function fallbackTopic(account: GrowthAccount, method: TitleMethodDefinition, mo
   return topic;
 }
 
-function normalizeTopics(raw: unknown, account: GrowthAccount, methods: TitleMethodDefinition[], mode: MethodGenerationMode, sources: Map<TitleMethodId, TopicSourceSnapshot>) {
+function normalizeTopics(
+  raw: unknown,
+  account: GrowthAccount,
+  methods: TitleMethodDefinition[],
+  mode: MethodGenerationMode,
+  sources: Map<TitleMethodId, TopicSourceSnapshot>,
+  seenTitles: string[] = [],
+  currentTitles: string[] = [],
+) {
   const rows = Array.isArray(raw) ? raw : [];
   const titles = fallbackTitles(account);
+  const currentKeys = new Set(currentTitles.map(titleFingerprint));
+  const seenKeys = new Set(seenTitles.map(titleFingerprint));
+  const reservedTitles: string[] = [];
   return methods.map((method) => {
     const row = rows.find((item) => item?.method_id === method.id);
-    if (!row) return fallbackTopic(account, method, mode, sources.get(method.id));
+    const proposedTitle = enforceTitleLimit(asText(row?.title) || titles[method.id][0]);
+    const proposedKey = titleFingerprint(proposedTitle);
+    const duplicatesCurrent = currentKeys.has(proposedKey);
+    const duplicatesBatch = reservedTitles.some((item) => titleFingerprint(item) === proposedKey);
+    const duplicatesHistory = seenKeys.has(proposedKey);
+    const title = duplicatesCurrent || duplicatesBatch || duplicatesHistory || !row
+      ? selectFreshTitle(fallbackTitleOptions(account, method.id), { currentTitles, seenTitles, reservedTitles })
+      : proposedTitle;
+    reservedTitles.push(title);
+    if (!row) return fallbackTopic(account, method, mode, sources.get(method.id), title);
     const topic: TopicCandidate = {
-      ...fallbackTopic(account, method, mode, sources.get(method.id)),
-      title: enforceTitleLimit(row.title || titles[method.id][0]),
+      ...fallbackTopic(account, method, mode, sources.get(method.id), title),
+      title,
       title_promise: asText(row.title_promise) || titles[method.id][1],
       target_user: asText(row.target_user) || account.target_user,
       pain: asText(row.pain) || account.core_problem,
@@ -285,6 +367,7 @@ export async function generateTopicBatch(input: {
   week?: number;
   generationMode?: MethodGenerationMode;
   excludeTitles?: string[];
+  currentTitles?: string[];
   recentSignals?: string;
   learningBrief?: GrowthLearningBrief;
 }): Promise<{ topics: TopicCandidate[]; unavailableMethods: GrowthRun["unavailable_methods"]; usage?: Record<string, unknown> }> {
@@ -315,7 +398,19 @@ export async function generateTopicBatch(input: {
   } catch (error) {
     console.warn("[growth] topic fallback:", (error as Error).message);
   }
-  return { topics: normalizeTopics(payload?.topics, input.account, methods, generationMode, sources), unavailableMethods, usage };
+  return {
+    topics: normalizeTopics(
+      payload?.topics,
+      input.account,
+      methods,
+      generationMode,
+      sources,
+      input.excludeTitles ?? [],
+      input.currentTitles ?? [],
+    ),
+    unavailableMethods,
+    usage,
+  };
 }
 
 export async function generateTopicPool(input: {

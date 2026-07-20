@@ -74,8 +74,9 @@ export async function POST(req: Request) {
   const runs = await store.listRuns(account.id);
   const generationMode = parsed.data.generationMode ?? "default";
   let run = runs.find((item) => item.generation_mode === generationMode) ?? null;
+  const currentTitles = run?.topic_pool.map((topic) => topic.title) ?? [];
   const seenTitles = run
-    ? Array.from(new Set([...(run.seen_titles ?? []), ...run.topic_pool.map((topic) => topic.title)]))
+    ? Array.from(new Set([...(run.seen_titles ?? []), ...currentTitles])).slice(-120)
     : [];
 
   const { topics, unavailableMethods, usage } = await generateTopicBatch({
@@ -83,11 +84,12 @@ export async function POST(req: Request) {
     week: parsed.data.week ?? run?.week ?? 1,
     generationMode,
     excludeTitles: seenTitles,
+    currentTitles,
     learningBrief,
   });
 
   const timestamp = now();
-  const nextSeen = Array.from(new Set([...seenTitles, ...topics.map((topic) => topic.title)]));
+  const nextSeen = Array.from(new Set([...seenTitles, ...topics.map((topic) => topic.title)])).slice(-120);
   if (!run) {
     run = {
       id: crypto.randomUUID(),

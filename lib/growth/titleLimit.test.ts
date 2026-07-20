@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { enforceTitleLimit } from "./runner";
+import { enforceTitleLimit, selectFreshTitle } from "./runner";
 
 const len = (s: string) => Array.from(s).length;
 
@@ -33,5 +33,29 @@ describe("enforceTitleLimit（小红书选题标题 ≤ 20 字，含标点）", 
     const title = "一二三四五六七八九十一二三四五六七八，。";
     expect(len(title)).toBe(20);
     expect(enforceTitleLimit(title)).toBe(title);
+  });
+});
+
+describe("selectFreshTitle（换一批不重复当前标题）", () => {
+  const options = ["年薪百万，为何更不敢离职", "工资越高，辞职信越难写", "做到总监，反而不敢跳槽"];
+
+  it("优先选择从未出现过的新标题", () => {
+    expect(selectFreshTitle(options, {
+      currentTitles: [options[0]],
+      seenTitles: [options[0]],
+    })).toBe(options[1]);
+  });
+
+  it("历史候选用完后仍不会重复页面当前标题", () => {
+    expect(selectFreshTitle(options, {
+      currentTitles: [options[2]],
+      seenTitles: options,
+    })).toBe(options[0]);
+  });
+
+  it("忽略标点差异识别当前重复标题", () => {
+    expect(selectFreshTitle(options, {
+      currentTitles: ["工资越高辞职信越难写！"],
+    })).toBe(options[0]);
   });
 });

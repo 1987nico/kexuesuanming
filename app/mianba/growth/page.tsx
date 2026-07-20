@@ -642,7 +642,7 @@ export default function GrowthPage() {
       setActiveTopic(null);
       setChosen(null);
       setTitleEdits({});
-      setTopicMessage(`${result.sourceRefresh.message} 已生成${result.run.topic_pool.length}个标题；${result.unavailableMethods?.length || 0}个方法因来源不足暂停。`);
+      setTopicMessage(`${result.sourceRefresh.message} 已换成一批新的标题：原生法和对标法共${result.run.topic_pool.length}个；${result.unavailableMethods?.length || 0}个方法因来源不足暂停。`);
     } catch (error) {
       setTopicMessage((error as Error).message);
     } finally {
@@ -1242,7 +1242,9 @@ export default function GrowthPage() {
                         默认 {defaultMethods.length} 个槽位 · 探索 {exploreMethods.length} 个槽位 · 不做标题评分
                       </div>
                     </div>
-                    <PrimaryButton disabled={Boolean(busy)} onClick={() => generateTopics("default")}>生成选题</PrimaryButton>
+                    <PrimaryButton disabled={Boolean(busy)} onClick={() => generateTopics("default")}>
+                      {busy === "topics-default" ? "正在换一批…" : "生成选题"}
+                    </PrimaryButton>
                   </div>
 
                   {topicMessage && (
