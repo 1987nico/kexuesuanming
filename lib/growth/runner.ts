@@ -18,10 +18,10 @@ import {
   computeDerivedMetrics,
   diagnoseEntry,
   evaluateReviewSample,
-  formatLearningBrief,
   normalizeExperimentVariable,
   resolvePublishedAt,
 } from "./reviewLearning";
+import { formatThreeDayLearningBrief } from "./threeDayLearning";
 import type {
   ContentDraft,
   GrowthAccount,
@@ -387,7 +387,7 @@ export async function generateTopicBatch(input: {
       user: buildTopicPoolUserPrompt({
         week: Math.max(1, Math.min(4, input.week ?? 1)), persona: input.account.persona,
         targetUser: input.account.target_user, coreProblem: input.account.core_problem,
-        recentSignals: input.learningBrief ? formatLearningBrief(input.learningBrief) : input.recentSignals,
+        recentSignals: input.learningBrief ? formatThreeDayLearningBrief(input.learningBrief) : input.recentSignals,
         methods, generationMode,
         sources: methods.map((method) => sources.get(method.id)).filter(Boolean) as TopicSourceSnapshot[],
         excludeTitles: input.excludeTitles, context: accountContext(input.account),
@@ -577,7 +577,7 @@ async function generateSingleDraft(input: {
         titlePromise: input.topic.title_promise, testVariable: input.topic.test_variable,
         expectedSignal: input.topic.expected_signal, followReason: input.topic.follow_reason,
         variantHint: input.bodyVersion === "short" ? "写150—300字短版。" : "写600—900字长版。",
-        learningGuidance: input.learningBrief ? formatLearningBrief(input.learningBrief) : undefined,
+        learningGuidance: input.learningBrief ? formatThreeDayLearningBrief(input.learningBrief) : undefined,
         excludeBodies: input.excludeBodies, ctaType: cta,
       }), maxTokens: input.bodyVersion === "long" ? 3500 : 1800, temperature: 0.65,
     });

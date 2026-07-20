@@ -5,10 +5,9 @@ import { generateTopicBatch } from "@/lib/growth/runner";
 import { growthStore } from "@/lib/growth/store";
 import type { GrowthRun } from "@/lib/growth/types";
 import {
-  buildLearningBrief,
-  buildWeeklyReviewResult,
-  isWeeklyReviewStale,
-} from "@/lib/growth/reviewLearning";
+  buildThreeDayLearningBrief,
+  buildThreeDayLearningState,
+} from "@/lib/growth/threeDayLearning";
 import { ensureRecentTopicSources } from "@/lib/growth/sourceDiscovery";
 import { accountForBusinessGeneration } from "@/lib/growth/businessCompatibility";
 
@@ -58,18 +57,8 @@ export async function POST(req: Request) {
   }
 
   const notes = await store.listDrafts(account.id);
-  const reviews = await store.listReviewsByAccount(account.id);
-  let weeklyReview = account.weekly_review ?? account.stage_review;
-  if (!weeklyReview || isWeeklyReviewStale(weeklyReview, reviews)) {
-    weeklyReview = buildWeeklyReviewResult({ account, notes, reviews });
-    await store.saveAccount({
-      ...account,
-      weekly_review: weeklyReview,
-      stage_review: weeklyReview,
-      updated_at: new Date().toISOString(),
-    });
-  }
-  const learningBrief = buildLearningBrief({ account, notes, reviews, weekly: weeklyReview });
+  const learningState = buildThreeDayLearningState(account, notes);
+  const learningBrief = buildThreeDayLearningBrief({ account, drafts: notes, state: learningState });
 
   const runs = await store.listRuns(account.id);
   const generationMode = parsed.data.generationMode ?? "default";
@@ -114,20 +103,20 @@ export async function POST(req: Request) {
 
   run.owner_user_id = run.owner_user_id ?? guard.auth.user.id;
   await store.saveRun(run);
-  const confirmedExperiment = [...(account.cycle_experiments ?? [])].reverse().find((item) => item.status === "confirmed");
+  const confirmedExperiment = learningState.active_experiment?.status === "confirmed"
+    ? learningState.active_experiment
+    : undefined;
   if (confirmedExperiment) {
     const applied = { ...confirmedExperiment, status: "applied" as const, resolved_at: timestamp };
     const cycleExperiments = (account.cycle_experiments ?? []).map((item) => item.id === applied.id ? applied : item);
-    const weekly = weeklyReview.experiment_card?.id === applied.id
-      ? { ...weeklyReview, experiment_card: applied }
-      : weeklyReview;
+    const nextAccount = { ...account, cycle_experiments: cycleExperiments };
     await store.saveAccount({
-      ...account,
-      cycle_experiments: cycleExperiments,
-      weekly_review: weekly,
-      stage_review: weekly,
+      ...nextAccount,
+      three_day_learning_state: buildThreeDayLearningState(nextAccount, notes),
       updated_at: timestamp,
     });
+  } else if (account.three_day_learning_state?.version !== learningState.version) {
+    await store.saveAccount({ ...account, three_day_learning_state: learningState, updated_at: timestamp });
   }
   if (usage) {
     await store.saveUsage({

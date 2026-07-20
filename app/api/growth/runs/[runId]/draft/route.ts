@@ -4,11 +4,7 @@ import { requireMianbaApiAuth } from "@/lib/auth/mianba";
 import { generateDraft } from "@/lib/growth/runner";
 import { growthStore } from "@/lib/growth/store";
 import { accountForBusinessGeneration } from "@/lib/growth/businessCompatibility";
-import {
-  buildLearningBrief,
-  buildWeeklyReviewResult,
-  isWeeklyReviewStale,
-} from "@/lib/growth/reviewLearning";
+import { buildThreeDayLearningBrief } from "@/lib/growth/threeDayLearning";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -35,25 +31,13 @@ export async function POST(req: Request, { params }: { params: { runId: string }
   const account = await store.getAccount(run.account_id);
   if (!account) return NextResponse.json({ error: "account_not_found" }, { status: 404 });
   const notes = await store.listDrafts(account.id);
-  const reviews = await store.listReviewsByAccount(account.id);
-  let weeklyReview = account.weekly_review ?? account.stage_review;
-  if (!weeklyReview || isWeeklyReviewStale(weeklyReview, reviews)) {
-    weeklyReview = buildWeeklyReviewResult({ account, notes, reviews });
-    await store.saveAccount({
-      ...account,
-      weekly_review: weeklyReview,
-      stage_review: weeklyReview,
-      updated_at: new Date().toISOString(),
-    });
-  }
   const selectedTopic =
     run.topic_pool.find((topic) => topic.id === parsed.data.selectedTopicId) || run.selected_topic || run.topic_pool[0];
-  const learningBrief = buildLearningBrief({
+  const learningBrief = buildThreeDayLearningBrief({
     account,
-    notes,
-    reviews,
-    weekly: weeklyReview,
+    drafts: notes,
     methodId: selectedTopic?.method_id,
+    generationMode: selectedTopic?.generation_mode,
   });
 
   const result = await generateDraft({

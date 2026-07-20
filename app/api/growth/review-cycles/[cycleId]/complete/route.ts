@@ -3,6 +3,10 @@ import { z } from "zod";
 import { requireMianbaApiAuth } from "@/lib/auth/mianba";
 import { growthStore } from "@/lib/growth/store";
 import { completeThreeDayReviewCycle } from "@/lib/growth/threeDayReview";
+import {
+  buildThreeDayLearningState,
+  createThreeDayCycleExperiment,
+} from "@/lib/growth/threeDayLearning";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -57,12 +61,26 @@ export async function POST(req: Request, { params }: { params: { cycleId: string
       previousLearningSourceKeys,
       previousLearningDraftIds,
     });
-    await store.saveAccount({
+    const updatedCycles = cycles.map((item) => item.id === completed.id ? completed : item);
+    const accountWithCycle = {
       ...account,
-      three_day_review_cycles: cycles.map((item) => item.id === completed.id ? completed : item),
+      three_day_review_cycles: updatedCycles,
       updated_at: new Date().toISOString(),
+    };
+    const experiment = createThreeDayCycleExperiment(accountWithCycle, completed);
+    const accountWithExperiment = experiment
+      ? {
+        ...accountWithCycle,
+        cycle_experiments: [...(account.cycle_experiments ?? []), experiment].slice(-24),
+      }
+      : accountWithCycle;
+    const drafts = await store.listDrafts(account.id);
+    const learningState = buildThreeDayLearningState(accountWithExperiment, drafts);
+    await store.saveAccount({
+      ...accountWithExperiment,
+      three_day_learning_state: learningState,
     });
-    return NextResponse.json({ cycle: completed });
+    return NextResponse.json({ cycle: completed, learningState, pendingExperiment: experiment });
   } catch (error) {
     return NextResponse.json({ error: "cycle_completion_failed", message: (error as Error).message }, { status: 400 });
   }
