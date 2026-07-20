@@ -20,3 +20,32 @@ describe("growth v3.2 local preview fixture", () => {
     expect(() => assertGrowthPreviewIsSafe({ NODE_ENV: "production", GROWTH_PREVIEW_MODE: "fixture" } as unknown as NodeJS.ProcessEnv)).toThrow(/仅允许本地/);
   });
 });
+
+describe("growth v3.3 preview fixture", () => {
+  it("keeps three recoverable title batches per workspace", () => {
+    const fixture = createGrowthPreviewFixture();
+    for (const account of fixture.accounts) {
+      const batches = fixture.runs.filter((run) =>
+        run.account_id === account.id
+        && run.generation_mode === "default"
+        && run.topic_pool.length > 0);
+      expect(batches).toHaveLength(3);
+      expect(new Set(batches.map((run) => run.id)).size).toBe(3);
+      expect(batches.every((run) => run.topic_pool.every((topic) => topic.title_promise_status === "synced"))).toBe(true);
+    }
+  });
+
+  it("only seeds benchmark titles with usable recent sources", () => {
+    const fixture = createGrowthPreviewFixture();
+    const buyer = fixture.accounts.find((account) =>
+      account.business_line === "overseas_student" && account.persona === "buyer");
+    expect(buyer).toBeTruthy();
+    const current = fixture.runs.find((run) =>
+      run.account_id === buyer?.id
+      && run.generation_mode === "default"
+      && run.topic_pool.length > 0);
+    const benchmark = current?.topic_pool.filter((topic) => topic.method_group === "benchmark") ?? [];
+    expect(benchmark.map((topic) => topic.method_id)).toEqual(["similar_audience"]);
+    expect(benchmark[0]?.source_snapshot?.link_status).toBe("accessible");
+  });
+});

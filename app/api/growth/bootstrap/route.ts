@@ -34,6 +34,7 @@ const bodySchema = z.object({
   coreProblem: z.string().max(500).optional(),
   trustSource: z.string().max(500).optional(),
   regenerateAccountId: z.string().min(1).optional(),
+  previewOnly: z.boolean().optional(),
 });
 
 function resolvePersona(value: string | null): GrowthPersona {
@@ -183,17 +184,19 @@ export async function POST(req: Request) {
   }
   plan.owner_user_id = account.owner_user_id;
 
-  await store.saveAccount(account);
-  if (!parsed.data.regenerateAccountId) await store.savePlan(plan);
+  if (!parsed.data.previewOnly) {
+    await store.saveAccount(account);
+    if (!parsed.data.regenerateAccountId) await store.savePlan(plan);
+  }
   if (usage) {
     await store.saveUsage({
       tenant_id: DEFAULT_TENANT_ID,
       user_id: guard.auth.user.id,
       feature: "growth_text",
       ...usage,
-      metadata: { action: "bootstrap", persona: parsed.data.persona },
+      metadata: { action: parsed.data.previewOnly ? "bootstrap_preview" : "bootstrap", persona: parsed.data.persona },
     });
   }
 
-  return NextResponse.json({ account, plan });
+  return NextResponse.json({ account, plan, previewOnly: Boolean(parsed.data.previewOnly) });
 }

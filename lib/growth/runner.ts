@@ -866,6 +866,38 @@ export async function generateDraftVariants(input: {
   return { drafts: [short.draft, long.draft], usage: long.usage || short.usage || planned.usage };
 }
 
+export type DraftRepairType = "opening" | "fulfillment" | "identity" | "conversion" | "outcome";
+
+export async function repairDraftPart(input: {
+  draft: ContentDraft;
+  account: GrowthAccount;
+  topic: TopicCandidate;
+  repairType: DraftRepairType;
+}) {
+  const instruction: Record<DraftRepairType, string> = {
+    opening: "只修正开头段：从动作、现场、念头或冲突自然切入，并在前30字回应标题人物与冲突；不要自报身份或机械复述标题。其余段落尽量保持原样。",
+    fulfillment: "补齐标题承诺：标题中的数字逐项一致；资料、清单或路线图必须把实际内容完整交付。不要删掉原文已有价值。",
+    identity: "只把当前商家/买家/专家身份自然写清楚，使用经历、动作和语气体现身份，不要用“作为××”硬贴标签。",
+    conversion: "重写专业服务出现的因果转折：先写具体卡点或自己试过什么，再自然带出老师、机构或顾问具体做了什么，避免广告口吻。",
+    outcome: "紧接专业服务动作补充一个克制、可验证的阶段变化，例如岗位收窄、简历对齐、排除方向、明确下一步或反馈可复盘；不得虚构Offer、薪资或保证成功。",
+  };
+  const result = await llmJSON<any>({
+    system: GROWTH_SYSTEM_PROMPT,
+    user: `请局部修正下面的小红书正文，只输出 JSON：{"body":"修正后的完整正文"}。\n\n标题：${input.draft.title}\n标题承诺：${input.draft.title_promise}\n当前身份：${input.account.persona}\n人设：${input.account.one_liner}\n\n本次唯一修复任务：${instruction[input.repairType]}\n\n共同约束：口吻像同一个真人；保持事实边界；只保留一个主要承接动作；不要互动诱导或站外导流。\n\n原正文：\n${input.draft.body}`,
+    maxTokens: input.draft.selected_body_version === "long" ? 3500 : 1800,
+    temperature: 0.3,
+  });
+  const body = asText(result.data?.body);
+  if (!body) throw new Error("draft_repair_empty");
+  const repaired = withDraftValidation(enforceDraftCompliance({
+    ...input.draft,
+    body,
+    word_count: countPublishChars(input.draft.title, body, input.draft.hashtags),
+    updated_at: now(),
+  }, input.topic.title), input.account.persona, (input.draft.validation_report?.attempts ?? 0) + 1);
+  return { draft: repaired, usage: resultUsage(result) };
+}
+
 export async function generateDraft(input: {
   tenantId?: string; account: GrowthAccount; run: GrowthRun;
   selectedTopicId?: string; learningBrief?: GrowthLearningBrief;

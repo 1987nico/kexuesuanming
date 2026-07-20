@@ -29,8 +29,20 @@ const updateTitleSchema = z.object({
   title: z.string().trim().min(1, "标题不能为空").refine(
     (value) => Array.from(value).length <= 20,
     "小红书标题不能超过20个字",
-  ),
+  ).optional(),
+  syncPromise: z.boolean().optional(),
+}).refine((value) => value.title || value.syncPromise, {
+  message: "需要提供标题或同步正文承诺",
 });
+
+function syncedPromise(title: string, current: string) {
+  const promisedCount = title.match(/(\d+|[一二三四五六七八九十两]+)(?=[项条步个份张])/u)?.[0];
+  let promise = current.trim();
+  if (promisedCount) {
+    promise = promise.replace(/(\d+|[一二三四五六七八九十两]+)(?=[项条步个份张])/u, promisedCount);
+  }
+  return `围绕“${title}”自然展开并完整兑现；${promise.replace(/^围绕“[^”]+”自然展开并完整兑现；/u, "")}`;
+}
 
 function now() {
   return new Date().toISOString();
@@ -73,15 +85,17 @@ export async function POST(req: Request) {
 
   const runs = await store.listRuns(account.id);
   const generationMode = parsed.data.generationMode ?? "default";
-  let run = runs.find((item) => item.generation_mode === generationMode) ?? null;
-  const currentTitles = run?.topic_pool.map((topic) => topic.title) ?? [];
-  const seenTitles = run
-    ? Array.from(new Set([...(run.seen_titles ?? []), ...currentTitles])).slice(-120)
-    : [];
+  const previousRuns = runs.filter((item) => item.generation_mode === generationMode);
+  const latestRun = previousRuns[0] ?? null;
+  const currentTitles = latestRun?.topic_pool.map((topic) => topic.title) ?? [];
+  const seenTitles = Array.from(new Set(previousRuns.flatMap((item) => [
+    ...(item.seen_titles ?? []),
+    ...item.topic_pool.map((topic) => topic.title),
+  ]))).slice(-120);
 
   const { topics, unavailableMethods, usage } = await generateTopicBatch({
     account: accountForBusinessGeneration(account),
-    week: parsed.data.week ?? run?.week ?? 1,
+    week: parsed.data.week ?? latestRun?.week ?? 1,
     generationMode,
     excludeTitles: seenTitles,
     currentTitles,
@@ -90,27 +104,24 @@ export async function POST(req: Request) {
 
   const timestamp = now();
   const nextSeen = Array.from(new Set([...seenTitles, ...topics.map((topic) => topic.title)])).slice(-120);
-  if (!run) {
-    run = {
-      id: crypto.randomUUID(),
-      tenant_id: DEFAULT_TENANT_ID,
-      account_id: account.id,
-      status: "draft",
-      week: parsed.data.week ?? 1,
-      objective: generationMode === "default" ? "按当前视角的默认方法各生成1个标题。" : "按当前视角的探索方法各生成1个标题。",
-      experiment_hypothesis: "用有效咨询率验证标题方法，而不是依赖主观评分。",
-      generation_mode: generationMode,
-      topic_pool: topics,
-      unavailable_methods: unavailableMethods,
-      seen_titles: nextSeen,
-      learning_trace: learningBrief.trace,
-      created_at: timestamp,
-      updated_at: timestamp,
-    } satisfies GrowthRun;
-  } else {
-    // 用新选题替换整个列表，而不是累加。
-    run = { ...run, generation_mode: generationMode, topic_pool: topics, unavailable_methods: unavailableMethods, seen_titles: nextSeen, learning_trace: learningBrief.trace, updated_at: timestamp };
-  }
+  // 每次生成都是一个独立批次。旧批次继续保留，前台可查看并恢复最近3批；
+  // 新批次失败时不会覆盖当前批次，也不会清空操作者已经编辑或选中的标题。
+  const run: GrowthRun = {
+    id: crypto.randomUUID(),
+    tenant_id: DEFAULT_TENANT_ID,
+    account_id: account.id,
+    status: "draft",
+    week: parsed.data.week ?? latestRun?.week ?? 1,
+    objective: generationMode === "default" ? "按当前视角的默认方法各生成1个标题。" : "按当前视角的探索方法各生成1个标题。",
+    experiment_hypothesis: "用有效咨询率验证标题方法，而不是依赖主观评分。",
+    generation_mode: generationMode,
+    topic_pool: topics,
+    unavailable_methods: unavailableMethods,
+    seen_titles: nextSeen,
+    learning_trace: learningBrief.trace,
+    created_at: timestamp,
+    updated_at: timestamp,
+  };
 
   run.owner_user_id = run.owner_user_id ?? guard.auth.user.id;
   await store.saveRun(run);
@@ -164,7 +175,23 @@ export async function PATCH(req: Request) {
   if (!currentTopic) return NextResponse.json({ error: "topic_not_found" }, { status: 404 });
 
   const timestamp = now();
-  const topic = { ...currentTopic, title: parsed.data.title, updated_at: timestamp };
+  const nextTitle = parsed.data.title ?? currentTopic.title;
+  const topic = parsed.data.syncPromise
+    ? {
+      ...currentTopic,
+      title: nextTitle,
+      title_promise: syncedPromise(nextTitle, currentTopic.title_promise),
+      title_promise_status: "synced" as const,
+      title_promise_validation: "标题与正文承诺已同步",
+      updated_at: timestamp,
+    }
+    : {
+      ...currentTopic,
+      title: nextTitle,
+      title_promise_status: nextTitle === currentTopic.title ? currentTopic.title_promise_status ?? "synced" as const : "stale" as const,
+      title_promise_validation: nextTitle === currentTopic.title ? currentTopic.title_promise_validation : "标题已修改，请重新同步正文承诺",
+      updated_at: timestamp,
+    };
   const updatedRun: GrowthRun = {
     ...run,
     owner_user_id: run.owner_user_id ?? guard.auth.user.id,

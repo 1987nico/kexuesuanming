@@ -224,10 +224,24 @@ function changedKeys(current: Record<string, string | boolean>, baseline: Record
   return Object.keys(current).filter((key) => current[key] !== baseline[key]);
 }
 
+function relativeAge(iso: string, now = Date.now()) {
+  const elapsed = Math.max(0, now - Date.parse(iso));
+  const hours = Math.floor(elapsed / 3_600_000);
+  if (hours < 1) return "不到1小时前";
+  if (hours < 24) return `${hours}小时前`;
+  const days = Math.floor(hours / 24);
+  return `${days}天前`;
+}
+
 function sourceAge(source: TopicSourceSnapshot) {
-  if (source.freshness === "within_72h") return "72小时内";
-  if (source.freshness === "day_4_to_7") return "4—7天";
-  return "历史框架库";
+  const elapsed = Date.now() - Date.parse(source.published_at);
+  if (elapsed <= 72 * 3_600_000) return "近期优先";
+  if (elapsed <= 7 * 24 * 3_600_000) return "近期可用";
+  return "历史框架";
+}
+
+function sourceNeedsRefresh(source: TopicSourceSnapshot) {
+  return Date.now() - Date.parse(source.collected_at) > 24 * 3_600_000;
 }
 
 function sourceHeatSummary(source: TopicSourceSnapshot) {
@@ -236,7 +250,8 @@ function sourceHeatSummary(source: TopicSourceSnapshot) {
 }
 
 function sourceCanGenerate(source?: TopicSourceSnapshot) {
-  if (!source || source.freshness === "historical" || source.link_status === "invalid") return false;
+  if (!source || Date.now() - Date.parse(source.published_at) > 7 * 24 * 3_600_000 || source.link_status === "invalid") return false;
+  if (sourceNeedsRefresh(source)) return false;
   return source.link_status === "accessible" || Boolean(source.verified_by_operator);
 }
 
@@ -248,6 +263,36 @@ function latestSourceForMethod(sources: TopicSourceSnapshot[], methodId: TitleMe
 
 const workspaceKey = (businessLine: GrowthBusinessLine, persona: GrowthPersona) =>
   `${businessLine}:${persona}`;
+
+type WorkflowStep = "0" | "1" | "2" | "3" | "4" | "5";
+
+type WorkspaceTransient = {
+  variants: ContentDraft[];
+  selectedTopic: { run: GrowthRun; topic: TopicCandidate } | null;
+  activeTopic: { run: GrowthRun; topic: TopicCandidate } | null;
+  chosen: ContentDraft | null;
+  titleEdits: Record<string, string>;
+  visibleStep: WorkflowStep;
+};
+
+type PendingContextSwitch =
+  | { type: "business"; value: GrowthBusinessLine }
+  | { type: "persona"; value: GrowthPersona };
+
+type DraftRepairType = "opening" | "fulfillment" | "identity" | "conversion" | "outcome";
+
+const PERSONA_SUGGESTION_LABELS: Partial<Record<keyof AccountForm, string>> = {
+  name: "人设名称",
+  one_liner: "一句话人设",
+  target_user: "目标人群",
+  core_problem: "核心问题",
+  account_value: "持续提供的价值",
+  follow_reason: "关注理由",
+  trust_source: "信任来源",
+  not_doing: "不做什么",
+  tone_style: "表达语气",
+  compliance_redline: "合规红线",
+};
 
 export default function GrowthPage() {
   const [businessLine, setBusinessLine] = useState<GrowthBusinessLine>("overseas_student");
@@ -277,24 +322,36 @@ export default function GrowthPage() {
   const [reviewExcelError, setReviewExcelError] = useState("");
   const [personaOpen, setPersonaOpen] = useState(false);
   const [personaEditing, setPersonaEditing] = useState(false);
+  const [personaSuggestion, setPersonaSuggestion] = useState<GrowthAccount | null>(null);
+  const [acceptedPersonaSuggestions, setAcceptedPersonaSuggestions] = useState<Record<string, boolean>>({});
   const [businessEditOpen, setBusinessEditOpen] = useState(false);
-  const [visibleStep, setVisibleStep] = useState("0");
+  const [visibleStep, setVisibleStep] = useState<WorkflowStep>("0");
+  const [methodGroupView, setMethodGroupView] = useState<TitleMethodGroup>("native");
+  const [bodyVersionView, setBodyVersionView] = useState<"short" | "long">("short");
+  const [activeRunIds, setActiveRunIds] = useState<Partial<Record<MethodGenerationMode, string>>>({});
+  const [pendingContextSwitch, setPendingContextSwitch] = useState<PendingContextSwitch | null>(null);
+  const [pendingStepSwitch, setPendingStepSwitch] = useState<WorkflowStep | null>(null);
   const [businessPositionForm, setBusinessPositionForm] = useState<GrowthBusinessPosition>(
     DEFAULT_BUSINESS_POSITIONS.overseas_student,
   );
   const workspaceCache = useRef(new Map<string, BootstrapData>());
+  const workspaceTransients = useRef(new Map<string, WorkspaceTransient>());
   const workspaceRequests = useRef(new Map<string, Promise<BootstrapData>>());
   const activeWorkspace = useRef(workspaceKey("overseas_student", "buyer"));
   const prefetchStarted = useRef(false);
 
-  const applyWorkspaceData = useCallback((next: BootstrapData | null) => {
+  const applyWorkspaceData = useCallback((next: BootstrapData | null, transient?: WorkspaceTransient) => {
     setData(next);
     setForm(next?.account ? accountForm(next.account) : { ...emptyAccount });
-    setVariants([]);
-    setSelectedTopic(null);
-    setActiveTopic(null);
-    setChosen(next?.currentDrafts?.find((draft) => draft.status === "ready") || null);
-    setTitleEdits({});
+    setVariants(transient?.variants ?? []);
+    setSelectedTopic(transient?.selectedTopic ?? null);
+    setActiveTopic(transient?.activeTopic ?? null);
+    setChosen(transient?.chosen ?? next?.currentDrafts?.find((draft) => draft.status === "ready") ?? null);
+    setTitleEdits(transient?.titleEdits ?? {});
+    setActiveRunIds({
+      default: next?.runs.find((run) => run.generation_mode === "default")?.id,
+      explore: next?.runs.find((run) => run.generation_mode === "explore")?.id,
+    });
     setSavingTitleId(null);
     setExploreOpen({ native: false, benchmark: false });
     setSourceEditorMethod(null);
@@ -311,8 +368,12 @@ export default function GrowthPage() {
     setReviewExcelError("");
     setPersonaOpen(false);
     setPersonaEditing(false);
+    setPersonaSuggestion(null);
+    setAcceptedPersonaSuggestions({});
     setBusinessEditOpen(false);
-    setVisibleStep("0");
+    if (transient?.visibleStep) setVisibleStep(transient.visibleStep);
+    setMethodGroupView("native");
+    setBodyVersionView("short");
     if (next?.businessPosition) setBusinessPositionForm(next.businessPosition);
   }, []);
 
@@ -336,7 +397,7 @@ export default function GrowthPage() {
     activeWorkspace.current = key;
     const cached = workspaceCache.current.get(key);
     if (cached && !force) {
-      applyWorkspaceData(cached);
+      applyWorkspaceData(cached, workspaceTransients.current.get(key));
       setBusy(null);
       return;
     }
@@ -346,7 +407,7 @@ export default function GrowthPage() {
     try {
       const next = await fetchWorkspace(nextBusinessLine, nextPersona);
       workspaceCache.current.set(key, next);
-      if (activeWorkspace.current === key) applyWorkspaceData(next);
+      if (activeWorkspace.current === key) applyWorkspaceData(next, workspaceTransients.current.get(key));
 
       if (!prefetchStarted.current) {
         prefetchStarted.current = true;
@@ -382,41 +443,20 @@ export default function GrowthPage() {
   }, [businessLine, data, persona]);
 
   useEffect(() => {
-    const sections = [...document.querySelectorAll<HTMLElement>("section[data-step]")];
-    if (!sections.length) return;
-    let frame = 0;
-    const updateVisibleStep = () => {
-      frame = 0;
-      // 页面数据加载后，上方长正文会发生少量布局位移；以视口上方260px作为阅读锚点，
-      // 避免用户已经看到下一步骤标题时仍高亮上一项。
-      const anchorY = Math.min(260, window.innerHeight * 0.4);
-      let current = sections[0];
-      for (const section of sections) {
-        if (section.getBoundingClientRect().top <= anchorY) current = section;
-        else break;
-      }
-      if (current.dataset.step) setVisibleStep(current.dataset.step);
-    };
-    const scheduleUpdate = () => {
-      if (frame) return;
-      frame = window.requestAnimationFrame(updateVisibleStep);
-    };
-    updateVisibleStep();
-    window.addEventListener("scroll", scheduleUpdate, { passive: true });
-    window.addEventListener("resize", scheduleUpdate);
-    return () => {
-      window.removeEventListener("scroll", scheduleUpdate);
-      window.removeEventListener("resize", scheduleUpdate);
-      if (frame) window.cancelAnimationFrame(frame);
-    };
-  }, [businessLine, data?.account?.id, persona]);
+    const fromHash = window.location.hash.match(/growth-step-([0-5])/)?.[1] as WorkflowStep | undefined;
+    if (fromHash) setVisibleStep(fromHash);
+  }, []);
 
   const businessDefinition = GROWTH_BUSINESS_DEFINITIONS[businessLine];
   const businessPosition = data?.businessPosition ?? DEFAULT_BUSINESS_POSITIONS[businessLine];
-  const runs = useMemo(() => ({
-    default: data?.runs.find((run) => run.generation_mode === "default"),
-    explore: data?.runs.find((run) => run.generation_mode === "explore"),
+  const runsByMode = useMemo(() => ({
+    default: (data?.runs ?? []).filter((run) => run.generation_mode === "default" && run.topic_pool.length > 0).slice(0, 3),
+    explore: (data?.runs ?? []).filter((run) => run.generation_mode === "explore" && run.topic_pool.length > 0).slice(0, 3),
   }), [data?.runs]);
+  const runs = useMemo(() => ({
+    default: runsByMode.default.find((run) => run.id === activeRunIds.default) ?? runsByMode.default[0],
+    explore: runsByMode.explore.find((run) => run.id === activeRunIds.explore) ?? runsByMode.explore[0],
+  }), [activeRunIds.default, activeRunIds.explore, runsByMode.default, runsByMode.explore]);
   const defaultMethods = useMemo(
     () => methodsForPersona(persona, "default", data?.account?.method_overrides),
     [data?.account?.method_overrides, persona],
@@ -449,28 +489,116 @@ export default function GrowthPage() {
     for (const item of reviewItems) counts[item.progress.state] += 1;
     return counts;
   }, [reviewItems]);
+  const visibleBodyDraft = useMemo(() => {
+    if (chosen) return chosen;
+    return variants.find((draft) => (draft.selected_body_version === "long" ? "long" : "short") === bodyVersionView)
+      ?? variants[0];
+  }, [bodyVersionView, chosen, variants]);
   const workflowSteps = [
     ["0", "业务定位"], ["1", "三家视角"], ["2", "人设"], ["3", "选题"],
     ["4", "正文"], ["5", "三日复盘"],
   ] as const;
+  const currentTaskStatus = busy === "load" ? "正在读取当前业务"
+    : !data?.account ? "待完善人设"
+      : chosen?.status === "published" ? "已发布，等待三日复盘"
+        : chosen ? "正文可复制"
+          : !runs.default ? "待生成标题"
+            : !selectedTopic && !activeTopic ? "待选择标题"
+              : variants.length === 0 ? "已选标题，待生成正文"
+                : "正文待选定";
+
+  const businessDirtyCount = useMemo(() => Object.keys(businessPositionForm).filter((key) =>
+    businessPositionForm[key as keyof GrowthBusinessPosition] !== businessPosition[key as keyof GrowthBusinessPosition]).length,
+  [businessPosition, businessPositionForm]);
+  const personaDirtyCount = useMemo(() => {
+    if (!data?.account) return 0;
+    const baseline = accountForm(data.account);
+    return Object.keys(form).filter((key) => JSON.stringify(form[key as keyof AccountForm]) !== JSON.stringify(baseline[key as keyof AccountForm])).length;
+  }, [data?.account, form]);
+  const transientDirtyCount = businessDirtyCount + personaDirtyCount + Object.keys(titleEdits).length
+    + (selectedTopic && !activeTopic ? 1 : 0) + (variants.length > 0 && !chosen ? 1 : 0);
+
+  function rememberCurrentWorkspace() {
+    workspaceTransients.current.set(workspaceKey(businessLine, persona), {
+      variants,
+      selectedTopic,
+      activeTopic,
+      chosen,
+      titleEdits,
+      visibleStep,
+    });
+  }
+
+  function goToStep(step: WorkflowStep) {
+    setVisibleStep(step);
+    window.history.replaceState(null, "", `#growth-step-${step}`);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  function requestStep(step: WorkflowStep) {
+    if (step === visibleStep) return;
+    const order = Number(step);
+    if (order >= 3 && !data?.account) {
+      setMessage("请先完成人设，再进入选题。");
+      return;
+    }
+    if (step === "4" && !selectedTopic && !activeTopic && !chosen) {
+      setMessage("请先在选题中选择一个标题。");
+      return;
+    }
+    if ((visibleStep === "0" && businessDirtyCount > 0) || (visibleStep === "2" && personaDirtyCount > 0)) {
+      setPendingStepSwitch(step);
+      return;
+    }
+    setMessage("");
+    goToStep(step);
+  }
+
+  function completePendingStepSwitch(preserve: boolean) {
+    if (!pendingStepSwitch) return;
+    if (!preserve) {
+      if (visibleStep === "0") setBusinessPositionForm(businessPosition);
+      if (visibleStep === "2" && data?.account) setForm(accountForm(data.account));
+    }
+    const target = pendingStepSwitch;
+    setPendingStepSwitch(null);
+    setMessage("");
+    goToStep(target);
+  }
+
+  function performContextSwitch(target: PendingContextSwitch, preserve: boolean) {
+    const currentKey = workspaceKey(businessLine, persona);
+    if (preserve) rememberCurrentWorkspace();
+    else workspaceTransients.current.delete(currentKey);
+    if (target.type === "business") {
+      const key = workspaceKey(target.value, persona);
+      activeWorkspace.current = key;
+      setBusinessPositionForm(workspaceCache.current.get(key)?.businessPosition ?? DEFAULT_BUSINESS_POSITIONS[target.value]);
+      applyWorkspaceData(workspaceCache.current.get(key) ?? null, preserve ? workspaceTransients.current.get(key) : undefined);
+      setBusinessLine(target.value);
+      setVisibleStep("0");
+    } else {
+      const key = workspaceKey(businessLine, target.value);
+      activeWorkspace.current = key;
+      applyWorkspaceData(workspaceCache.current.get(key) ?? null, preserve ? workspaceTransients.current.get(key) : undefined);
+      setPersona(target.value);
+      setVisibleStep("1");
+    }
+    setPendingContextSwitch(null);
+  }
 
   function switchBusiness(next: GrowthBusinessLine) {
     if (next === businessLine) return;
-    const key = workspaceKey(next, persona);
-    activeWorkspace.current = key;
-    setBusinessPositionForm(
-      workspaceCache.current.get(key)?.businessPosition ?? DEFAULT_BUSINESS_POSITIONS[next],
-    );
-    applyWorkspaceData(workspaceCache.current.get(key) ?? null);
-    setBusinessLine(next);
+    const target = { type: "business", value: next } as const;
+    if (transientDirtyCount) setPendingContextSwitch(target);
+    else performContextSwitch(target, true);
   }
 
   function switchPersona(next: GrowthPersona) {
     if (next === persona) return;
-    const key = workspaceKey(businessLine, next);
-    activeWorkspace.current = key;
-    applyWorkspaceData(workspaceCache.current.get(key) ?? null);
-    setPersona(next);
+    const target = { type: "persona", value: next } as const;
+    if (transientDirtyCount) setPendingContextSwitch(target);
+    else performContextSwitch(target, true);
   }
 
   async function createPersona() {
@@ -487,17 +615,37 @@ export default function GrowthPage() {
           coreProblem: form.core_problem || undefined,
           trustSource: form.trust_source || undefined,
           regenerateAccountId: data?.account?.id,
+          previewOnly: true,
         }),
       });
-      setData((current) => current ? { ...current, account: result.account, plan: result.plan || current.plan } : current);
-      setForm(accountForm(result.account));
+      const suggested = accountForm(result.account);
+      const changed = Object.keys(suggested).filter((key) => JSON.stringify(suggested[key as keyof AccountForm]) !== JSON.stringify(form[key as keyof AccountForm]));
+      setPersonaSuggestion(result.account);
+      setAcceptedPersonaSuggestions(Object.fromEntries(changed.map((key) => [key, true])));
       setPersonaOpen(true);
-      setMessage("人设已合并更新，视角专属字段、高级业务事实与历史字段均已保留。");
+      setPersonaEditing(true);
+      setMessage(`系统提出了${changed.length}项人设修改建议；逐项确认后再保存，不会直接覆盖当前人设。`);
     } catch (error) {
       setMessage((error as Error).message);
     } finally {
       setBusy(null);
     }
+  }
+
+  function applyPersonaSuggestions() {
+    if (!personaSuggestion) return;
+    const suggested = accountForm(personaSuggestion);
+    const next = { ...form };
+    for (const key of Object.keys(acceptedPersonaSuggestions)) {
+      if (!acceptedPersonaSuggestions[key]) continue;
+      (next as unknown as Record<string, unknown>)[key] = suggested[key as keyof AccountForm];
+    }
+    setForm(next);
+    setPersonaSuggestion(null);
+    setAcceptedPersonaSuggestions({});
+    setPersonaOpen(true);
+    setPersonaEditing(true);
+    setMessage("已把接受的建议放入编辑表单；确认后点击“保存人设”才会写入。");
   }
 
   async function saveBusinessPosition() {
@@ -582,6 +730,7 @@ export default function GrowthPage() {
         }),
       });
       await load(businessLine, persona, true);
+      goToStep("3");
       setMessage(`${result.validation.message}；${result.usable ? "已进入近期可用池" : "当前不参与标题生成"}。`);
     } catch (error) {
       setMessage((error as Error).message);
@@ -606,6 +755,7 @@ export default function GrowthPage() {
         body: JSON.stringify({ accountId: data.account.id, verified_by_operator: verified }),
       });
       await load(businessLine, persona, true);
+      goToStep("3");
       setMessage(`${result.validation.message}；${result.usable ? "可参与生成" : "不参与生成"}。`);
     } catch (error) {
       setMessage((error as Error).message);
@@ -616,8 +766,9 @@ export default function GrowthPage() {
 
   async function generateTopics(mode: MethodGenerationMode, group?: TitleMethodGroup) {
     if (!data?.account) return;
+    if ((Object.keys(titleEdits).length > 0 || selectedTopic) && !window.confirm("新批次不会删除当前批次，最近3批都可以恢复。确认换一批吗？")) return;
     setBusy(`topics-${mode}`);
-    setTopicMessage("正在调用小红书职业榜API获取近期笔记，并生成标题…");
+    setTopicMessage("正在读取业务事实与近期来源…");
     if (group) setExploreOpen((current) => ({ ...current, [group]: true }));
     try {
       const result = await requestJSON<{
@@ -637,17 +788,26 @@ export default function GrowthPage() {
         account: current.account ? { ...current.account, topic_sources: result.topicSources } : current.account,
         runs: [result.run, ...current.runs.filter((run) => run.id !== result.run.id)],
       } : current);
+      setActiveRunIds((current) => ({ ...current, [mode]: result.run.id }));
       setVariants([]);
       setSelectedTopic(null);
       setActiveTopic(null);
-      setChosen(null);
       setTitleEdits({});
-      setTopicMessage(`${result.sourceRefresh.message} 已换成一批新的标题：原生法和对标法共${result.run.topic_pool.length}个；${result.unavailableMethods?.length || 0}个方法因来源不足暂停。`);
+      setTopicMessage(`${result.sourceRefresh.message} 新批次已生成：原生法和对标法共${result.run.topic_pool.length}个；${result.unavailableMethods?.length || 0}个方法因来源不足暂停。旧批次仍可恢复。`);
     } catch (error) {
       setTopicMessage((error as Error).message);
     } finally {
       setBusy(null);
     }
+  }
+
+  function restoreTopicBatch(mode: MethodGenerationMode, run: GrowthRun) {
+    setActiveRunIds((current) => ({ ...current, [mode]: run.id }));
+    setVariants([]);
+    setSelectedTopic(null);
+    setActiveTopic(null);
+    setTitleEdits({});
+    setTopicMessage(`已恢复${formatDateTime(run.created_at)}生成的批次；更新的批次仍然保留。`);
   }
 
   function changeTopicTitle(topic: TopicCandidate, title: string) {
@@ -677,6 +837,7 @@ export default function GrowthPage() {
       ...current,
       runs: current.runs.map((item) => item.id === result.run.id ? result.run : item),
     } : current);
+    if (selectedTopic?.topic.id === topic.id) setSelectedTopic({ run: result.run, topic: result.topic });
     setTitleEdits((current) => {
       const next = { ...current };
       delete next[topic.id];
@@ -698,7 +859,31 @@ export default function GrowthPage() {
     }
   }
 
+  async function syncTopicPromise(run: GrowthRun, topic: TopicCandidate) {
+    setSavingTitleId(topic.id);
+    try {
+      const result = await requestJSON<{ run: GrowthRun; topic: TopicCandidate }>("/api/growth/topics", {
+        method: "PATCH",
+        body: JSON.stringify({ runId: run.id, topicId: topic.id, syncPromise: true }),
+      });
+      setData((current) => current ? {
+        ...current,
+        runs: current.runs.map((item) => item.id === result.run.id ? result.run : item),
+      } : current);
+      if (selectedTopic?.topic.id === topic.id) setSelectedTopic({ run: result.run, topic: result.topic });
+      setMessage("正文承诺已根据新标题同步，现在可以生成正文。");
+    } catch (error) {
+      setMessage((error as Error).message);
+    } finally {
+      setSavingTitleId(null);
+    }
+  }
+
   async function generateBodies(run: GrowthRun, topic: TopicCandidate) {
+    if (topic.title_promise_status === "stale" || topic.title_promise_status === "invalid") {
+      setMessage("标题修改后，正文承诺尚未同步。请先点击“根据标题更新承诺”。");
+      return;
+    }
     setBusy(`body-${topic.id}`);
     setVariants([]);
     setChosen(null);
@@ -706,6 +891,10 @@ export default function GrowthPage() {
       const editedTitle = titleEdits[topic.id] ?? topic.title;
       const saved = await persistTopicTitle(run, topic, editedTitle);
       setSelectedTopic(saved);
+      if (saved.topic.title_promise_status === "stale" || saved.topic.title_promise_status === "invalid") {
+        setMessage("标题已保存，但正文承诺需要跟随新标题同步后才能生成正文。");
+        return;
+      }
       setActiveTopic(saved);
       const result = await requestJSON<{ drafts: ContentDraft[] }>("/api/growth/drafts/variants", {
         method: "POST",
@@ -717,6 +906,8 @@ export default function GrowthPage() {
         ? `正文生成与校验完成：${passedCount}个版本通过并已呈现。`
         : "两个版本均未通过生成门禁，正文未呈现；可重新生成。"
       );
+      setBodyVersionView(result.drafts.some((draft) => draft.selected_body_version !== "long") ? "short" : "long");
+      goToStep("4");
     } catch (error) {
       setMessage((error as Error).message);
     } finally {
@@ -761,6 +952,27 @@ export default function GrowthPage() {
     }
   }
 
+  async function repairBody(draft: ContentDraft, repairType: DraftRepairType) {
+    setBusy(`repair-${draft.id}-${repairType}`);
+    setMessage("正在局部修正并重新校验…");
+    try {
+      const result = await requestJSON<{ draft: ContentDraft }>("/api/growth/drafts/repair", {
+        method: "POST",
+        body: JSON.stringify({ draft, repairType }),
+      });
+      setVariants((current) => current.map((item) => item.id === draft.id ? result.draft : item));
+      if (chosen?.id === draft.id) setChosen(result.draft);
+      setMessage(draftReadyForOperator(result.draft)
+        ? "局部修正完成，三项门禁已通过。"
+        : "局部修正已完成，仍有项目需要处理；可继续针对失败项修正。"
+      );
+    } catch (error) {
+      setMessage((error as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function markPublished(draft: ContentDraft, publishedAt: string) {
     setBusy(`publish-${draft.id}`);
     try {
@@ -770,6 +982,7 @@ export default function GrowthPage() {
       });
       await load(businessLine, persona, true);
       setMessage("已记录实际发布时间；这篇内容会进入下一轮三日复盘的官方Excel匹配范围。");
+      goToStep("5");
     } catch (error) {
       setMessage((error as Error).message);
     } finally {
@@ -968,7 +1181,8 @@ export default function GrowthPage() {
           <div className="flex flex-wrap gap-2">
             <a className="rounded-full bg-white px-4 py-2 text-sm text-slate-600 shadow-sm" href="/mianba">返回首页</a>
             <MianbaLogoutButton className="rounded-full bg-white px-4 py-2 text-sm text-slate-600 shadow-sm disabled:opacity-50" />
-            <span className="rounded-full bg-slate-900 px-4 py-2 text-sm text-white">就绪</span>
+            <span className="rounded-full bg-slate-100 px-4 py-2 text-sm text-slate-700">{businessDefinition.label} · {GROWTH_PERSONA_LABELS[persona]}</span>
+            <span aria-live="polite" className="rounded-full bg-slate-900 px-4 py-2 text-sm text-white">{currentTaskStatus}</span>
           </div>
         </header>
 
@@ -976,12 +1190,12 @@ export default function GrowthPage() {
           aria-label="内容生产流程"
           className="sticky top-3 z-20 mb-6 overflow-x-auto rounded-2xl border border-slate-200 bg-white/95 p-2 shadow-sm backdrop-blur"
         >
-          <div className="flex min-w-max gap-1">
+          <div className="hidden min-w-max gap-1 sm:flex">
             {workflowSteps.map(([number, label]) => (
-              <a
+              <button
+                type="button"
                 key={number}
-                href={`#growth-step-${number}`}
-                onClick={() => setVisibleStep(number)}
+                onClick={() => requestStep(number)}
                 aria-current={visibleStep === number ? "step" : undefined}
                 className={`flex min-h-10 items-center rounded-xl px-3 text-sm font-medium transition ${
                   visibleStep === number
@@ -990,8 +1204,13 @@ export default function GrowthPage() {
                 }`}
               >
                 {number} {label}
-              </a>
+              </button>
             ))}
+          </div>
+          <div className="flex items-center justify-between gap-2 sm:hidden">
+            <button type="button" disabled={visibleStep === "0"} onClick={() => requestStep(String(Number(visibleStep) - 1) as WorkflowStep)} className="min-h-11 rounded-xl px-3 text-sm font-medium text-slate-600 disabled:opacity-30">‹ 上一步</button>
+            <div className="text-sm font-semibold">{Number(visibleStep) + 1}/6 · {workflowSteps.find(([number]) => number === visibleStep)?.[1]}</div>
+            <button type="button" disabled={visibleStep === "5"} onClick={() => requestStep(String(Number(visibleStep) + 1) as WorkflowStep)} className="min-h-11 rounded-xl px-3 text-sm font-medium text-slate-600 disabled:opacity-30">下一步 ›</button>
           </div>
         </nav>
 
@@ -1000,6 +1219,7 @@ export default function GrowthPage() {
         )}
 
         <div className="space-y-6">
+          {visibleStep === "0" && (
             <Section
               number="0"
               title="先选业务定位"
@@ -1082,15 +1302,18 @@ export default function GrowthPage() {
                         value={businessPositionForm.trust_source}
                         onChange={(value) => setBusinessPositionForm({ ...businessPositionForm, trust_source: value })}
                       />
-                      <div className="md:col-span-2">
+                    </div>
+                    <details className="mt-4 rounded-xl border border-slate-200 bg-white">
+                      <summary className="cursor-pointer p-4 text-sm font-semibold">高级业务事实</summary>
+                      <div className="px-4 pb-4">
                         <TextArea
                           label="合规红线"
                           value={businessPositionForm.compliance_redline}
                           onChange={(value) => setBusinessPositionForm({ ...businessPositionForm, compliance_redline: value })}
                         />
                       </div>
-                    </div>
-                    <div className="mt-4 flex flex-wrap items-center gap-3">
+                    </details>
+                    <div className="sticky bottom-20 z-10 mt-4 flex flex-wrap items-center gap-3 rounded-xl border border-slate-200 bg-white/95 p-3 shadow-sm backdrop-blur sm:bottom-3">
                       <PrimaryButton disabled={Boolean(busy)} onClick={saveBusinessPosition}>
                         {busy === "business-position" ? "保存中…" : "保存业务定位"}
                       </PrimaryButton>
@@ -1100,15 +1323,15 @@ export default function GrowthPage() {
                       }}>
                         取消
                       </SecondaryButton>
-                      <span className="text-xs leading-5 text-slate-500">
-                        保存后作为三种视角的共同生成依据；已有内容不覆盖，另一条业务不受影响。
-                      </span>
+                      <span aria-live="polite" className="text-xs leading-5 text-slate-500">{businessDirtyCount ? `已修改${businessDirtyCount}项` : "没有未保存修改"}</span>
                     </div>
                   </div>
                 )}
               </div>
             </Section>
+          )}
 
+          {visibleStep === "1" && (
             <Section
               number="1"
               title="选择商家 / 买家 / 专家视角"
@@ -1135,7 +1358,9 @@ export default function GrowthPage() {
                 })}
               </div>
             </Section>
+          )}
 
+          {visibleStep === "2" && (
             <Section
               number="2"
               title={`${businessDefinition.personas[persona].role}人设`}
@@ -1219,17 +1444,20 @@ export default function GrowthPage() {
                   </details>
 
                   {personaEditing && (
-                    <div className="mt-5 flex flex-wrap gap-2">
+                    <div className="sticky bottom-20 z-10 mt-5 flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-white/95 p-3 shadow-sm backdrop-blur sm:bottom-3">
                       <PrimaryButton disabled={Boolean(busy)} onClick={savePersona}>保存人设</PrimaryButton>
                       <SecondaryButton onClick={() => { setForm(accountForm(data.account!)); setPersonaEditing(false); }}>取消编辑</SecondaryButton>
+                      <span aria-live="polite" className="text-xs text-slate-500">{personaDirtyCount ? `已修改${personaDirtyCount}项` : "没有未保存修改"}</span>
                     </div>
                   )}
                 </div>
               )}
             </Section>
+          )}
 
             {data?.account && (
               <>
+                {visibleStep === "3" && (
                 <Section
                   number="3"
                   title="选题"
@@ -1243,7 +1471,7 @@ export default function GrowthPage() {
                       </div>
                     </div>
                     <PrimaryButton disabled={Boolean(busy)} onClick={() => generateTopics("default")}>
-                      {busy === "topics-default" ? "正在换一批…" : "生成选题"}
+                      {busy === "topics-default" ? "正在生成新一批…" : runs.default ? "换一批标题" : "生成选题"}
                     </PrimaryButton>
                   </div>
 
@@ -1253,35 +1481,54 @@ export default function GrowthPage() {
                     </div>
                   )}
 
-                  <div className="mt-6 space-y-6">
+                  <TopicBatchHistory
+                    runs={runsByMode.default}
+                    activeRunId={runs.default?.id}
+                    onRestore={(run) => restoreTopicBatch("default", run)}
+                  />
+
+                  <div className="mt-6 flex rounded-xl bg-slate-100 p-1" role="tablist" aria-label="标题方法类别">
                     {(["native", "benchmark"] as TitleMethodGroup[]).map((group) => (
-                      <MethodArea
+                      <button
+                        type="button"
+                        role="tab"
+                        aria-selected={methodGroupView === group}
                         key={group}
-                        group={group}
-                        defaultMethods={defaultMethods.filter((method) => method.group === group)}
-                        exploreMethods={exploreMethods.filter((method) => method.group === group)}
-                        defaultRun={runs.default}
-                        exploreRun={runs.explore}
-                        sources={data.account?.topic_sources || []}
-                        busy={busy}
-                        exploreOpen={exploreOpen[group]}
-                        sourceEditorMethod={sourceEditorMethod}
-                        source={source}
-                        activeTopicId={selectedTopic?.topic.id}
-                        titleEdits={titleEdits}
-                        savingTitleId={savingTitleId}
-                        onExploreOpen={(open) => setExploreOpen((current) => ({ ...current, [group]: open }))}
-                        onExplore={() => generateTopics("explore", group)}
-                        onSelectTopic={selectTopic}
-                        onTitleChange={changeTopicTitle}
-                        onSaveTitle={saveTopicTitle}
-                        onOpenSource={openSourceEditor}
-                        onCloseSource={() => setSourceEditorMethod(null)}
-                        onSourceChange={setSource}
-                        onSaveSource={saveSource}
-                        onRefreshSource={refreshSource}
-                      />
+                        onClick={() => setMethodGroupView(group)}
+                        className={`min-h-11 flex-1 rounded-lg px-4 text-sm font-semibold ${methodGroupView === group ? "bg-white text-slate-900 shadow-sm" : "text-slate-600"}`}
+                      >
+                        {group === "native" ? "原生法" : "对标法"}
+                      </button>
                     ))}
+                  </div>
+
+                  <div className="mt-4">
+                    <MethodArea
+                      group={methodGroupView}
+                      defaultMethods={defaultMethods.filter((method) => method.group === methodGroupView)}
+                      exploreMethods={exploreMethods.filter((method) => method.group === methodGroupView)}
+                      defaultRun={runs.default}
+                      exploreRun={runs.explore}
+                      sources={data.account?.topic_sources || []}
+                      busy={busy}
+                      exploreOpen={exploreOpen[methodGroupView]}
+                      sourceEditorMethod={sourceEditorMethod}
+                      source={source}
+                      activeTopicId={selectedTopic?.topic.id}
+                      titleEdits={titleEdits}
+                      savingTitleId={savingTitleId}
+                      onExploreOpen={(open) => setExploreOpen((current) => ({ ...current, [methodGroupView]: open }))}
+                      onExplore={() => generateTopics("explore", methodGroupView)}
+                      onSelectTopic={selectTopic}
+                      onTitleChange={changeTopicTitle}
+                      onSaveTitle={saveTopicTitle}
+                      onSyncPromise={syncTopicPromise}
+                      onOpenSource={openSourceEditor}
+                      onCloseSource={() => setSourceEditorMethod(null)}
+                      onSourceChange={setSource}
+                      onSaveSource={saveSource}
+                      onRefreshSource={refreshSource}
+                    />
                   </div>
 
                   <div className="sticky bottom-3 z-10 mt-6 rounded-2xl border border-slate-300 bg-white/95 p-4 shadow-lg backdrop-blur">
@@ -1294,10 +1541,10 @@ export default function GrowthPage() {
                           </div>
                         </div>
                         <PrimaryButton
-                          disabled={Boolean(busy)}
+                          disabled={Boolean(busy) || selectedTopic.topic.title_promise_status === "stale" || selectedTopic.topic.title_promise_status === "invalid"}
                           onClick={() => generateBodies(selectedTopic.run, selectedTopic.topic)}
                         >
-                          {busy === `body-${selectedTopic.topic.id}` ? "正在生成正文…" : "下一步：生成正文"}
+                          {busy === `body-${selectedTopic.topic.id}` ? "正在生成正文…" : selectedTopic.topic.title_promise_status === "stale" ? "先同步正文承诺" : "下一步：生成正文"}
                         </PrimaryButton>
                       </div>
                     ) : (
@@ -1305,30 +1552,64 @@ export default function GrowthPage() {
                     )}
                   </div>
                 </Section>
+                )}
 
+                {visibleStep === "4" && (
                 <Section
                   number="4"
                   title="正文"
                   subtitle={(activeTopic || selectedTopic)
                     ? `已选标题：${titleEdits[(activeTopic || selectedTopic)!.topic.id] ?? (activeTopic || selectedTopic)!.topic.title}；标题承诺：${(activeTopic || selectedTopic)!.topic.title_promise}`
-                    : "先在选题槽位中选择一个标题；短版和长版只有通过三项校验后才会呈现。"}
+                    : chosen
+                      ? `已选最终正文：${chosen.title}；复制内容不会包含系统校验标注。`
+                      : "先在选题槽位中选择一个标题；短版和长版只有通过三项校验后才会呈现。"}
                 >
-                  {variants.length > 0 ? (
-                    <div className={`grid gap-5 ${chosen ? "grid-cols-1" : "lg:grid-cols-2"}`}>
-                      {variants.map((draft) => (
-                        <DraftCard
-                          key={draft.id}
-                          draft={draft}
-                          busy={busy}
-                          selected={chosen?.id === draft.id}
-                          onChoose={chooseDraft}
-                          onPublish={markPublished}
-                          onRetry={() => {
-                            const current = activeTopic || selectedTopic;
-                            if (current) void generateBodies(current.run, current.topic);
-                          }}
-                        />
-                      ))}
+                  {variants.length > 0 && visibleBodyDraft ? (
+                    <div>
+                      {!chosen && variants.length > 1 && (
+                        <div className="mb-5 inline-flex rounded-xl bg-slate-100 p-1" role="tablist" aria-label="正文版本">
+                          {(["short", "long"] as const).map((version) => {
+                            const draft = variants.find((item) => (item.selected_body_version === "long" ? "long" : "short") === version);
+                            if (!draft) return null;
+                            const passed = draftReadyForOperator(draft);
+                            return (
+                              <button
+                                key={version}
+                                type="button"
+                                role="tab"
+                                aria-selected={bodyVersionView === version}
+                                onClick={() => setBodyVersionView(version)}
+                                className={`min-h-11 rounded-lg px-4 text-sm font-semibold ${bodyVersionView === version ? "bg-white text-slate-900 shadow-sm" : "text-slate-600"}`}
+                              >
+                                {version === "short" ? "短版" : "长版"} · {passed ? "可选" : "需修正"}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                      <DraftCard
+                        key={visibleBodyDraft.id}
+                        draft={visibleBodyDraft}
+                        busy={busy}
+                        selected={chosen?.id === visibleBodyDraft.id}
+                        onChoose={chooseDraft}
+                        onPublish={markPublished}
+                        onRepair={repairBody}
+                        onRetry={() => {
+                          const current = activeTopic || selectedTopic;
+                          if (current) void generateBodies(current.run, current.topic);
+                        }}
+                      />
+                      {chosen && variants.length === 1 && (
+                        <button type="button" className="mt-4 min-h-11 text-sm font-medium text-slate-600 underline" onClick={() => {
+                          const candidates = data.currentDrafts.filter((draft) => draft.run_id === chosen.run_id && draft.id !== chosen.id);
+                          if (candidates.length) {
+                            setVariants([chosen, ...candidates]);
+                            setChosen(null);
+                            setBodyVersionView(candidates[0].selected_body_version === "long" ? "long" : "short");
+                          } else setMessage("另一个版本未保留为可选正文，可重新生成两个版本。");
+                        }}>更换正文版本</button>
+                      )}
                     </div>
                   ) : chosen ? (
                     <DraftCard
@@ -1337,6 +1618,7 @@ export default function GrowthPage() {
                       selected
                       onChoose={chooseDraft}
                       onPublish={markPublished}
+                      onRepair={repairBody}
                       onRetry={() => {
                         const current = activeTopic || selectedTopic;
                         if (current) void generateBodies(current.run, current.topic);
@@ -1352,19 +1634,21 @@ export default function GrowthPage() {
                       <div className="rounded-2xl border border-dashed border-slate-300 p-5 text-sm text-slate-500">
                         <div className="font-medium text-slate-800">标题已选定，等待生成正文</div>
                         <p className="mt-2 leading-6">短版和长版将使用同一核心判断；正文不选择内容方向或正文阶段。</p>
-                        <a className="mt-3 inline-flex min-h-10 items-center rounded-xl border border-slate-200 px-3 font-medium text-slate-700" href="#growth-step-3">返回选题</a>
+                        <button type="button" className="mt-3 inline-flex min-h-11 items-center rounded-xl border border-slate-200 px-3 font-medium text-slate-700" onClick={() => goToStep("3")}>返回选题</button>
                       </div>
                     )
                   ) : (
                     <div className="rounded-2xl border border-dashed border-slate-300 p-5 text-sm text-slate-500">
                       <div className="font-medium text-slate-800">待选择标题</div>
                       <p className="mt-2">先从原生法或对标法中选择一个标题。</p>
-                      <a className="mt-3 inline-flex min-h-10 items-center rounded-xl border border-slate-200 px-3 font-medium text-slate-700" href="#growth-step-3">返回选题</a>
+                      <button type="button" className="mt-3 inline-flex min-h-11 items-center rounded-xl border border-slate-200 px-3 font-medium text-slate-700" onClick={() => goToStep("3")}>返回选题</button>
                     </div>
                   )}
 
                 </Section>
+                )}
 
+                {visibleStep === "5" && (
                 <Section
                   number="5"
                   title="三日复盘"
@@ -1373,16 +1657,91 @@ export default function GrowthPage() {
                   <ThreeDayReviewPanel
                     account={data.account}
                     cycles={data.threeDayReviewCycles}
+                    publishedDrafts={reviewDrafts}
                     busy={busy}
                     onBusy={setBusy}
                     onMessage={setMessage}
-                    onRefresh={() => load(businessLine, persona, true)}
+                    onRefresh={async () => {
+                      await load(businessLine, persona, true);
+                      goToStep("5");
+                    }}
                   />
                 </Section>
+                )}
               </>
             )}
+          {visibleStep !== "3" && visibleStep !== "4" && (
+            <div className="sticky bottom-3 z-10 flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white/95 p-3 shadow-lg backdrop-blur">
+              <SecondaryButton disabled={visibleStep === "0"} onClick={() => requestStep(String(Number(visibleStep) - 1) as WorkflowStep)}>上一步</SecondaryButton>
+              <div className="hidden text-xs text-slate-500 sm:block">{currentTaskStatus}</div>
+              {visibleStep === "5" ? (
+                <span className="px-3 text-sm font-medium text-slate-500">已到最后一步</span>
+              ) : (
+                <PrimaryButton
+                  disabled={(visibleStep === "2" && !data?.account)}
+                  onClick={() => requestStep(String(Number(visibleStep) + 1) as WorkflowStep)}
+                >
+                  下一步：{workflowSteps[Number(visibleStep) + 1]?.[1]}
+                </PrimaryButton>
+              )}
+            </div>
+          )}
         </div>
       </div>
+
+      {personaSuggestion && (
+        <Modal title="确认系统生成人设的修改建议" onClose={() => setPersonaSuggestion(null)}>
+          <p className="text-sm leading-6 text-slate-600">系统不会直接覆盖当前人设。勾选要采用的字段，应用到编辑表单后仍需手动保存。</p>
+          <div className="mt-4 space-y-3">
+            {Object.entries(PERSONA_SUGGESTION_LABELS).map(([key, label]) => {
+              const currentValue = String(form[key as keyof AccountForm] ?? "");
+              const suggestionValue = String(accountForm(personaSuggestion)[key as keyof AccountForm] ?? "");
+              if (currentValue === suggestionValue) return null;
+              return (
+                <label key={key} className="block rounded-2xl border border-slate-200 p-4">
+                  <div className="flex items-center gap-3">
+                    <input type="checkbox" checked={acceptedPersonaSuggestions[key] !== false} onChange={(event) => setAcceptedPersonaSuggestions((current) => ({ ...current, [key]: event.target.checked }))} />
+                    <span className="font-semibold">{label}</span>
+                  </div>
+                  <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                    <div className="rounded-xl bg-slate-50 p-3 text-sm"><div className="text-xs text-slate-500">当前值</div><div className="mt-1 leading-6">{currentValue || "未填写"}</div></div>
+                    <div className="rounded-xl bg-amber-50 p-3 text-sm"><div className="text-xs text-amber-700">建议值</div><div className="mt-1 leading-6">{suggestionValue || "未填写"}</div></div>
+                  </div>
+                </label>
+              );
+            })}
+          </div>
+          <div className="mt-5 flex flex-wrap gap-2">
+            <PrimaryButton onClick={applyPersonaSuggestions}>采用所选建议</PrimaryButton>
+            <SecondaryButton onClick={() => setAcceptedPersonaSuggestions((current) => Object.fromEntries(Object.keys(current).map((key) => [key, true])))}>接受全部</SecondaryButton>
+            <SecondaryButton onClick={() => setPersonaSuggestion(null)}>保留当前人设</SecondaryButton>
+          </div>
+        </Modal>
+      )}
+
+      {pendingContextSwitch && (
+        <Modal title="先处理当前未保存内容" onClose={() => setPendingContextSwitch(null)}>
+          <p className="text-sm leading-6 text-slate-600">
+            当前有{transientDirtyCount}项修改或未完成内容。你可以保留为本次工作草稿，切回当前业务/视角时继续处理。
+          </p>
+          <div className="mt-5 flex flex-col gap-2 sm:flex-row">
+            <PrimaryButton onClick={() => performContextSwitch(pendingContextSwitch, true)}>保存草稿后切换</PrimaryButton>
+            <SecondaryButton onClick={() => performContextSwitch(pendingContextSwitch, false)}>放弃修改并切换</SecondaryButton>
+            <SecondaryButton onClick={() => setPendingContextSwitch(null)}>取消</SecondaryButton>
+          </div>
+        </Modal>
+      )}
+
+      {pendingStepSwitch && (
+        <Modal title="当前步骤还有未保存修改" onClose={() => setPendingStepSwitch(null)}>
+          <p className="text-sm leading-6 text-slate-600">离开后不会自动写入正式数据。你可以保留为当前页面草稿，稍后返回继续编辑。</p>
+          <div className="mt-5 flex flex-col gap-2 sm:flex-row">
+            <PrimaryButton onClick={() => completePendingStepSwitch(true)}>保留草稿并继续</PrimaryButton>
+            <SecondaryButton onClick={() => completePendingStepSwitch(false)}>放弃修改并继续</SecondaryButton>
+            <SecondaryButton onClick={() => setPendingStepSwitch(null)}>取消</SecondaryButton>
+          </div>
+        </Modal>
+      )}
 
       {reviewDraft && (
         <Modal title={`${reviewWindow === "content_24h" ? "24小时内容复盘" : reviewWindow === "business_7d" ? "7天商业结果" : "30天成交归因"}：${reviewDraft.title}`} onClose={() => setReviewDraft(null)}>
@@ -1511,6 +1870,38 @@ export default function GrowthPage() {
   );
 }
 
+function TopicBatchHistory({
+  runs,
+  activeRunId,
+  onRestore,
+}: {
+  runs: GrowthRun[];
+  activeRunId?: string;
+  onRestore: (run: GrowthRun) => void;
+}) {
+  if (runs.length < 2) return null;
+  return (
+    <details className="mt-4 rounded-2xl border border-slate-200 bg-white">
+      <summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-slate-700">最近标题批次（{runs.length}/3）</summary>
+      <div className="space-y-2 border-t border-slate-100 p-3">
+        {runs.map((run, index) => (
+          <div key={run.id} className="flex flex-col gap-2 rounded-xl bg-slate-50 p-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="text-sm">
+              <div className="font-medium">{index === 0 ? "最新批次" : `历史批次 ${index}`} · {run.topic_pool.length}个标题</div>
+              <div className="mt-1 text-xs text-slate-500">生成于 {formatDateTime(run.created_at)}</div>
+            </div>
+            {run.id === activeRunId ? (
+              <Badge>当前批次</Badge>
+            ) : (
+              <SecondaryButton onClick={() => onRestore(run)}>恢复此批次</SecondaryButton>
+            )}
+          </div>
+        ))}
+      </div>
+    </details>
+  );
+}
+
 function MethodArea({
   group,
   defaultMethods,
@@ -1530,6 +1921,7 @@ function MethodArea({
   onSelectTopic,
   onTitleChange,
   onSaveTitle,
+  onSyncPromise,
   onOpenSource,
   onCloseSource,
   onSourceChange,
@@ -1554,6 +1946,7 @@ function MethodArea({
   onSelectTopic: (run: GrowthRun, topic: TopicCandidate) => void;
   onTitleChange: (topic: TopicCandidate, title: string) => void;
   onSaveTitle: (run: GrowthRun, topic: TopicCandidate, title: string) => void;
+  onSyncPromise: (run: GrowthRun, topic: TopicCandidate) => void;
   onOpenSource: (methodId: TitleMethodId) => void;
   onCloseSource: () => void;
   onSourceChange: (source: SourceForm) => void;
@@ -1573,7 +1966,7 @@ function MethodArea({
         <Badge>默认 {defaultMethods.length} · 探索 {exploreMethods.length}</Badge>
       </div>
 
-      <div className="mt-5 grid gap-4 lg:grid-cols-2">
+      <div className="mt-5 grid gap-3">
         {defaultMethods.map((method) => (
           <MethodSlot
             key={method.id}
@@ -1590,6 +1983,7 @@ function MethodArea({
             onSelectTopic={onSelectTopic}
             onTitleChange={onTitleChange}
             onSaveTitle={onSaveTitle}
+            onSyncPromise={onSyncPromise}
             onOpenSource={onOpenSource}
             onCloseSource={onCloseSource}
             onSourceChange={onSourceChange}
@@ -1608,7 +2002,7 @@ function MethodArea({
           <summary className="cursor-pointer px-4 py-4 font-semibold">探索方法（{exploreMethods.length}个，默认收起）</summary>
           <div className="border-t border-amber-100 px-4 pb-4 pt-4">
             <SecondaryButton disabled={Boolean(busy)} onClick={onExplore}>探索生成{isNative ? "原生法" : "对标法"}</SecondaryButton>
-            <div className="mt-4 grid gap-4 lg:grid-cols-2">
+            <div className="mt-4 grid gap-3">
               {exploreMethods.map((method) => (
                 <MethodSlot
                   key={method.id}
@@ -1625,6 +2019,7 @@ function MethodArea({
                   onSelectTopic={onSelectTopic}
                   onTitleChange={onTitleChange}
                   onSaveTitle={onSaveTitle}
+                  onSyncPromise={onSyncPromise}
                   onOpenSource={onOpenSource}
                   onCloseSource={onCloseSource}
                   onSourceChange={onSourceChange}
@@ -1654,6 +2049,7 @@ function MethodSlot({
   onSelectTopic,
   onTitleChange,
   onSaveTitle,
+  onSyncPromise,
   onOpenSource,
   onCloseSource,
   onSourceChange,
@@ -1673,6 +2069,7 @@ function MethodSlot({
   onSelectTopic: (run: GrowthRun, topic: TopicCandidate) => void;
   onTitleChange: (topic: TopicCandidate, title: string) => void;
   onSaveTitle: (run: GrowthRun, topic: TopicCandidate, title: string) => void;
+  onSyncPromise: (run: GrowthRun, topic: TopicCandidate) => void;
   onOpenSource: (methodId: TitleMethodId) => void;
   onCloseSource: () => void;
   onSourceChange: (source: SourceForm) => void;
@@ -1701,8 +2098,9 @@ function MethodSlot({
                 <SourceStatus status={source.link_status} verified={source.verified_by_operator} />
               </div>
               <div className="mt-2 text-xs leading-5 text-slate-500">
-                {new Date(source.published_at).toLocaleDateString("zh-CN")} · {sourceAge(source)} · {sourceHeatSummary(source)}
+                发布于{relativeAge(source.published_at)} · {sourceAge(source)} · 数据刷新于{relativeAge(source.collected_at)}
               </div>
+              <div className="mt-1 text-xs leading-5 text-slate-500">{sourceHeatSummary(source)}</div>
               <details className="mt-2 text-xs text-slate-500">
                 <summary className="cursor-pointer py-1 font-medium text-slate-600">查看完整来源数据</summary>
                 <div className="mt-1 leading-5">
@@ -1720,6 +2118,7 @@ function MethodSlot({
                 <button className="min-h-11 rounded-xl border border-slate-200 bg-white px-3 font-medium text-slate-700" onClick={() => onOpenSource(method.id)}>补充来源</button>
               </div>
               {!usableSource && <div className="mt-2 text-xs text-amber-700">该来源当前不能生成标题，请补充7天内可用来源。</div>}
+              {sourceNeedsRefresh(source) && <div className="mt-2 text-xs font-medium text-amber-700">数据或链接校验已超过24小时，请刷新后再生成。</div>}
             </>
           ) : (
             <button className="min-h-11 rounded-xl border border-[#ead7b5] bg-white px-3 text-sm font-medium text-[#9a6b24]" onClick={() => onOpenSource(method.id)}>补充近期来源</button>
@@ -1746,16 +2145,26 @@ function MethodSlot({
                 <span>标题（可编辑）</span>
                 <span>{Array.from(currentTitle).length}字 / 建议不超过20字{savingTitle ? " · 保存中…" : currentTitle !== topic.title ? " · 已修改" : ""}</span>
               </span>
-              <textarea
+              <input
                 aria-label={`编辑${method.label}标题`}
-                rows={2}
+                type="text"
                 value={currentTitle}
                 onChange={(event) => onTitleChange(topic, event.target.value)}
                 onBlur={() => onSaveTitle(run, topic, currentTitle)}
-                className={`mt-2 w-full resize-none rounded-xl border bg-white px-3 py-2.5 text-base font-semibold leading-6 outline-none focus:border-amber-500 ${currentTitle.trim() ? "border-slate-200" : "border-red-400"}`}
+                className={`mt-2 min-h-11 w-full rounded-xl border bg-white px-3 py-2.5 text-base font-semibold leading-6 outline-none focus:border-amber-500 focus-visible:ring-2 focus-visible:ring-amber-400 ${currentTitle.trim() ? "border-slate-200" : "border-red-400"}`}
               />
             </label>
-            <p className="mt-2 text-sm leading-6 text-slate-600">正文承诺：{topic.title_promise}</p>
+            <details className="mt-2 rounded-xl bg-slate-50 px-3 py-2 text-sm leading-6 text-slate-600">
+              <summary className="cursor-pointer font-medium">查看正文承诺</summary>
+              <p className="mt-2">{topic.title_promise}</p>
+            </details>
+            {(topic.title_promise_status === "stale" || topic.title_promise_status === "invalid") && (
+              <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+                <div className="font-semibold">承诺未跟随标题</div>
+                <p className="mt-1 text-xs leading-5">{topic.title_promise_validation || "标题已经修改，需要先同步正文承诺。"}</p>
+                <button type="button" disabled={savingTitle || Boolean(busy)} onClick={() => onSyncPromise(run, topic)} className="mt-2 min-h-11 rounded-xl border border-amber-300 bg-white px-3 text-sm font-semibold disabled:opacity-40">根据标题更新承诺</button>
+              </div>
+            )}
             <div className="mt-4">
               {active ? (
                 <div className="inline-flex min-h-10 items-center rounded-xl bg-slate-900 px-4 text-sm font-semibold text-white">已选择</div>
@@ -1859,10 +2268,8 @@ function annotationSegments(draft: ContentDraft) {
 
 function OperatorAnnotatedBody({
   draft,
-  maxHeightClass,
 }: {
   draft: ContentDraft;
-  maxHeightClass: string;
 }) {
   const [visible, setVisible] = useState(true);
   const [activeKey, setActiveKey] = useState<(typeof BODY_VALIDATION_KEYS)[number] | null>(null);
@@ -1919,7 +2326,7 @@ function OperatorAnnotatedBody({
           </div>
         )}
       </div>
-      <pre className={`mt-3 overflow-auto whitespace-pre-wrap font-sans text-sm leading-7 text-slate-700 ${maxHeightClass}`}>
+      <pre className="mt-3 whitespace-pre-wrap font-sans text-sm leading-7 text-slate-700">
         {visible ? segments.map((segment) => {
           const keys = [...new Set(segment.annotations.map((item) => item.key))];
           if (!keys.length) return <span key={`${segment.start}-${segment.end}`}>{segment.text}</span>;
@@ -1948,6 +2355,7 @@ function DraftCard({
   selected = false,
   onChoose,
   onPublish,
+  onRepair,
   onRetry,
 }: {
   draft: ContentDraft;
@@ -1955,6 +2363,7 @@ function DraftCard({
   selected?: boolean;
   onChoose: (draft: ContentDraft) => void;
   onPublish?: (draft: ContentDraft, publishedAt: string) => void;
+  onRepair: (draft: ContentDraft, repairType: DraftRepairType) => void;
   onRetry: () => void;
 }) {
   const readyForOperator = draftReadyForOperator(draft);
@@ -1972,8 +2381,23 @@ function DraftCard({
         <div className="mt-4 grid gap-2 sm:grid-cols-3">
           {draft.validation_checks.map((check) => <Check key={check.key} check={check} />)}
         </div>
-        <div className="mt-4">
-          <PrimaryButton disabled={Boolean(busy)} onClick={onRetry}>重新生成两个版本</PrimaryButton>
+        <div className="mt-4 flex flex-wrap gap-2">
+          {draft.validation_checks.some((check) => check.key === "fulfillment" && check.status !== "passed") && (
+            <>
+              <SecondaryButton disabled={Boolean(busy)} onClick={() => onRepair(draft, "opening")}>只重写开头</SecondaryButton>
+              <SecondaryButton disabled={Boolean(busy)} onClick={() => onRepair(draft, "fulfillment")}>补齐承诺内容</SecondaryButton>
+            </>
+          )}
+          {draft.validation_checks.some((check) => check.key === "identity" && check.status !== "passed") && (
+            <SecondaryButton disabled={Boolean(busy)} onClick={() => onRepair(draft, "identity")}>重写身份表达</SecondaryButton>
+          )}
+          {draft.validation_checks.some((check) => check.key === "conversion" && check.status !== "passed") && (
+            <>
+              <SecondaryButton disabled={Boolean(busy)} onClick={() => onRepair(draft, "conversion")}>重写转化转折</SecondaryButton>
+              <SecondaryButton disabled={Boolean(busy)} onClick={() => onRepair(draft, "outcome")}>补充阶段变化</SecondaryButton>
+            </>
+          )}
+          <button type="button" disabled={Boolean(busy)} onClick={onRetry} className="min-h-11 px-3 text-sm font-medium text-slate-500 underline disabled:opacity-40">整篇重新生成</button>
         </div>
       </div>
     );
@@ -1994,7 +2418,7 @@ function DraftCard({
         <Badge>同一核心判断</Badge>
       </div>
       <h3 className="mt-3 text-lg font-semibold">{draft.title}</h3>
-      <OperatorAnnotatedBody draft={draft} maxHeightClass="max-h-[430px]" />
+      <OperatorAnnotatedBody draft={draft} />
       <div className="mt-4">
         <PrimaryButton disabled={Boolean(busy)} onClick={() => onChoose(draft)}>选定这个版本</PrimaryButton>
       </div>
@@ -2032,11 +2456,11 @@ function FinalDraft({
         </div>
         <div>
           <h3 className="text-xl font-semibold">{draft.title}</h3>
-          <OperatorAnnotatedBody draft={draft} maxHeightClass="max-h-[520px]" />
+          <OperatorAnnotatedBody draft={draft} />
           <div className="mt-3 text-sm text-[#9a6b24]">{draft.hashtags.join(" ")}</div>
         </div>
       </div>
-      <div className="mt-5 rounded-2xl border border-[#ead7b5] bg-[#fffaf1] p-4">
+      <div className="sticky bottom-3 z-10 mt-5 rounded-2xl border border-[#ead7b5] bg-[#fffaf1]/95 p-4 shadow-lg backdrop-blur sm:static sm:shadow-none">
         <div className="font-semibold text-slate-900">最终正文已选定，复制到小红书</div>
         <p className="mt-1 text-xs leading-5 text-slate-600">复制只读取纯净标题、正文和话题；系统内的彩色校验标注不会进入剪贴板。</p>
         <div className="mt-3 grid gap-2 sm:grid-cols-2">
@@ -2070,7 +2494,10 @@ function FinalDraft({
         <TextInput label="实际发布时间" type="datetime-local" value={publishedAt} onChange={setPublishedAt} />
         <PrimaryButton
           disabled={Boolean(busy) || draft.status !== "ready" || !publishable || !publishedAt}
-          onClick={() => onPublish(draft, publishedAt)}
+          onClick={() => {
+            const confirmed = window.confirm(`确认标记为已发布？\n\n标题：${draft.title}\n正文版本：${draft.selected_body_version === "long" ? "长版" : "短版"}\n发布时间：${new Date(publishedAt).toLocaleString("zh-CN")}`);
+            if (confirmed) onPublish(draft, publishedAt);
+          }}
         >
           标记实际发布
         </PrimaryButton>
@@ -2100,6 +2527,7 @@ function ReviewTabButton({ active, title, detail, onClick }: { active: boolean; 
 function ThreeDayReviewPanel({
   account,
   cycles,
+  publishedDrafts,
   busy,
   onBusy,
   onMessage,
@@ -2107,6 +2535,7 @@ function ThreeDayReviewPanel({
 }: {
   account: GrowthAccount;
   cycles: ThreeDayReviewCycle[];
+  publishedDrafts: ContentDraft[];
   busy: string | null;
   onBusy: (value: string | null) => void;
   onMessage: (value: string) => void;
@@ -2219,6 +2648,21 @@ function ThreeDayReviewPanel({
         </div>
       </div>
 
+      {!active && !due && (
+        <div className="rounded-2xl border border-slate-200 bg-white p-5">
+          <div className="font-semibold">下一轮准备清单</div>
+          <p className="mt-1 text-sm leading-6 text-slate-500">等待期也可以先把数据准备好，到开放时间后一次完成。</p>
+          <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            <ReviewReadiness label="已发布、待进入本轮" value={`${publishedDrafts.filter((draft) => draft.status === "published").length}篇`} />
+            <ReviewReadiness label="尚未匹配系统内容" value={`${latest?.notes.filter((note) => note.match_status === "unmatched").length ?? 0}篇`} />
+            <ReviewReadiness label="方法未确认" value={`${publishedDrafts.filter((draft) => draft.method_attribution_status !== "confirmed").length}篇`} />
+            <ReviewReadiness label="商业数据待补" value={`${publishedDrafts.filter((draft) => draft.status === "published").length}篇`} />
+            <ReviewReadiness label="官方明细表" value="待准备" warning />
+            <ReviewReadiness label="下一次开放" value={formatDateTime(dueAt)} />
+          </div>
+        </div>
+      )}
+
       {!active && due && (
         <div className="rounded-2xl border border-dashed border-slate-300 p-5">
           <div className="font-semibold">1. 上传小红书官方Excel</div>
@@ -2260,9 +2704,9 @@ function ThreeDayReviewPanel({
               <ReviewCount label="未匹配" value={unmatchedCount} emphasize={unmatchedCount > 0} />
             </div>
             <details className="mt-4 rounded-xl border border-slate-200">
-              <summary className="cursor-pointer p-4 text-sm font-medium">查看全部{active.notes.length}条匹配结果</summary>
+              <summary className="cursor-pointer p-4 text-sm font-medium">数据质量收件箱 · 待处理{suggestedCount + unmatchedCount}条（含全部{active.notes.length}条证据）</summary>
               <div className="max-h-96 space-y-2 overflow-y-auto px-4 pb-4">
-                {active.notes.map((note) => (
+                {[...active.notes].sort((a, b) => (a.match_status === "matched" ? 1 : 0) - (b.match_status === "matched" ? 1 : 0)).map((note) => (
                   <div key={note.source_key} className="rounded-xl bg-slate-50 p-3 text-sm">
                     <div className="flex flex-wrap items-start justify-between gap-2">
                       <div>
@@ -2373,7 +2817,22 @@ function ThreeDayReviewPanel({
           </div>
           <details className="mt-4 rounded-xl border border-slate-200">
             <summary className="cursor-pointer p-4 text-sm font-medium">查看本轮单篇数据证据</summary>
-            <div className="overflow-x-auto px-4 pb-4">
+            <div className="space-y-3 px-4 pb-4 sm:hidden">
+              {latest.notes.map((note) => (
+                <div key={note.source_key} className="rounded-xl bg-slate-50 p-3 text-sm">
+                  <div className="font-medium">{note.source_title || "标题为空"}</div>
+                  <div className="mt-1 text-xs text-slate-500">{note.method_label || "方法未确认"}</div>
+                  <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+                    <span>曝光 {note.metrics.impressions.toLocaleString()}</span>
+                    <span>观看 {note.metrics.views.toLocaleString()}</span>
+                    <span>点击率 {formatPercent(note.metrics.cover_ctr)}</span>
+                    <span>收藏率 {formatOptionalPercent(note.derived.save_rate)}</span>
+                  </div>
+                  <div className="mt-3 text-xs font-medium text-slate-600">{note.commercial_eligible ? "商业有效" : note.content_eligible ? "内容有效" : note.eligibility_reasons.join("；") || "只展示"}</div>
+                </div>
+              ))}
+            </div>
+            <div className="hidden overflow-x-auto px-4 pb-4 sm:block">
               <table className="min-w-[760px] w-full text-left text-xs">
                 <thead className="text-slate-500"><tr><th className="py-2">笔记</th><th>方法</th><th>曝光</th><th>观看</th><th>封面点击率</th><th>收藏率</th><th>分享率</th><th>学习状态</th></tr></thead>
                 <tbody>
@@ -2437,6 +2896,15 @@ function ReviewCount({ label, value, emphasize = false }: { label: string; value
     <div className={`rounded-2xl border p-4 ${emphasize && value > 0 ? "border-amber-300 bg-amber-50" : "border-slate-200 bg-slate-50"}`}>
       <div className="text-xs text-slate-500">{label}</div>
       <div className="mt-1 text-2xl font-semibold">{value}</div>
+    </div>
+  );
+}
+
+function ReviewReadiness({ label, value, warning = false }: { label: string; value: string; warning?: boolean }) {
+  return (
+    <div className={`rounded-xl border p-3 ${warning ? "border-amber-200 bg-amber-50" : "border-slate-200 bg-slate-50"}`}>
+      <div className="text-xs text-slate-500">{label}</div>
+      <div className="mt-1 text-sm font-semibold text-slate-900">{warning ? "△ " : "✓ "}{value}</div>
     </div>
   );
 }
@@ -2765,7 +3233,7 @@ function TextInput({ label, value, onChange, type = "text" }: { label: string; v
   return (
     <label className="block min-w-[180px] flex-1">
       <span className="mb-2 block text-xs font-medium text-slate-500">{label}</span>
-      <input type={type} value={value} onChange={(event) => onChange(event.target.value)} className="min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-amber-500" />
+      <input type={type} value={value} onChange={(event) => onChange(event.target.value)} className="min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-base outline-none focus:border-amber-500 focus-visible:ring-2 focus-visible:ring-amber-400 sm:text-sm" />
     </label>
   );
 }
@@ -2774,7 +3242,7 @@ function TextArea({ label, value, onChange, placeholder }: { label: string; valu
   return (
     <label className="block">
       <span className="mb-2 block text-xs font-medium text-slate-500">{label}</span>
-      <textarea value={value} placeholder={placeholder} onChange={(event) => onChange(event.target.value)} rows={3} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-amber-500" />
+      <textarea value={value} placeholder={placeholder} onChange={(event) => onChange(event.target.value)} rows={3} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-base outline-none focus:border-amber-500 focus-visible:ring-2 focus-visible:ring-amber-400 sm:text-sm" />
     </label>
   );
 }
@@ -2783,7 +3251,7 @@ function Select({ label, value, onChange, options }: { label: string; value: str
   return (
     <label className="block min-w-[180px]">
       <span className="mb-2 block text-xs font-medium text-slate-500">{label}</span>
-      <select value={value} onChange={(event) => onChange(event.target.value)} className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm">
+      <select value={value} onChange={(event) => onChange(event.target.value)} className="min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-base focus-visible:ring-2 focus-visible:ring-amber-400 sm:text-sm">
         {options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
       </select>
     </label>
@@ -2791,11 +3259,11 @@ function Select({ label, value, onChange, options }: { label: string; value: str
 }
 
 function PrimaryButton({ children, onClick, disabled = false }: { children: React.ReactNode; onClick: () => void; disabled?: boolean }) {
-  return <button type="button" disabled={disabled} onClick={onClick} className="min-h-11 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40">{children}</button>;
+  return <button type="button" disabled={disabled} onClick={onClick} className="min-h-11 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-40">{children}</button>;
 }
 
 function SecondaryButton({ children, onClick, disabled = false }: { children: React.ReactNode; onClick: () => void; disabled?: boolean }) {
-  return <button type="button" disabled={disabled} onClick={onClick} className="min-h-11 rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-800 disabled:opacity-40">{children}</button>;
+  return <button type="button" disabled={disabled} onClick={onClick} className="min-h-11 rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 focus-visible:ring-offset-2 disabled:opacity-40">{children}</button>;
 }
 
 function Badge({ children }: { children: React.ReactNode }) {
@@ -2853,12 +3321,25 @@ function CopyButton({
 }
 
 function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
+  const closeRef = useRef<HTMLButtonElement>(null);
+  const onCloseRef = useRef(onClose);
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
+  useEffect(() => {
+    closeRef.current?.focus();
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onCloseRef.current();
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, []);
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4">
+    <div role="dialog" aria-modal="true" aria-labelledby="growth-modal-title" className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4">
       <div className="max-h-[92vh] w-full max-w-3xl overflow-auto rounded-3xl bg-white p-5 shadow-2xl sm:p-6">
         <div className="mb-5 flex items-start justify-between gap-4">
-          <h2 className="text-xl font-semibold">{title}</h2>
-          <button onClick={onClose} className="text-2xl text-slate-400">×</button>
+          <h2 id="growth-modal-title" className="text-xl font-semibold">{title}</h2>
+          <button ref={closeRef} type="button" aria-label="关闭弹窗" onClick={onClose} className="min-h-11 min-w-11 rounded-xl text-2xl text-slate-500 focus-visible:ring-2 focus-visible:ring-amber-400">×</button>
         </div>
         {children}
       </div>

@@ -5,10 +5,13 @@ import type {
   GrowthPlan,
   GrowthReview,
   GrowthRun,
+  MethodGenerationMode,
+  TopicCandidate,
   TopicSourceSnapshot,
 } from "./types";
 import { GROWTH_BUSINESS_DEFINITIONS, GROWTH_BUSINESS_LINE_VALUES } from "./types";
 import { computeDerivedMetrics, evaluateReviewSample } from "./reviewLearning";
+import { methodsForPersona, type TitleMethodDefinition } from "./methods";
 
 export const GROWTH_PREVIEW_TENANT = "mianbajun";
 
@@ -86,6 +89,8 @@ function account(
     persona_specific: personaSpecific,
     topic_sources: [
       source(`${id}-source-accessible`, "traffic", overseas ? "AI筛选简历，留学生求职先改什么？" : "AI重构管理岗位，谁先被重新定价？", "accessible", 1),
+      source(`${id}-source-similar`, "similar_audience", overseas ? "找工作是一场渡劫" : "能拿高薪的人，提涨薪都很清晰", "accessible", 2),
+      source(`${id}-source-product`, "same_product", overseas ? "让下一份工作主动找上你" : "中高管职业军师", "accessible", 3),
       source(`${id}-source-restricted`, "viral_framework", overseas ? "你缺的不是投递，是求职定位" : "你缺的不是机会，是判断机会的能力", "restricted", 2, false),
       source(`${id}-source-invalid`, "same_outcome", overseas ? "争名企，不如争职业起点" : "争夺资源，不如争夺分配权", "invalid", 2, false),
       source(`${id}-source-expired`, "same_effect", overseas ? "回国和留当地，到底选哪条？" : "这两条路，到底该选哪条？", "accessible", 12),
@@ -230,6 +235,74 @@ function methodPublishedDraft(account: GrowthAccount, suffix: string, daysAgo: n
     distributed_at: publishedAt,
     created_at: publishedAt,
     updated_at: publishedAt,
+  };
+}
+
+function previewTopicTitle(account: GrowthAccount, method: TitleMethodDefinition, batch: number) {
+  const overseas = account.business_line === "overseas_student";
+  const titles = overseas ? {
+    traffic: "AI筛简历后，留学生秋招先改什么",
+    human_pain: "留学生秋招，家长最难的是不乱帮",
+    tug_of_war: "回国还是留下，先验证哪一边",
+    scarce_material: "留学生秋招时间表，直接照着排",
+    superlative: "秋招最容易踩坑的简历动作",
+    contrarian: "海投越多，面试可能越少",
+    nostalgia: "我们那代找工作，真没这么复杂",
+    inventory: "留学生秋招前必查的5个节点",
+    same_product: "求职辅导前，先问清这3件事",
+    same_effect: "这2条秋招路径，到底选哪条",
+    similar_audience: "能熬过秋招的家庭，都先做了这件事",
+    same_outcome: "争名企，不如争职业起点",
+    viral_framework: "留学生缺的不是投递，是求职定位",
+  } : {
+    traffic: "AI替代管理层，中高管先查这3项",
+    human_pain: "年薪百万，为何更不敢离职",
+    tug_of_war: "留在高位，还是出去重新定价",
+    scarce_material: "中高管转型路线图，直接公开",
+    superlative: "中高管最容易低估的离职成本",
+    contrarian: "职位越高，市场定价可能越模糊",
+    nostalgia: "我们那代升职，没算过这些账",
+    inventory: "中高管转型前必查的5项变量",
+    same_product: "职业咨询前，先问清这3件事",
+    same_effect: "这2条转型路，到底该选哪条",
+    similar_audience: "能转型的中高管，都先算胜率",
+    same_outcome: "争夺高位，不如争职业定价权",
+    viral_framework: "中高管缺的不是机会，是判断胜率",
+  } as Record<string, string>;
+  const base = titles[method.id] || `${method.label}选题`;
+  return batch === 0 ? base : `${base.replace(/[？?]$/u, "")}·${batch + 1}`;
+}
+
+function previewTopic(account: GrowthAccount, method: TitleMethodDefinition, mode: MethodGenerationMode, batch: number): TopicCandidate | null {
+  const latestSource = [...(account.topic_sources ?? [])]
+    .filter((item) => item.method_id === method.id)
+    .sort((a, b) => b.collected_at.localeCompare(a.collected_at))[0];
+  const sourceUsable = latestSource
+    && latestSource.link_status === "accessible"
+    && latestSource.verified_by_operator === true
+    && Date.now() - Date.parse(latestSource.published_at) <= 7 * 24 * 60 * 60 * 1000;
+  if (method.sourceRequired && !sourceUsable) return null;
+  const title = previewTopicTitle(account, method, batch);
+  return {
+    id: `${account.id}-${mode}-${method.id}-batch-${batch}`,
+    method_group: method.group,
+    method_id: method.id,
+    method_label: method.label,
+    generation_mode: mode,
+    title,
+    title_promise: `围绕“${title}”自然展开，以${account.one_liner}的身份完整交付标题承诺。`,
+    title_promise_status: "synced",
+    target_user: account.target_user,
+    pain: account.core_problem,
+    hook: title,
+    source_snapshot: method.sourceRequired ? latestSource : undefined,
+    internal_insight_source: method.sourceRequired ? undefined : account.trust_source,
+    follow_reason: account.follow_reason || "持续获得可验证的职业判断",
+    test_variable: `${method.label}标题是否带来有效咨询`,
+    expected_signal: "读者主动说出具体处境、候选路径或决策冲突",
+    repeatable_angle: `继续复测${method.label}`,
+    broad_traffic_risk: 3,
+    priority: "A",
   };
 }
 
@@ -430,10 +503,48 @@ export function createGrowthPreviewFixture(): GrowthPreviewFixture {
     drafts.push(item);
     reviews.push(reviewFor(item, index));
   }
-  const runs: GrowthRun[] = drafts.filter((item) => item.schema_version === "method_v3_2").map((item) => ({
+  const contentRuns: GrowthRun[] = drafts.filter((item) => item.schema_version === "method_v3_2").map((item) => ({
     id: item.run_id, tenant_id: item.tenant_id, account_id: item.account_id, status: item.status, week: 1,
     objective: "促成有效咨询", experiment_hypothesis: "标题方法会影响有效咨询", topic_pool: [],
     generation_mode: "default", draft: item, created_at: item.created_at, updated_at: item.updated_at,
   }));
+  const titleRuns: GrowthRun[] = accounts.flatMap((item) => {
+    const defaultBatches = [0, 1, 2].map((batch) => {
+      const createdAt = isoBefore(0, batch + 1);
+      return {
+        id: `${item.id}-preview-title-default-${batch}`,
+        tenant_id: item.tenant_id,
+        account_id: item.id,
+        status: "draft" as const,
+        week: 1,
+        objective: "按默认方法生成可恢复的标题批次",
+        experiment_hypothesis: "标题方法会影响有效咨询",
+        generation_mode: "default" as const,
+        topic_pool: methodsForPersona(item.persona, "default")
+          .map((method) => previewTopic(item, method, "default", batch))
+          .filter((topic): topic is TopicCandidate => Boolean(topic)),
+        created_at: createdAt,
+        updated_at: createdAt,
+      };
+    });
+    const exploreCreatedAt = isoBefore(0, 4);
+    const explore: GrowthRun = {
+      id: `${item.id}-preview-title-explore`,
+      tenant_id: item.tenant_id,
+      account_id: item.id,
+      status: "draft",
+      week: 1,
+      objective: "按探索方法生成标题",
+      experiment_hypothesis: "探索方法只提出晋升建议",
+      generation_mode: "explore",
+      topic_pool: methodsForPersona(item.persona, "explore")
+        .map((method) => previewTopic(item, method, "explore", 0))
+        .filter((topic): topic is TopicCandidate => Boolean(topic)),
+      created_at: exploreCreatedAt,
+      updated_at: exploreCreatedAt,
+    };
+    return [...defaultBatches, explore];
+  });
+  const runs = [...titleRuns, ...contentRuns];
   return { accounts, plans, runs, drafts, reviews };
 }

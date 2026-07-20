@@ -417,6 +417,9 @@ export interface TopicCandidate {
   generation_mode: MethodGenerationMode;
   title: string;
   title_promise: string;
+  /** 操作者编辑标题后，必须重新同步正文承诺，才能进入正文生成。 */
+  title_promise_status?: "synced" | "stale" | "invalid";
+  title_promise_validation?: string;
   target_user: string;
   pain: string;
   hook: string;
