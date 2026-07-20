@@ -22,7 +22,7 @@ export default function Error({ error, reset }: { error: Error & { digest?: stri
     >
       <p style={{ fontSize: 18, fontWeight: 600, marginBottom: 12 }}>页面渲染出错</p>
       <p style={{ fontSize: 14, color: "#564f3c", textAlign: "center", maxWidth: 320, marginBottom: 20 }}>
-        请点下面重试。若仍白屏，多半是网络无法加载脚本，请换网络或浏览器。
+        请点下面重试。系统已记录这次异常，若仍无法打开请联系管理员处理。
       </p>
       <button
         type="button"

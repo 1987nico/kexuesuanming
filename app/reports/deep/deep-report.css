@@ -1,0 +1,603 @@
+/* 深度诊断报告—— 排版 1:1 对齐「年雪」原版：白底文档流式 */
+
+.dr-root {
+  --dr-ink: #24292f;
+  --dr-black: #17191c;
+  --dr-blue: #2f6bec;
+  --dr-gray: #8a9099;
+  --dr-line: #e8e8e8;
+  --dr-cream: #faf7ef;
+
+  background: #eef0f3;
+  min-height: 100vh;
+  padding: 24px 0 48px;
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Source Han Sans SC", "Noto Sans CJK SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  color: var(--dr-ink);
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+
+/* ---------- 工具条（仅屏幕显示） ---------- */
+
+.dr-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 0 auto 24px;
+  width: 210mm;
+  max-width: calc(100vw - 32px);
+  border-radius: 12px;
+  background: white;
+  padding: 16px 20px;
+  box-shadow: 0 8px 24px rgba(20, 30, 50, 0.08);
+}
+
+.dr-toolbar h1 {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--dr-black);
+}
+
+.dr-toolbar p {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--dr-gray);
+}
+
+.dr-toolbar-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.dr-btn {
+  display: inline-block;
+  border-radius: 999px;
+  padding: 10px 18px;
+  font-size: 14px;
+  font-weight: 600;
+  background: var(--dr-black);
+  color: white;
+  border: none;
+  cursor: pointer;
+}
+
+.dr-btn:hover {
+  opacity: 0.88;
+}
+
+/* ---------- 文档主体 ---------- */
+
+.dr-doc {
+  position: relative;
+  width: 210mm;
+  max-width: calc(100vw - 32px);
+  margin: 0 auto;
+  background: white;
+  padding: 20mm 14mm 24mm;
+  box-shadow: 0 12px 32px rgba(20, 30, 50, 0.1);
+  font-size: 15px;
+  line-height: 1.9;
+  color: var(--dr-ink);
+}
+
+.dr-route-marker {
+  position: absolute;
+  right: 0;
+  bottom: -12mm;
+  font-size: 6px;
+  line-height: 1;
+  color: rgba(23, 25, 28, 0.32);
+  letter-spacing: 0;
+}
+
+.dr-editable-report {
+  outline: none;
+}
+
+.dr-h1 {
+  font-size: 27px;
+  font-weight: 700;
+  color: var(--dr-black);
+  line-height: 1.4;
+  margin: 6px 0 26px;
+}
+
+.dr-h2 {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--dr-black);
+  margin: 40px 0 18px;
+}
+
+.dr-h3 {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--dr-black);
+  margin: 26px 0 12px;
+}
+
+.dr-p {
+  margin: 13px 0;
+}
+
+.dr-p strong,
+.dr-ol strong {
+  font-weight: 700;
+  color: var(--dr-black);
+}
+
+/* 蓝点无序列表（对齐原版） */
+.dr-ul {
+  list-style: none;
+  margin: 12px 0;
+  padding: 0;
+}
+
+.dr-ul > li {
+  position: relative;
+  padding-left: 22px;
+  margin: 7px 0;
+}
+
+.dr-ul > li::before {
+  content: "•";
+  position: absolute;
+  left: 4px;
+  color: var(--dr-blue);
+  font-weight: 700;
+}
+
+/* 蓝色数字有序列表（对齐原版） */
+.dr-ol {
+  list-style: none;
+  counter-reset: dr-item;
+  margin: 12px 0;
+  padding: 0;
+}
+
+.dr-ol > li {
+  position: relative;
+  counter-increment: dr-item;
+  padding-left: 26px;
+  margin: 8px 0;
+}
+
+.dr-ol > li::before {
+  content: counter(dr-item) ".";
+  position: absolute;
+  left: 0;
+  color: var(--dr-blue);
+}
+
+/* 表格：浅灰细线、白底、可跨页（对齐原版） */
+.dr-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 16px 0 22px;
+  font-size: 13.5px;
+  line-height: 1.7;
+}
+
+.dr-table th,
+.dr-table td {
+  border: 1px solid var(--dr-line);
+  padding: 12px 12px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.dr-table th {
+  font-weight: 400;
+  color: #3f444c;
+  background: white;
+}
+
+/* VRIN 表：方向列保底宽度，凭证列吃剩余空间 */
+.dr-vrin th:first-child,
+.dr-vrin td:first-child {
+  min-width: 6em;
+}
+
+.dr-vrin th:nth-child(-n + 8),
+.dr-vrin td:nth-child(-n + 8) {
+  white-space: nowrap;
+}
+
+.dr-vrin th:first-child,
+.dr-vrin td:first-child {
+  white-space: normal;
+}
+
+/* 内联公式（浅灰底小块） */
+.dr-code {
+  background: #f2f3f5;
+  border-radius: 4px;
+  padding: 2px 10px;
+  font-size: 13.5px;
+  white-space: nowrap;
+}
+
+/* 外部事实来源（蓝色链接样式） */
+.dr-source {
+  color: var(--dr-blue);
+}
+
+.dr-note {
+  font-size: 12.5px;
+  color: var(--dr-gray);
+  margin: 10px 0 16px;
+}
+
+/* ---------- 整页图 ---------- */
+
+.dr-funnel-block {
+  margin: 34px 0;
+}
+
+.dr-funnel-svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.dr-figure-frame {
+  margin: 22px 0;
+}
+
+.dr-figure-frame svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+/* ---------- Step4 入围项明细卡（米白大卡，对齐原版） ---------- */
+
+.dr-mkt-card {
+  background: var(--dr-cream);
+  border-radius: 10px;
+  padding: 18px 20px 16px;
+  margin: 24px 0;
+  break-inside: avoid;
+  page-break-inside: avoid;
+  font-size: 12px;
+  line-height: 1.65;
+}
+
+.dr-mkt-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.dr-mkt-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--dr-black);
+}
+
+.dr-mkt-formula {
+  font-size: 10.5px;
+  color: #7a7466;
+  white-space: nowrap;
+}
+
+.dr-mkt-sub {
+  font-size: 11px;
+  color: #8b8574;
+  margin: 2px 0 12px;
+}
+
+.dr-mkt-toprow {
+  display: flex;
+  gap: 12px;
+  align-items: stretch;
+  margin-bottom: 14px;
+}
+
+.dr-mkt-metrics {
+  display: flex;
+  gap: 8px;
+}
+
+.dr-metric {
+  background: white;
+  border: 1.4px solid #ccc;
+  border-radius: 6px;
+  padding: 5px 12px 7px;
+  min-width: 64px;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.dr-metric em {
+  display: block;
+  font-style: normal;
+  font-size: 10px;
+  font-weight: 400;
+  color: #6f6a5e;
+  margin-bottom: 1px;
+}
+
+.dr-metric-blue { border-color: #9dbcf3; color: #2f6bec; }
+.dr-metric-red { border-color: #eeaBA8; color: #d0433f; }
+.dr-metric-gold { border-color: #ddc37e; color: #a07a14; }
+
+.dr-mkt-handling {
+  flex: 1;
+  background: white;
+  border: 1px solid #e5decf;
+  border-radius: 8px;
+  padding: 6px 14px 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--dr-black);
+}
+
+.dr-mkt-handling em {
+  display: block;
+  font-style: normal;
+  font-size: 10.5px;
+  font-weight: 400;
+  color: #8b8574;
+  margin-bottom: 2px;
+}
+
+.dr-mkt-body {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+}
+
+.dr-mkt-left {
+  width: 300px;
+  flex-shrink: 0;
+}
+
+.dr-mkt-right {
+  flex: 1;
+  background: white;
+  border: 1px solid #e9e2d2;
+  border-radius: 8px;
+  padding: 10px 14px 12px;
+}
+
+/* 五力结构小图 */
+.dr-fmap {
+  background: white;
+  border: 1px solid #e9e2d2;
+  border-radius: 8px;
+  padding: 10px 12px 8px;
+}
+
+.dr-fmap-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--dr-black);
+}
+
+.dr-fmap-sub {
+  font-size: 9.5px;
+  color: #9a9488;
+  margin-bottom: 6px;
+}
+
+.dr-fmap-canvas {
+  position: relative;
+  height: 236px;
+  width: 100%;
+}
+
+.dr-fmap-node {
+  position: absolute;
+  border: 1.3px solid #999;
+  border-radius: 7px;
+  background: #fff;
+  padding: 4px 6px 5px;
+  text-align: center;
+}
+
+.dr-fmap-name {
+  font-size: 10.5px;
+  font-weight: 700;
+}
+
+.dr-fmap-val {
+  font-size: 9.5px;
+  color: #565049;
+}
+
+.dr-fmap-line {
+  position: absolute;
+  background: #a9a396;
+}
+
+.dr-fmap-line-v { width: 1.4px; }
+.dr-fmap-line-h { height: 1.4px; }
+
+.dr-fmap-note {
+  font-size: 9px;
+  color: #9a9488;
+  margin-top: 6px;
+}
+
+/* 五力配色（节点边框 + 表格 chip） */
+.dr-fc-blue { border-color: #7d9fe8; color: #2f5fc9; background: #f0f5ff; }
+.dr-fc-purple { border-color: #b39ddb; color: #6a4fb3; background: #f6f1fd; }
+.dr-fc-red { border-color: #e8a09d; color: #c24540; background: #fdf1f0; }
+.dr-fc-green { border-color: #9cc7a5; color: #3d7d4c; background: #f0f8f2; }
+.dr-fc-gold { border-color: #dcc27d; color: #a07a14; background: #fdf8ec; }
+
+/* PEST → 五力明细表 */
+.dr-mkt-detail-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--dr-black);
+}
+
+.dr-mkt-detail-sub {
+  font-size: 9.5px;
+  color: #9a9488;
+  margin-bottom: 6px;
+}
+
+.dr-forces-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.dr-forces-table th {
+  font-weight: 400;
+  color: #8b8574;
+  border-bottom: 1px solid #d9d2c2;
+  padding: 3px 4px;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.dr-forces-table td {
+  border-bottom: 1px solid #efe9dc;
+  padding: 5px 4px;
+  vertical-align: middle;
+}
+
+.dr-force-chip {
+  display: inline-block;
+  border: 1px solid;
+  border-radius: 999px;
+  padding: 1px 7px;
+  font-size: 9.5px;
+  white-space: nowrap;
+}
+
+.dr-pest-up { color: #c24540; }
+.dr-pest-down { color: #3d7d4c; }
+.dr-pest-zero { color: #6f6a5e; }
+
+.dr-delta-chip {
+  display: inline-block;
+  border: 1px solid;
+  border-radius: 5px;
+  padding: 0 5px;
+  font-size: 9.5px;
+}
+
+.dr-delta-bad { color: #c24540; border-color: #e8a09d; background: #fdf1f0; }
+.dr-delta-good { color: #3d7d4c; border-color: #9cc7a5; background: #f0f8f2; }
+.dr-delta-flat { color: #6f6a5e; border-color: #cfc9bc; background: #f7f4ec; }
+
+.dr-forces-logic {
+  font-size: 9.5px;
+  color: #565049;
+}
+
+/* 对后续选择的含义 */
+.dr-mkt-meaning {
+  margin-top: 12px;
+  background: #fffdf5;
+  border: 1.2px solid #d9b96a;
+  border-radius: 8px;
+  padding: 8px 12px 10px;
+}
+
+.dr-mkt-meaning-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: #8a6d1f;
+  margin-bottom: 3px;
+}
+
+.dr-mkt-meaning p {
+  font-size: 11px;
+  font-weight: 600;
+  color: #3c3830;
+}
+
+/* 图中分数定义 */
+.dr-mkt-defnote {
+  margin-top: 10px;
+  background: #fdfbf5;
+  border: 1px solid #e9e2d2;
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 9.5px;
+  color: #7a7466;
+}
+
+.dr-mkt-defnote-label {
+  font-weight: 700;
+  color: #565049;
+}
+
+.dr-mkt-sources {
+  margin-top: 8px;
+  font-size: 9.5px;
+  color: #9a9488;
+}
+
+/* ---------- 打印 ---------- */
+
+@media print {
+  @page {
+    size: A4;
+    margin: 15mm 13mm;
+  }
+
+  .dr-root {
+    background: white;
+    padding: 0;
+  }
+
+  .dr-toolbar {
+    display: none;
+  }
+
+  .dr-doc {
+    width: auto;
+    max-width: none;
+    margin: 0;
+    padding: 0;
+    box-shadow: none;
+  }
+
+  .dr-h2 {
+    page-break-after: avoid;
+    break-after: avoid;
+  }
+
+  .dr-h3 {
+    page-break-after: avoid;
+    break-after: avoid;
+  }
+
+  /* 漏斗图独占一页（对齐原版第 2 页） */
+  .dr-funnel-block {
+    page-break-before: always;
+    page-break-after: always;
+    break-before: page;
+    break-after: page;
+    margin: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+  }
+
+  .dr-figure-frame {
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+
+  .dr-mkt-card {
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+
+  .dr-table tr {
+    page-break-inside: auto;
+  }
+}

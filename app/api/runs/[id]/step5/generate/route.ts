@@ -1,11 +1,15 @@
 import { NextResponse } from "next/server";
+import { requireRunGenerationAccess } from "@/lib/auth/costGate";
 import { runStep5 } from "@/lib/workflow/runner";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
-export async function POST(_req: Request, { params }: { params: { id: string } }) {
+export async function POST(req: Request, { params }: { params: { id: string } }) {
+  const access = await requireRunGenerationAccess(req);
+  if (access) return access;
+
   try {
     const data = await runStep5(params.id);
     return NextResponse.json({ data });

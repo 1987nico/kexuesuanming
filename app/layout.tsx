@@ -2,8 +2,11 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "科学算命 · 5 步漏斗",
-  description: "把职业/事业选择做成一个漏斗：从喜欢的范围里发散，再用感性、市场、资源三层验证收敛到 3 个最终选项。",
+  title: "双手剑系统 · 面霸君版",
+  description: "面霸君小红书增长、报告交付、订单和管理驾驶舱系统。",
+  icons: {
+    icon: "/favicon.svg",
+  },
 };
 
 export const viewport: Viewport = {
@@ -43,9 +46,6 @@ body{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Helvetica Neue"
             <p style={{ marginBottom: "12px", fontWeight: 600 }}>需要启用 JavaScript</p>
             <p style={{ marginBottom: "8px", fontSize: "14px", color: "#564f3c" }}>
               本页依赖脚本才能交互。请在浏览器设置里关闭对本站的脚本拦截，或换用 Chrome / Edge 再试。
-            </p>
-            <p style={{ fontSize: "14px", color: "#564f3c" }}>
-              快速打分直达：将地址改为 <code>/quick/xuenian-30</code>
             </p>
           </div>
         </noscript>

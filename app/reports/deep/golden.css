@@ -1,0 +1,245 @@
+/* ===== 金样本统一渲染样式（系统渲染层）===== */
+@page { size: 1320px 1700px; margin: 22px; }
+html,body { margin:0; background:#fff; font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Source Han Sans SC","Noto Sans CJK SC","Microsoft YaHei",sans-serif; }
+.golden-doc { width:1196px; margin:0 auto; color:#24292f; }
+.golden-doc[contenteditable="true"] { outline:none; caret-color:#a07a14; }
+.golden-doc[contenteditable="true"]:focus { box-shadow:0 0 0 3px rgba(160,122,20,.16); }
+.gsec { width:1196px; box-sizing:border-box; padding:8px 18px 30px; position:relative; }
+.golden-doc .gsec.dr-root { min-height:0; }
+.gsec + .gsec { break-before: page; }
+.gsec .wrap { width:100%; max-width:100%; padding:0; margin:0; }
+.pg-title h1 { font-size:23px; margin:0 0 4px; color:#17191c; }
+.pg-title .sub { font-size:12.5px; color:#8b8574; margin-bottom:10px; }
+/* ===== from step4_gen.py ===== */
+/* 覆盖 deep-report.css 的 @page A4（否则打印/导出 PDF 会把宽卡裁掉） */
+
+.dr-mkt-right{min-width:0;}
+/* —— 排版微调：两栏用显式宽度（浏览器/PDF 都确定），左栏容纳五力结构图 —— */
+.dr-mkt-toprow{gap:24px;align-items:stretch;}
+.dr-mkt-metrics{gap:10px;margin-right:6px;}
+.dr-mkt-handling{margin-left:2px;}
+.dr-mkt-body{gap:16px;}
+.dr-mkt-left{width:330px;flex:0 0 330px;}
+.dr-mkt-right{flex:0 0 690px;width:690px;box-sizing:border-box;}
+.dr-fmap-canvas{width:300px;margin:0 auto;}
+.dr-mkt-card{font-size:13px;width:1096px;box-sizing:border-box;}
+.dr-forces-table{table-layout:fixed;}
+.dr-forces-table th,.dr-forces-table td{white-space:nowrap;text-align:center;}
+.dr-forces-table th:first-child,.dr-forces-table td:first-child{text-align:left;width:74px;}
+.dr-forces-table th:nth-child(2),.dr-forces-table td:nth-child(2),
+.dr-forces-table th:nth-child(7),.dr-forces-table td:nth-child(7){width:36px;}
+.dr-forces-table th:nth-child(3),.dr-forces-table td:nth-child(3),
+.dr-forces-table th:nth-child(4),.dr-forces-table td:nth-child(4),
+.dr-forces-table th:nth-child(5),.dr-forces-table td:nth-child(5),
+.dr-forces-table th:nth-child(6),.dr-forces-table td:nth-child(6){width:26px;}
+.dr-forces-table th:nth-child(8),.dr-forces-table td:nth-child(8){width:44px;}
+.dr-forces-table th:last-child{text-align:center;white-space:normal;width:auto;}
+.dr-forces-table td:last-child,.dr-forces-logic{text-align:left;white-space:normal;width:auto;}
+
+.pg-note{font-size:11.5px;color:#9a9488;background:#fff;border:1px solid #e9e2d2;border-radius:8px;padding:10px 14px;margin:14px 0 6px;line-height:1.7;}
+
+/* ===== from step5_gen.py ===== */
+
+.pg-note{font-size:11.5px;color:#7a7466;background:#fdfbf5;border:1px solid #e9e2d2;border-radius:8px;padding:9px 14px;margin:12px 0 18px;line-height:1.7;}
+.s5-table{width:100%;border-collapse:collapse;background:#faf7ef;border-radius:10px;overflow:hidden;font-size:12px;}
+.s5-table th{background:#17191c;color:#f4efe3;font-weight:600;padding:9px 8px;font-size:11.5px;text-align:center;}
+.s5-table th:nth-child(2){text-align:left;}
+.s5-table th:last-child{text-align:left;}
+.s5-table td{padding:9px 8px;border-bottom:1px solid #ece5d5;text-align:center;vertical-align:middle;}
+.s5-rank{font-weight:700;color:#a07a14;width:44px;}
+.s5-dir{text-align:left;font-weight:600;color:#17191c;width:220px;}
+.s5-num{width:34px;font-weight:600;}
+.v5{color:#b8860b;} .v4{color:#2f6bec;} .v3{color:#565049;} .v2{color:#c24540;}
+.s5-total{font-weight:700;color:#17191c;width:56px;} .s5-total span{font-size:9px;color:#9a9488;font-weight:400;}
+.s5-comp{font-weight:700;color:#a07a14;width:48px;}
+.s5-ev{text-align:left;font-size:10.5px;color:#565049;line-height:1.5;}
+.s5-top{background:#fffaf0;}
+.s5-top .s5-dir{color:#8a6d1f;}
+.s5-cards{display:flex;flex-direction:column;gap:14px;margin-top:26px;}
+.s5-card{background:#faf7ef;border:1.4px solid #d9b96a;border-radius:10px;padding:14px 18px 16px;}
+.s5-card-head{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin-bottom:10px;}
+.s5-badge{background:#17191c;color:#f0d98a;font-weight:700;font-size:12px;border-radius:6px;padding:2px 10px;}
+.s5-card-title{font-size:15px;font-weight:700;color:#17191c;}
+.s5-card-score{font-size:11px;color:#a07a14;margin-left:auto;font-weight:600;}
+.s5-dims{display:grid;gap:6px;margin-bottom:10px;}
+.s5-dimrow{display:flex;align-items:flex-start;gap:10px;font-size:11.5px;}
+.s5-dimk{width:64px;flex-shrink:0;color:#8b8574;font-weight:600;}
+.s5-dimv{width:20px;flex-shrink:0;font-weight:700;text-align:center;}
+.s5-dimt{color:#3c3830;line-height:1.55;}
+.s5-acts{background:#fff;border:1px solid #e9e2d2;border-radius:8px;padding:8px 12px 10px;}
+.s5-acts-label{font-size:11px;font-weight:700;color:#8a6d1f;margin-bottom:5px;}
+.s5-act{font-size:11px;color:#3c3830;padding:2px 0;}
+.s5-act em{font-style:normal;font-weight:700;color:#2f6bec;margin-right:6px;}
+.s5-anchor{font-size:11px;color:#7a7466;margin:8px 0 0;}
+
+/* ===== from step6_gen.py ===== */
+
+.pk-cross{background:#17191c;border-radius:12px;padding:16px 20px 18px;margin:16px 0 26px;}
+.pk-cross-h{color:#f0d98a;font-size:15px;font-weight:700;margin-bottom:12px;}
+.pk-cross-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
+.pk-cross-item{background:#23262b;border:1px solid #3a3e45;border-radius:8px;padding:10px 13px;}
+.pk-cross-t{color:#f4efe3;font-weight:700;font-size:12.5px;margin-bottom:4px;}
+.pk-cross-d{color:#b9b3a6;font-size:11px;line-height:1.6;}
+.pk-card{background:#faf7ef;border-radius:12px;padding:18px 20px 18px;margin-bottom:22px;border:1px solid #ece3ce;}
+.pk-head{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin-bottom:12px;}
+.pk-badge{background:#17191c;color:#f0d98a;font-weight:700;font-size:12px;border-radius:6px;padding:2px 10px;}
+.pk-title{font-size:16px;font-weight:700;color:#17191c;}
+.pk-score{font-size:11px;color:#a07a14;margin-left:auto;font-weight:600;}
+.pk-script{background:#fffdf5;border:1.2px solid #d9b96a;border-radius:8px;padding:10px 14px 12px;margin-bottom:14px;}
+.pk-script-label{font-size:11px;font-weight:700;color:#8a6d1f;margin-bottom:4px;}
+.pk-script p{font-size:12px;color:#3c3830;line-height:1.75;margin:0;}
+.pk-table{width:100%;border-collapse:collapse;font-size:11px;line-height:1.55;background:#fff;border:1px solid #ece3ce;border-radius:8px;overflow:hidden;}
+.pk-table th{background:#efe9dc;color:#6b6555;font-weight:600;padding:7px 8px;text-align:left;font-size:10.5px;white-space:nowrap;}
+.pk-table td{padding:8px 8px;border-top:1px solid #f0eadd;vertical-align:top;}
+.pk-table td:first-child{width:96px;}
+.pk-anchor{font-size:9px;color:#9a9488;margin-top:4px;line-height:1.35;}
+.pk-reason{width:250px;color:#2c2820;}
+.pk-sig{width:220px;color:#565049;font-size:10px;}
+.pk-sig b{color:#2f6bec;font-weight:700;}
+.pk-exit{width:150px;color:#c24540;font-weight:600;}
+.pk-mit{color:#3d7d4c;}
+.pk-links{margin-top:12px;background:#fdfbf5;border:1px solid #e9e2d2;border-radius:8px;padding:9px 13px;}
+.pk-links-h{font-size:11px;font-weight:700;color:#565049;margin-bottom:6px;}
+.pk-links-row{display:flex;gap:10px;flex-wrap:wrap;}
+.pk-link{font-size:10.5px;color:#3c3830;background:#fff;border:1px solid #e5decf;border-radius:6px;padding:4px 10px;}
+.pk-link em{font-style:normal;font-weight:700;color:#2f6bec;margin-right:5px;}
+
+/* ===== from step7_gen.py ===== */
+
+.rm-logic{background:#17191c;border-radius:12px;padding:14px 20px;margin:14px 0 8px;color:#e7e2d6;font-size:12px;line-height:1.7;}
+.rm-logic b{color:#f0d98a;}
+.rm-spine{position:relative;margin:34px 0 6px;}
+.rm-spine:before{content:"";position:absolute;top:7px;left:6%;right:6%;height:3px;background:linear-gradient(90deg,#2f6bec,#a07a14,#3d7d4c);border-radius:2px;}
+.rm-cols{display:flex;gap:20px;align-items:stretch;}
+.rm-col{flex:1;position:relative;padding-top:22px;}
+.rm-node{position:absolute;top:1px;left:50%;transform:translateX(-50%);width:15px;height:15px;border-radius:50%;border:3px solid #fff;box-shadow:0 0 0 1px #ccc;}
+.rm-card{background:#faf7ef;border:1px solid #ece3ce;border-radius:10px;padding:14px 16px 16px;height:100%;box-sizing:border-box;}
+.rm-tag{font-size:13px;font-weight:700;}
+.rm-name{font-size:16px;font-weight:700;color:#17191c;margin-top:1px;}
+.rm-q{font-size:11px;color:#8b8574;margin:2px 0 9px;}
+.rm-goal{font-size:11.5px;color:#3c3830;background:#fff;border:1px solid #ece3ce;border-radius:7px;padding:7px 10px;margin-bottom:10px;line-height:1.55;}
+.rm-goal em{display:block;font-style:normal;font-size:10px;color:#9a9488;font-weight:600;margin-bottom:2px;}
+.rm-act{display:flex;gap:8px;font-size:11px;line-height:1.55;margin-bottom:7px;}
+.rm-act-k{flex-shrink:0;width:78px;font-weight:700;}
+.rm-act-t{color:#3c3830;}
+.rm-pass{border:1.2px solid;border-radius:7px;padding:7px 10px;margin-top:10px;font-size:11px;color:#2c2820;line-height:1.55;}
+.rm-pass em{display:block;font-style:normal;font-weight:700;margin-bottom:2px;}
+.rm-stop{border:1.2px solid #e8a09d;background:#fdf1f0;border-radius:7px;padding:7px 10px;margin-top:8px;font-size:11px;color:#a5322e;line-height:1.55;}
+.rm-stop em{display:block;font-style:normal;font-weight:700;color:#c24540;margin-bottom:2px;}
+.rm-gates{display:flex;gap:14px;margin:22px 0 0;}
+.rm-gate{flex:1;background:#fffdf5;border:1.2px solid #d9b96a;border-radius:9px;padding:10px 14px;}
+.rm-gate-t{font-weight:700;color:#8a6d1f;font-size:12.5px;margin-bottom:3px;}
+.rm-gate-d{font-size:11px;color:#3c3830;line-height:1.55;}
+.rm-total{margin-top:16px;background:#2c1414;border:1px solid #7a2b28;border-radius:9px;padding:11px 16px;color:#f3c9c6;font-size:12px;font-weight:600;line-height:1.6;}
+.rm-rems{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:16px;}
+.rm-rem{background:#fdfbf5;border:1px solid #e9e2d2;border-radius:8px;padding:8px 13px;font-size:11px;color:#565049;line-height:1.55;}
+.rm-rem b{color:#17191c;margin-right:6px;}
+.rm-h2{font-size:15px;font-weight:700;color:#17191c;margin:26px 0 2px;}
+
+/* ===== from step8_gen.py ===== */
+
+.fv-kicker{font-size:13px;letter-spacing:3px;color:#a07a14;font-weight:700;}
+.fv-h1{font-size:31px;font-weight:800;color:#17191c;margin:2px 0 4px;}
+.fv-sub{font-size:14.5px;color:#8b8574;margin-bottom:16px;}
+.fv-verdict{background:#17191c;border-radius:14px;padding:26px 30px;color:#f4efe3;margin-bottom:22px;position:relative;}
+.fv-verdict .lab{color:#f0d98a;font-size:12px;font-weight:700;letter-spacing:1px;margin-bottom:6px;}
+.fv-verdict .txt{font-size:21px;font-weight:700;line-height:1.85;}
+.fv-h2{font-size:18px;font-weight:700;color:#17191c;margin:24px 0 10px;padding-left:10px;border-left:4px solid #d9b96a;}
+.fv-lines{display:flex;flex-direction:column;gap:13px;}
+.fv-item{display:flex;gap:16px;background:#faf7ef;border:1px solid #ece3ce;border-radius:10px;padding:15px 20px;}
+.fv-item-k{flex:0 0 168px;font-size:14px;font-weight:700;color:#a07a14;line-height:1.5;}
+.fv-item-b b{display:block;font-size:16.5px;color:#17191c;margin-bottom:2px;}
+.fv-item-b span{font-size:13.5px;color:#3c3830;line-height:1.75;}
+.fv-grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+.fv-cell{background:#fff;border:1px solid #ece3ce;border-radius:9px;padding:14px 17px;}
+.fv-cell-t{font-size:14.5px;font-weight:700;color:#17191c;margin-bottom:3px;}
+.fv-cell-d{font-size:13px;color:#565049;line-height:1.75;}
+.fv-dont .fv-cell{background:#fdf1f0;border-color:#eabbb8;}
+.fv-dont .fv-cell-t{color:#c24540;}
+.fv-dont .fv-cell-t:before{content:"✗ ";}
+.fv-pre .fv-cell{background:#f0f8f2;border-color:#bcdcc4;}
+.fv-pre .fv-cell-t{color:#3d7d4c;}
+.fv-pre .fv-cell-t:before{content:"✓ ";}
+.fv-flow{margin-top:20px;font-size:11px;color:#9a9488;text-align:center;}
+.fv-flow b{color:#a07a14;}
+.golden-route-marker{position:absolute;right:18px;bottom:12px;font-size:8px;line-height:1;color:rgba(23,25,28,.32);letter-spacing:0;}
+
+/* ===== from report_intro_gen.py ===== */
+
+.pg{width:1196px;height:1500px;box-sizing:border-box;position:relative;break-after:page;overflow:hidden;}
+/* 封面 */
+.cover{background:#17191c;color:#f4efe3;padding:170px 92px 130px;}
+.cover h1{font-size:72px;font-weight:800;line-height:1.18;margin:0 0 30px;color:#fff;text-align:center;white-space:nowrap;letter-spacing:0;}
+.cover h1 span{color:#f0d98a;}
+.cover .line{width:128px;height:6px;background:#c9a84a;border-radius:3px;margin:0 auto 40px;}
+.cover .sub{font-size:22px;color:#c4beb1;line-height:2;max-width:900px;}
+.cover .meta{position:absolute;left:92px;bottom:96px;max-width:760px;font-size:17px;color:#95907f;line-height:2.1;}
+.cover .meta div{max-width:760px;}
+.cover .flow{position:absolute;right:92px;bottom:110px;text-align:right;font-size:15px;color:#7d7768;line-height:2.2;}
+.cover .flow b{color:#c9a84a;}
+/* 通用内页 */
+.inner{padding:90px 96px;}
+.h1{font-size:42px;font-weight:800;color:#17191c;margin:0 0 10px;}
+.lead{font-size:18px;color:#7d7768;line-height:1.85;margin-bottom:44px;max-width:960px;}
+/* 目录 */
+.toc-row{display:flex;align-items:baseline;gap:26px;padding:27px 6px;border-bottom:1px solid #eee7d6;}
+.toc-no{font-size:30px;font-weight:800;color:#c9a84a;width:58px;}
+.toc-t{font-size:24px;font-weight:700;color:#17191c;width:340px;}
+.toc-d{font-size:16.5px;color:#8b8574;flex:1;line-height:1.6;}
+/* 承接诊断 */
+.dg-concl{background:#17191c;color:#f4efe3;border-radius:16px;padding:34px 38px;margin-bottom:34px;}
+.dg-concl .lab{color:#f0d98a;font-size:16px;font-weight:700;letter-spacing:1px;margin-bottom:12px;}
+.dg-concl .txt{font-size:26px;font-weight:700;line-height:1.8;}
+.dg-grid{display:flex;flex-wrap:wrap;gap:22px;align-items:flex-start;}
+.dg-box{background:#faf7ef;border:1px solid #ece3ce;border-radius:13px;padding:26px 30px;width:calc(50% - 11px);box-sizing:border-box;}
+.dg-box h3{font-size:19px;color:#a07a14;margin:0 0 12px;}
+.dg-box p{font-size:17px;color:#3c3830;line-height:1.9;margin:0;}
+.dg-box ul{margin:0;padding-left:24px;}
+.dg-box li{font-size:17px;color:#3c3830;line-height:2.1;}
+.dg-risk{border-color:#eabbb8;background:#fdf1f0;} .dg-risk h3{color:#c24540;}
+.dg-cut{border-color:#bcdcc4;background:#f0f8f2;} .dg-cut h3{color:#3d7d4c;}
+.dg-full{width:100%;}
+/* 感性验证 */
+.iv-grid{display:flex;flex-wrap:wrap;column-gap:34px;}
+.iv-item{display:flex;gap:18px;padding:19px 0;border-bottom:1px solid #f0eadd;width:calc(50% - 17px);box-sizing:border-box;}
+.iv-no{font-size:26px;font-weight:800;color:#c9a84a;width:42px;flex-shrink:0;}
+.iv-t{font-size:19px;font-weight:700;color:#17191c;line-height:1.45;}
+.iv-d{font-size:15.5px;color:#565049;line-height:1.7;margin-top:5px;}
+/* 覆盖 deep-report.css 的 @media print A4，放最后确保生效 */
+@media print {
+  @page { size: 1320px 1700px; margin: 22px; }
+  .dr-root{background:#fff;padding:0;}
+  .dr-toolbar{display:none;}
+
+  .pg,
+  .dr-mkt-card,
+  .s5-card,
+  .pk-cross,
+  .pk-card,
+  .rm-card,
+  .rm-gate,
+  .rm-total,
+  .rm-rem,
+  .fv-verdict,
+  .fv-item,
+  .fv-cell {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  .pk-head,
+  .pk-script,
+  .s5-card-head,
+  .rm-h2,
+  .fv-h2 {
+    break-after: avoid;
+    page-break-after: avoid;
+  }
+
+  .dr-forces-table tr,
+  .s5-table tr,
+  .pk-table tr {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+}
