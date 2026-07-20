@@ -38,6 +38,16 @@ export interface AccountContext {
   privateDomain?: string;
 }
 
+export interface DraftBlueprintContext {
+  opening: string;
+  core_judgement: string;
+  delivery_format: "numbered" | "paragraphs";
+  delivery_sections: string[];
+  service_bridge: string;
+  stage_result: string;
+  closing: string;
+}
+
 export function accountContextBlock(ctx?: AccountContext) {
   if (!ctx) return "";
   const lines: string[] = [];
@@ -271,6 +281,51 @@ ${exclude.length ? `- 严禁与以下已生成选题重复或近似：${exclude.
 `.trim();
 }
 
+export function buildDraftBlueprintUserPrompt(input: {
+  targetUser: string;
+  trustSource: string;
+  methodId: TitleMethodId;
+  methodLabel: string;
+  title: string;
+  titlePromise: string;
+  persona: GrowthPersona;
+  context?: AccountContext;
+  deliveryRule: string;
+  ctaType: "soft_bridge" | "on_platform_consult" | "service_entry";
+}) {
+  return `
+请先做正文架构师，不写整篇文章。根据标题、人设和标题承诺，生成一份可直接约束后续写作的正文骨架。
+
+${personaGuide(input.persona)}
+${accountContextBlock(input.context)}
+目标用户：${input.targetUser}
+信任来源：${input.trustSource}
+标题方法：${input.methodLabel}（${input.methodId}）
+最终标题：${input.title}
+正文必须兑现：${input.titlePromise}
+兑现结构：${input.deliveryRule}
+唯一承接动作：${input.ctaType}
+
+骨架硬规则：
+1. opening 是可以直接放进正文的自然开头。必须从具体动作、现场、念头或矛盾切入，前30字回应标题人物与冲突；禁止“作为××”“身为××”“我的判断是”“先看这里”和机械复述标题。
+2. delivery_sections 必须直接交付标题承诺，不得只说“我整理了一份表/清单”。标题承诺时间表、节奏表、路线图、资料或清单时，必须写出读者可直接使用的具体内容。
+3. service_bridge 必须是一整段自然因果：先写当事人卡在哪里或自己试过什么，再自然出现老师、机构或顾问，写清对方具体做了什么，最后带出一个克制、可验证的阶段结果。
+4. stage_result 单独摘录上一步的阶段结果。优先使用“不再、开始、收窄到、排除了、明确了、终于能”等可验证变化；不得虚构Offer、薪资、录取数量或确定性成功。
+5. 买家像真实经历转折；专家像复盘一次具体判断；商家用交付动作和阶段结果证明，不自夸。
+6. closing 只保留一个自然动作，不要求点赞、收藏、评论、私信或站外联系。
+
+只输出 JSON：
+{
+  "opening": "自然开头完整段落",
+  "core_judgement": "全文唯一核心判断",
+  "delivery_sections": ["兑现段1", "兑现段2"],
+  "service_bridge": "卡点→专业角色→具体动作→阶段结果的自然完整段落",
+  "stage_result": "可验证的阶段结果原句",
+  "closing": "唯一自然收束动作"
+}
+`.trim();
+}
+
 export function buildDraftUserPrompt(input: {
   targetUser: string;
   trustSource: string;
@@ -287,6 +342,8 @@ export function buildDraftUserPrompt(input: {
   learningGuidance?: string;
   excludeBodies?: string[];
   context?: AccountContext;
+  blueprint: DraftBlueprintContext;
+  deliveryRule: string;
   ctaType: "soft_bridge" | "on_platform_consult" | "service_entry";
 }) {
   const exclude = (input.excludeBodies ?? []).filter(Boolean);
@@ -309,6 +366,10 @@ ${input.learningGuidance ? `复盘学习依据（必须执行，但不能在成�
 ${input.variantHint ? `本次写作角度：${input.variantHint}` : ""}
 ${exclude.length ? `严禁与以下已生成正文重复或近似（可换结构、开头、案例）：\n${exclude.map((b) => b.slice(0, 120)).join("\n---\n")}` : ""}
 
+正文生成骨架（由架构步骤提前生成，必须按顺序落实，不能删除其中任一环）：
+${JSON.stringify(input.blueprint, null, 2)}
+标题兑现结构：${input.deliveryRule}
+
 写作要求：
 - 不预设正文形态。根据标题承诺自然决定叙事、清单、判断、对比或其它写法。
 - 前30字必须回应标题中的人物、问题或冲突，但要像真人自然开口：优先从一个动作、现场、念头或矛盾写起。禁止用“作为××”“身为××”“我的判断是”“先看这里”“我们做××服务时”自报身份，也不要机械复述标题。
@@ -322,6 +383,7 @@ ${exclude.length ? `严禁与以下已生成正文重复或近似（可换结构
 - 专业服务只能出现在真实因果链里：先写当事人遇到的具体卡点或自己试过什么，再自然带到老师、机构或顾问做了哪一个关键动作，最后顺手交代一个克制、可验证的阶段变化。不要单独插入“我们很专业”“建议找机构”等广告句，也不能只在结尾突然宣传。
 - 服务介入后必须有结果，但结果优先写过程变化，例如岗位从很多类收窄到两类、简历与目标岗位对齐、能说清下一步、排除了一个不适合的方向、投递或面试反馈开始可复盘。没有真实依据时不得编造 Offer、薪资、录取数量或确定性成功；可以明确写“不是立刻拿到结果，而是先把什么理顺了”。
 - 买家视角要像经历自然转折，不要把老师写成产品说明书；专家视角要像复盘一次具体判断；商家视角要用真实交付动作和阶段结果证明，不要自夸。
+- 先按“opening→core_judgement→service_bridge→delivery_sections→closing”的骨架分别完成各段，再由系统拼成正文。不得先自由写一篇正文、最后再补老师或结果。
 - 【互动合规硬规则】正文、标题、封面和 comment_prompt 都不得要求点赞、收藏、关注、评论、转发、互关或互赞；不得出现「评论区扣1」「留言关键词」「回复口令」「私信我」「加微信」等动作。
 - 【禁止利益交换】不得用资料、匿名样例、报告、清单、模板、链接、福利、抽奖、诊断或体检作为互动奖励。像「需要职业方向体检的评论区扣1，我发你匿名交付样例」这种表达一律禁止。
 - 结尾优先给出一个读者当下就能完成的自查动作或判断标准。可以提出与正文直接相关的自然问题，但不能承诺根据评论发送任何东西。
@@ -332,6 +394,12 @@ ${exclude.length ? `严禁与以下已生成正文重复或近似（可换结构
   "target_user": "本篇写给谁",
   "cover_text": "封面句",
   "body": "正文",
+  "body_structure": {
+    "opening": "自然开头段",
+    "delivery_sections": ["按标题承诺展开的正文段落"],
+    "service_bridge": "自然包含卡点、专业角色、动作和阶段结果的完整段落",
+    "closing": "唯一收束动作"
+  },
   "hashtags": ["#标签1", "#标签2"],
   "comment_prompt": "自然讨论问题（只问主题本身，不要求互动，不与资料/福利/私信挂钩）",
   "follow_reason": "本篇关注理由",

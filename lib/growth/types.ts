@@ -289,6 +289,64 @@ export interface ThreeDayReviewCycle {
   updated_at: string;
 }
 
+export interface ThreeDayLearningSample {
+  cycle_id: string;
+  cycle_number: number;
+  source_key: string;
+  source_title?: string;
+  draft_id?: string;
+  method_id?: TitleMethodId;
+  method_label?: string;
+  method_group?: TitleMethodGroup;
+  generation_mode?: MethodGenerationMode;
+  published_at: string;
+  metrics: ThreeDayNoteMetrics;
+  derived: ThreeDayDerivedMetrics;
+  content_eligible: boolean;
+  commercial_eligible: boolean;
+  attributed_inquiries?: number;
+  inquiry_rate?: number;
+}
+
+export interface ThreeDayLearningMethodAggregate {
+  method_id: TitleMethodId;
+  method_label: string;
+  method_group: TitleMethodGroup;
+  generation_mode: MethodGenerationMode;
+  content_valid_count: number;
+  commercial_valid_count: number;
+  median_cover_ctr: number;
+  median_value_rate: number;
+  median_save_rate: number;
+  median_share_rate: number;
+  median_inquiry_rate?: number;
+  above_persona_inquiry_median: boolean;
+  source_cycle_ids: string[];
+  source_keys: string[];
+}
+
+export interface ThreeDayLearningTagAggregate {
+  tag: string;
+  content_valid_count: number;
+  commercial_valid_count: number;
+  median_inquiry_rate?: number;
+  draft_ids: string[];
+}
+
+export interface ThreeDayLearningState {
+  version: string;
+  generated_at: string;
+  source_cycle_ids: string[];
+  content_eligible_total: number;
+  commercial_eligible_total: number;
+  unattributed_inquiries_total: number;
+  by_method: ThreeDayLearningMethodAggregate[];
+  by_tag: ThreeDayLearningTagAggregate[];
+  promotion_suggestions: MethodPromotionSuggestion[];
+  latest_completed_cycle_id?: string;
+  active_experiment?: GrowthCycleExperiment;
+}
+
 export type ReviewSampleStatus =
   | "valid"
   | "low_sample"
@@ -352,8 +410,10 @@ export interface GrowthAccount {
   /** 固定周期快照。实时汇总不得覆盖这里的历史周期。 */
   weekly_review_snapshots?: WeeklyReviewResult[];
   cycle_experiments?: GrowthCycleExperiment[];
-  /** v3.4 三日复盘：本地兼容预览先保存在账号载荷，正式上线后迁移至独立表。 */
+  /** v3.3 三日复盘：当前保存在账号载荷，数据量增长后可迁移至独立表。 */
   three_day_review_cycles?: ThreeDayReviewCycle[];
+  /** v3.3 三日复盘统一学习状态；由已完成周期确定性重建，不读取旧周复盘。 */
+  three_day_learning_state?: ThreeDayLearningState;
   // 旧字段兼容：历史数据仍能打开，新代码统一写入 weekly_review。
   stage_review?: StageReviewResult;
   created_at: string;
@@ -741,6 +801,7 @@ export interface GrowthCycleExperiment {
   expected_signal: string;
   stop_condition: string;
   evidence_review_ids: string[];
+  source_cycle_id?: string;
   status: "pending" | "confirmed" | "rejected" | "applied";
   created_at: string;
   resolved_at?: string;
@@ -793,6 +854,9 @@ export interface GrowthLearningTrace {
   generated_at: string;
   weekly_review_generated_at?: string;
   source_review_ids: string[];
+  source_cycle_ids?: string[];
+  experiment_id?: string;
+  experiment_variable?: GrowthExperimentVariable;
   direction_action?: WeeklyDirectionAction;
   basis: string[];
 }
@@ -803,7 +867,7 @@ export interface GrowthLearningBrief {
   topic_guidance: string[];
   title_guidance: string[];
   body_guidance: string[];
-  experiment_variable: GrowthExperimentVariable;
+  experiment_variable?: GrowthExperimentVariable;
 }
 
 // 业务设置：面霸君可在界面里编辑的业务事实（当前只有两个报告价格，后续可扩展）

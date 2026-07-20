@@ -14,6 +14,7 @@ import { growthPreviewEnabled } from "@/lib/growth/previewFixture";
 import { methodsForPersona } from "@/lib/growth/methods";
 import { sourceIsUsable, withDraftValidation } from "@/lib/growth/validation";
 import { isMethodWeeklyReview } from "@/lib/growth/reviewLearning";
+import { buildThreeDayLearningState } from "@/lib/growth/threeDayLearning";
 import {
   businessPositionsFromSettings,
   resolveBusinessPosition,
@@ -87,9 +88,10 @@ export async function GET(req: Request) {
       // 兼容旧草稿：读取时按当前三项规则重算展示，不回写、不覆盖历史原始数据。
       draft.validation_report?.attempts ?? 0,
     ));
+  const threeDayLearningState = account ? buildThreeDayLearningState(account, drafts) : null;
   const validReviewDraftIds = new Set(reviewList.filter((review) => review.sample?.strategy_eligible).map((review) => review.draft_id));
   const historicalEffectiveSamples = historicalDrafts.filter((draft) => validReviewDraftIds.has(draft.id)).length;
-  const newLearningSamples = currentDrafts.filter((draft) => draft.eligible_for_method_learning !== false && validReviewDraftIds.has(draft.id)).length;
+  const newLearningSamples = threeDayLearningState?.commercial_eligible_total ?? 0;
   const sourceCounts = account ? Object.fromEntries((["default", "explore"] as const).map((mode) => {
     const methods = methodsForPersona(persona, mode, account.method_overrides);
     const generatable = methods.filter((method) => !method.sourceRequired || (account.topic_sources ?? []).some((item) => item.method_id === method.id && sourceIsUsable(item))).length;
@@ -108,6 +110,7 @@ export async function GET(req: Request) {
     historicalDrafts,
     reviews,
     threeDayReviewCycles: account?.three_day_review_cycles ?? [],
+    threeDayLearningState,
     weeklyReview,
     stageReview: weeklyReview,
     capabilities: { reviewScreenshot: isVisionConfigured() },
@@ -120,7 +123,7 @@ export async function GET(req: Request) {
     learningSummary: {
       historicalEffectiveSamples,
       newLearningSamples,
-      explanation: "旧版有效样本只展示为历史证据；v3.2方法学习从0重新累计。",
+      explanation: "旧版有效样本只展示为历史证据；新方法学习只读取已完成三日复盘中的商业有效样本。",
     },
   });
 }
@@ -178,8 +181,10 @@ export async function POST(req: Request) {
     account.tag_merge_suggestions = existingAccount.tag_merge_suggestions;
     account.weekly_review = existingAccount.weekly_review;
     account.weekly_review_snapshots = existingAccount.weekly_review_snapshots;
+    account.cycle_experiments = existingAccount.cycle_experiments;
     account.stage_review = existingAccount.stage_review;
     account.three_day_review_cycles = existingAccount.three_day_review_cycles;
+    account.three_day_learning_state = existingAccount.three_day_learning_state;
   }
   plan.owner_user_id = account.owner_user_id;
 

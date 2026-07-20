@@ -7,6 +7,8 @@ import type {
   GrowthAccount,
   GrowthBusinessLine,
   GrowthBusinessPosition,
+  GrowthCycleExperiment,
+  GrowthExperimentVariable,
   GrowthPersona,
   GrowthPlan,
   GrowthReview,
@@ -15,6 +17,7 @@ import type {
   MethodAggregate,
   MethodGenerationMode,
   ThreeDayReviewCycle,
+  ThreeDayLearningState,
   ThreeDayTrafficStatus,
   TitleMethodGroup,
   TitleMethodId,
@@ -55,6 +58,7 @@ interface BootstrapData {
   historicalDrafts: ContentDraft[];
   reviews: Record<string, GrowthReview>;
   threeDayReviewCycles: ThreeDayReviewCycle[];
+  threeDayLearningState: ThreeDayLearningState | null;
   weeklyReview: WeeklyReviewResult | null;
   capabilities: { reviewScreenshot: boolean };
   preview: { enabled: boolean; banner?: string; productionDataConnected?: boolean };
@@ -892,17 +896,38 @@ export default function GrowthPage() {
     }
   }
 
-  async function resolveCycleExperiment(experimentId: string, status: "confirmed" | "rejected") {
+  async function resolveCycleExperiment(
+    experimentId: string,
+    status: "confirmed" | "rejected",
+    experimentVariable?: GrowthExperimentVariable,
+  ) {
     if (!data?.account) return;
     setBusy(`experiment-${experimentId}`);
     try {
       await requestJSON(`/api/growth/cycle-experiments/${experimentId}`, {
         method: "PATCH",
-        body: JSON.stringify({ accountId: data.account.id, status }),
+        body: JSON.stringify({ accountId: data.account.id, status, experiment_variable: experimentVariable }),
       });
       await load(businessLine, persona, true);
       setReviewTab("strategy");
       setMessage(status === "confirmed" ? "下一周期实验卡已确认，将作为下一轮选题生成依据。" : "实验卡已拒绝，不会影响下一轮选题。");
+    } catch (error) {
+      setMessage((error as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function promoteMethod(methodId: TitleMethodId) {
+    if (!data?.account) return;
+    setBusy(`promote-${methodId}`);
+    try {
+      await requestJSON("/api/growth/methods", {
+        method: "PATCH",
+        body: JSON.stringify({ accountId: data.account.id, methodId }),
+      });
+      await load(businessLine, persona, true);
+      setMessage("探索方法已由运营确认晋升为默认；其它方法状态保持不变。");
     } catch (error) {
       setMessage((error as Error).message);
     } finally {
@@ -1235,6 +1260,12 @@ export default function GrowthPage() {
                   title="选题"
                   subtitle="一个方法对应一个标题槽位。默认方法直接显示，探索方法在原生法或对标法内部折叠，禁用方法不出现。"
                 >
+                  {data.threeDayLearningState?.active_experiment && (
+                    <LearningApplicationBanner
+                      experiment={data.threeDayLearningState.active_experiment}
+                      surface="选题"
+                    />
+                  )}
                   <div className="flex flex-col gap-4 rounded-2xl bg-slate-50 p-4 sm:flex-row sm:items-center sm:justify-between">
                     <div>
                       <div className="font-semibold">当前视角：{businessDefinition.personas[persona].role}</div>
@@ -1313,6 +1344,12 @@ export default function GrowthPage() {
                     ? `已选标题：${titleEdits[(activeTopic || selectedTopic)!.topic.id] ?? (activeTopic || selectedTopic)!.topic.title}；标题承诺：${(activeTopic || selectedTopic)!.topic.title_promise}`
                     : "先在选题槽位中选择一个标题；短版和长版只有通过三项校验后才会呈现。"}
                 >
+                  {data.threeDayLearningState?.active_experiment && (
+                    <LearningApplicationBanner
+                      experiment={data.threeDayLearningState.active_experiment}
+                      surface="正文"
+                    />
+                  )}
                   {variants.length > 0 ? (
                     <div className={`grid gap-5 ${chosen ? "grid-cols-1" : "lg:grid-cols-2"}`}>
                       {variants.map((draft) => (
@@ -1373,10 +1410,13 @@ export default function GrowthPage() {
                   <ThreeDayReviewPanel
                     account={data.account}
                     cycles={data.threeDayReviewCycles}
+                    learningState={data.threeDayLearningState}
                     busy={busy}
                     onBusy={setBusy}
                     onMessage={setMessage}
                     onRefresh={() => load(businessLine, persona, true)}
+                    onResolveExperiment={resolveCycleExperiment}
+                    onPromoteMethod={promoteMethod}
                   />
                 </Section>
               </>
@@ -2097,20 +2137,67 @@ function ReviewTabButton({ active, title, detail, onClick }: { active: boolean; 
   );
 }
 
+function LearningApplicationBanner({
+  experiment,
+  surface,
+}: {
+  experiment: GrowthCycleExperiment;
+  surface: "选题" | "正文";
+}) {
+  const applies = experiment.status === "confirmed" || experiment.status === "applied";
+  const statusTitle = experiment.status === "applied"
+    ? `已应用三日复盘实验：${experimentVariableLabel(experiment.experiment_variable)}`
+    : experiment.status === "confirmed"
+      ? `已确认三日复盘实验：${experimentVariableLabel(experiment.experiment_variable)}`
+      : "有一条待确认的三日复盘实验";
+  const scope = experiment.experiment_variable === "title_cover"
+    ? surface === "选题" ? "只调整标题与封面入口" : "正文核心判断、结构和承接保持不变"
+    : experiment.experiment_variable === "opening"
+      ? surface === "正文" ? "只调整前30字和第一段" : "标题方法与承诺保持不变"
+      : experiment.experiment_variable === "evidence"
+        ? surface === "正文" ? "只加强事实、案例或过程证据" : "标题入口保持不变"
+        : experiment.experiment_variable === "closing"
+          ? surface === "正文" ? "只调整站内承接" : "标题入口保持不变"
+          : `只调整${experimentVariableLabel(experiment.experiment_variable)}`;
+  return (
+    <div className={`mb-4 rounded-2xl border p-4 text-sm ${applies ? "border-sky-200 bg-sky-50" : "border-amber-200 bg-amber-50"}`}>
+      <div className="font-semibold">
+        {statusTitle}
+      </div>
+      <p className="mt-1 leading-6 text-slate-600">
+        {applies
+          ? `${scope}；其它变量必须保持不变。${experiment.status === "confirmed" ? "将在下一次生成时生效。" : "本次生成已记录该实验。"}`
+          : "尚未人工确认，不会影响本次生成。请在第5步确认、修改或跳过。"}
+      </p>
+      {applies && <div className="mt-2 text-xs text-slate-500">证据周期：{experiment.period_id}</div>}
+    </div>
+  );
+}
+
 function ThreeDayReviewPanel({
   account,
   cycles,
+  learningState,
   busy,
   onBusy,
   onMessage,
   onRefresh,
+  onResolveExperiment,
+  onPromoteMethod,
 }: {
   account: GrowthAccount;
   cycles: ThreeDayReviewCycle[];
+  learningState: ThreeDayLearningState | null;
   busy: string | null;
   onBusy: (value: string | null) => void;
   onMessage: (value: string) => void;
   onRefresh: () => Promise<void>;
+  onResolveExperiment: (
+    experimentId: string,
+    status: "confirmed" | "rejected",
+    experimentVariable?: GrowthExperimentVariable,
+  ) => Promise<void>;
+  onPromoteMethod: (methodId: TitleMethodId) => Promise<void>;
 }) {
   const active = [...cycles].reverse().find((cycle) => cycle.status === "draft");
   const completed = [...cycles]
@@ -2129,6 +2216,10 @@ function ThreeDayReviewPanel({
   const [deep6999Qualified, setDeep6999Qualified] = useState("");
   const [deep6999Sales, setDeep6999Sales] = useState("");
   const [attributions, setAttributions] = useState<Record<string, string>>({});
+  const activeExperiment = learningState?.active_experiment;
+  const [selectedExperimentVariable, setSelectedExperimentVariable] = useState<GrowthExperimentVariable>(
+    activeExperiment?.experiment_variable ?? "title_cover",
+  );
 
   useEffect(() => {
     setTrafficConfirmed(active?.traffic_confirmed ?? false);
@@ -2142,6 +2233,10 @@ function ThreeDayReviewPanel({
     setDeep6999Sales("");
     setAttributions({});
   }, [active?.id, active?.traffic_confirmed]);
+
+  useEffect(() => {
+    setSelectedExperimentVariable(activeExperiment?.experiment_variable ?? "title_cover");
+  }, [activeExperiment?.experiment_variable, activeExperiment?.id]);
 
   async function importOfficialExcel(file: File | null) {
     if (!file) return;
@@ -2198,10 +2293,8 @@ function ThreeDayReviewPanel({
   const suggestedCount = active?.notes.filter((note) => note.match_status === "suggested").length ?? 0;
   const unmatchedCount = active?.notes.filter((note) => note.match_status === "unmatched").length ?? 0;
   const attributionTotal = Object.values(attributions).reduce((sum, value) => sum + (value === "" ? 0 : Number(value)), 0);
-  const eligibleHistoryCount = new Set(completed
-    .flatMap((cycle) => cycle.notes)
-    .filter((note) => note.commercial_eligible)
-    .map((note) => note.draft_id || note.source_key)).size;
+  const contentEligibleCount = learningState?.content_eligible_total ?? 0;
+  const commercialEligibleCount = learningState?.commercial_eligible_total ?? 0;
 
   return (
     <div className="space-y-5">
@@ -2212,9 +2305,15 @@ function ThreeDayReviewPanel({
             <div className="mt-1 text-lg font-semibold">{active ? "完成这一次三日复盘" : due ? "上传官方笔记列表明细表" : `下次开放：${formatDateTime(dueAt)}`}</div>
             <p className="mt-2 text-sm leading-6 text-slate-600">一次上传、一轮决策；不再逐篇填写24小时、7天或30天复盘。</p>
           </div>
-          <div className="rounded-xl bg-white px-4 py-3 text-sm">
-            <div className="text-xs text-slate-500">新机制商业有效样本</div>
-            <div className="mt-1 text-xl font-semibold">{eligibleHistoryCount}/30</div>
+          <div className="grid grid-cols-2 gap-4 rounded-xl bg-white px-4 py-3 text-sm">
+            <div>
+              <div className="text-xs text-slate-500">内容有效样本</div>
+              <div className="mt-1 text-xl font-semibold">{contentEligibleCount}</div>
+            </div>
+            <div>
+              <div className="text-xs text-slate-500">商业有效样本</div>
+              <div className="mt-1 text-xl font-semibold">{commercialEligibleCount}/30</div>
+            </div>
           </div>
         </div>
       </div>
@@ -2393,6 +2492,73 @@ function ThreeDayReviewPanel({
               </table>
             </div>
           </details>
+        </div>
+      )}
+
+      {activeExperiment && (
+        <div className="rounded-2xl border border-slate-900 bg-slate-900 p-5 text-white">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <div className="text-xs font-semibold tracking-wider text-amber-200">下一周期唯一实验</div>
+              <div className="mt-2 text-lg font-semibold">{activeExperiment.hypothesis}</div>
+            </div>
+            <span className="w-fit rounded-full bg-white/10 px-3 py-1 text-xs">
+              {activeExperiment.status === "pending" ? "待人工确认" : activeExperiment.status === "confirmed" ? "已确认" : "已应用"}
+            </span>
+          </div>
+          <div className="mt-4 grid gap-3 text-sm sm:grid-cols-2">
+            <div><span className="text-slate-400">预期信号：</span>{activeExperiment.expected_signal}</div>
+            <div><span className="text-slate-400">停止条件：</span>{activeExperiment.stop_condition}</div>
+          </div>
+          {activeExperiment.status === "pending" && (
+            <div className="mt-5 rounded-xl bg-white/10 p-4">
+              <label className="text-xs font-semibold text-slate-300" htmlFor={`experiment-variable-${activeExperiment.id}`}>可修改唯一变量</label>
+              <select
+                id={`experiment-variable-${activeExperiment.id}`}
+                className="mt-2 min-h-11 w-full rounded-xl border border-white/20 bg-slate-800 px-3 text-sm text-white"
+                value={selectedExperimentVariable}
+                onChange={(event) => setSelectedExperimentVariable(event.target.value as GrowthExperimentVariable)}
+              >
+                {(["title_cover", "opening", "evidence", "closing", "audience_expression", "body_structure", "length"] as GrowthExperimentVariable[]).map((variable) => (
+                  <option key={variable} value={variable}>{experimentVariableLabel(variable)}</option>
+                ))}
+              </select>
+              <div className="mt-4 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  disabled={Boolean(busy)}
+                  onClick={() => void onResolveExperiment(activeExperiment.id, "confirmed", selectedExperimentVariable)}
+                  className="min-h-11 rounded-xl bg-white px-4 py-2 text-sm font-semibold text-slate-900 disabled:opacity-40"
+                >确认并带入下一次生成</button>
+                <button
+                  type="button"
+                  disabled={Boolean(busy)}
+                  onClick={() => void onResolveExperiment(activeExperiment.id, "rejected")}
+                  className="min-h-11 rounded-xl border border-white/30 px-4 py-2 text-sm font-semibold text-white disabled:opacity-40"
+                >本周期跳过</button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {(learningState?.promotion_suggestions.length ?? 0) > 0 && (
+        <div className="rounded-2xl border border-amber-200 bg-amber-50 p-5">
+          <div className="font-semibold">探索方法晋升建议</div>
+          <p className="mt-1 text-sm text-slate-600">系统只提出建议，必须由运营人工确认后才会改变默认槽位。</p>
+          <div className="mt-4 space-y-3">
+            {learningState!.promotion_suggestions.map((suggestion) => (
+              <div key={suggestion.method_id} className="flex flex-col gap-3 rounded-xl bg-white p-4 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <div className="font-medium">{suggestion.method_label}</div>
+                  <div className="mt-1 text-xs leading-5 text-slate-500">{suggestion.reason}</div>
+                </div>
+                <SecondaryButton disabled={Boolean(busy)} onClick={() => void onPromoteMethod(suggestion.method_id)}>
+                  人工确认晋升
+                </SecondaryButton>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 

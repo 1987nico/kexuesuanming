@@ -3,6 +3,10 @@ import { z } from "zod";
 import { requireMianbaApiAuth } from "@/lib/auth/mianba";
 import { generateTagMergeSuggestions } from "@/lib/growth/runner";
 import { growthStore } from "@/lib/growth/store";
+import {
+  buildThreeDayLearningSamples,
+  buildThreeDayLearningState,
+} from "@/lib/growth/threeDayLearning";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -16,11 +20,19 @@ export async function POST(req: Request) {
   const account = await store.getAccount(parsed.data.accountId);
   if (!account) return NextResponse.json({ error: "account_not_found" }, { status: 404 });
   const drafts = await store.listDrafts(account.id);
-  const reviews = await store.listReviewsByAccount(account.id);
-  const validCount = reviews.filter((review) => review.sample?.strategy_eligible).length;
-  const uniqueTags = new Set(drafts.flatMap((draft) => (draft.raw_body_tags ?? []).map((tag) => tag.text)));
+  const learningState = buildThreeDayLearningState(account, drafts);
+  const eligibleDraftIds = new Set(buildThreeDayLearningSamples(account)
+    .filter((sample) => sample.content_eligible && sample.draft_id)
+    .map((sample) => sample.draft_id!));
+  const eligibleDrafts = drafts.filter((draft) => eligibleDraftIds.has(draft.id)
+    && (draft.status === "published" || draft.status === "reviewed"));
+  const validCount = learningState.content_eligible_total;
+  const uniqueTags = new Set(eligibleDrafts.flatMap((draft) =>
+    (draft.raw_body_tags ?? []).filter((tag) => tag.active !== false).map((tag) => tag.text)));
   if (validCount < 30 && uniqueTags.size < 20) return NextResponse.json({ error: "threshold_not_met", message: `当前${validCount}篇有效样本、${uniqueTags.size}个原始标签；达到30篇有效样本或20个标签后整理。` }, { status: 409 });
-  const raw = drafts.flatMap((draft) => (draft.raw_body_tags ?? []).map((tag) => ({ text: tag.text, draftId: draft.id, title: draft.title })));
+  const raw = eligibleDrafts.flatMap((draft) => (draft.raw_body_tags ?? [])
+    .filter((tag) => tag.active !== false)
+    .map((tag) => ({ text: tag.text, draftId: draft.id, title: draft.title })));
   const generated = await generateTagMergeSuggestions(raw);
   const next = { ...account, tag_merge_suggestions: [...generated.suggestions, ...(account.tag_merge_suggestions ?? [])], updated_at: new Date().toISOString() };
   await store.saveAccount(next);
