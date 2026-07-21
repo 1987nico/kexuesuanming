@@ -279,8 +279,6 @@ type PendingContextSwitch =
   | { type: "business"; value: GrowthBusinessLine }
   | { type: "persona"; value: GrowthPersona };
 
-type DraftRepairType = "opening" | "fulfillment" | "identity" | "conversion" | "outcome";
-
 const PERSONA_SUGGESTION_LABELS: Partial<Record<keyof AccountForm, string>> = {
   name: "人设名称",
   one_liner: "一句话人设",
@@ -879,14 +877,16 @@ export default function GrowthPage() {
     }
   }
 
-  async function generateBodies(run: GrowthRun, topic: TopicCandidate) {
+  async function generateBodies(run: GrowthRun, topic: TopicCandidate, bodyVersion?: "short" | "long") {
     if (topic.title_promise_status === "stale" || topic.title_promise_status === "invalid") {
       setMessage("标题修改后，正文承诺尚未同步。请先点击“根据标题更新承诺”。");
       return;
     }
     setBusy(`body-${topic.id}`);
-    setVariants([]);
-    setChosen(null);
+    if (!bodyVersion) {
+      setVariants([]);
+      setChosen(null);
+    }
     try {
       const editedTitle = titleEdits[topic.id] ?? topic.title;
       const saved = await persistTopicTitle(run, topic, editedTitle);
@@ -898,15 +898,26 @@ export default function GrowthPage() {
       setActiveTopic(saved);
       const result = await requestJSON<{ drafts: ContentDraft[] }>("/api/growth/drafts/variants", {
         method: "POST",
-        body: JSON.stringify({ runId: saved.run.id, topicId: saved.topic.id }),
+        body: JSON.stringify({
+          runId: saved.run.id,
+          topicId: saved.topic.id,
+          bodyVersion,
+          excludeBodies: bodyVersion ? variants.map((draft) => draft.body) : undefined,
+        }),
       });
-      setVariants(result.drafts);
+      setVariants((current) => bodyVersion
+        ? [
+          ...current.filter((draft) => (draft.selected_body_version === "long" ? "long" : "short") !== bodyVersion),
+          ...result.drafts,
+        ].sort((a, b) => Number(a.selected_body_version === "long") - Number(b.selected_body_version === "long"))
+        : result.drafts);
       const passedCount = result.drafts.filter(draftReadyForOperator).length;
+      const versionLabel = bodyVersion === "short" ? "短版" : bodyVersion === "long" ? "长版" : "正文";
       setMessage(passedCount
-        ? `正文生成与校验完成：${passedCount}个版本通过并已呈现。`
-        : "两个版本均未通过生成门禁，正文未呈现；可重新生成。"
+        ? `${versionLabel}生成与校验完成，合格版本已呈现。`
+        : `${versionLabel}未通过生成门禁，可单独重新生成这个版本。`
       );
-      setBodyVersionView(result.drafts.some((draft) => draft.selected_body_version !== "long") ? "short" : "long");
+      setBodyVersionView(bodyVersion ?? (result.drafts.some((draft) => draft.selected_body_version !== "long") ? "short" : "long"));
       goToStep("4");
     } catch (error) {
       setMessage((error as Error).message);
@@ -946,27 +957,6 @@ export default function GrowthPage() {
     } catch (error) {
       setVariants(previousVariants);
       setChosen(previousChosen);
-      setMessage((error as Error).message);
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function repairBody(draft: ContentDraft, repairType: DraftRepairType) {
-    setBusy(`repair-${draft.id}-${repairType}`);
-    setMessage("正在局部修正并重新校验…");
-    try {
-      const result = await requestJSON<{ draft: ContentDraft }>("/api/growth/drafts/repair", {
-        method: "POST",
-        body: JSON.stringify({ draft, repairType }),
-      });
-      setVariants((current) => current.map((item) => item.id === draft.id ? result.draft : item));
-      if (chosen?.id === draft.id) setChosen(result.draft);
-      setMessage(draftReadyForOperator(result.draft)
-        ? "局部修正完成，三项门禁已通过。"
-        : "局部修正已完成，仍有项目需要处理；可继续针对失败项修正。"
-      );
-    } catch (error) {
       setMessage((error as Error).message);
     } finally {
       setBusy(null);
@@ -1581,7 +1571,7 @@ export default function GrowthPage() {
                                 onClick={() => setBodyVersionView(version)}
                                 className={`min-h-11 rounded-lg px-4 text-sm font-semibold ${bodyVersionView === version ? "bg-white text-slate-900 shadow-sm" : "text-slate-600"}`}
                               >
-                                {version === "short" ? "短版" : "长版"} · {passed ? "可选" : "需修正"}
+                                {version === "short" ? "短版" : "长版"} · {passed ? "可选" : "未完成"}
                               </button>
                             );
                           })}
@@ -1594,10 +1584,13 @@ export default function GrowthPage() {
                         selected={chosen?.id === visibleBodyDraft.id}
                         onChoose={chooseDraft}
                         onPublish={markPublished}
-                        onRepair={repairBody}
                         onRetry={() => {
                           const current = activeTopic || selectedTopic;
-                          if (current) void generateBodies(current.run, current.topic);
+                          if (current) void generateBodies(
+                            current.run,
+                            current.topic,
+                            visibleBodyDraft.selected_body_version === "long" ? "long" : "short",
+                          );
                         }}
                       />
                       {chosen && variants.length === 1 && (
@@ -1618,10 +1611,13 @@ export default function GrowthPage() {
                       selected
                       onChoose={chooseDraft}
                       onPublish={markPublished}
-                      onRepair={repairBody}
                       onRetry={() => {
                         const current = activeTopic || selectedTopic;
-                        if (current) void generateBodies(current.run, current.topic);
+                        if (current) void generateBodies(
+                          current.run,
+                          current.topic,
+                          chosen.selected_body_version === "long" ? "long" : "short",
+                        );
                       }}
                     />
                   ) : selectedTopic ? (
@@ -2371,7 +2367,6 @@ function DraftCard({
   selected = false,
   onChoose,
   onPublish,
-  onRepair,
   onRetry,
 }: {
   draft: ContentDraft;
@@ -2379,7 +2374,6 @@ function DraftCard({
   selected?: boolean;
   onChoose: (draft: ContentDraft) => void;
   onPublish?: (draft: ContentDraft, publishedAt: string) => void;
-  onRepair: (draft: ContentDraft, repairType: DraftRepairType) => void;
   onRetry: () => void;
 }) {
   const readyForOperator = draftReadyForOperator(draft);
@@ -2407,29 +2401,12 @@ function DraftCard({
         </div>
         <h3 className="mt-4 text-lg font-semibold">正文暂不呈现</h3>
         <p className="mt-2 text-sm leading-6 text-slate-600">
-          系统已自动修正{draft.validation_report?.attempts ?? 0}轮，仍有项目未通过。为避免操作者误选或误复制，正文内容已隐藏。
+          系统已按正文兑现合同完成一次内部修复，仍未形成可靠版本。为避免误选或误复制，未通过正文不会呈现。
         </p>
         <div className="mt-4 grid gap-2 sm:grid-cols-3">
           {draft.validation_checks.map((check) => <Check key={check.key} check={check} />)}
         </div>
-        <div className="mt-4 flex flex-wrap gap-2">
-          {draft.validation_checks.some((check) => check.key === "fulfillment" && check.status !== "passed") && (
-            <>
-              <SecondaryButton disabled={Boolean(busy)} onClick={() => onRepair(draft, "opening")}>只重写开头</SecondaryButton>
-              <SecondaryButton disabled={Boolean(busy)} onClick={() => onRepair(draft, "fulfillment")}>补齐承诺内容</SecondaryButton>
-            </>
-          )}
-          {draft.validation_checks.some((check) => check.key === "identity" && check.status !== "passed") && (
-            <SecondaryButton disabled={Boolean(busy)} onClick={() => onRepair(draft, "identity")}>重写身份表达</SecondaryButton>
-          )}
-          {draft.validation_checks.some((check) => check.key === "conversion" && check.status !== "passed") && (
-            <>
-              <SecondaryButton disabled={Boolean(busy)} onClick={() => onRepair(draft, "conversion")}>重写转化转折</SecondaryButton>
-              <SecondaryButton disabled={Boolean(busy)} onClick={() => onRepair(draft, "outcome")}>补充阶段变化</SecondaryButton>
-            </>
-          )}
-          <button type="button" disabled={Boolean(busy)} onClick={onRetry} className="min-h-11 px-3 text-sm font-medium text-slate-500 underline disabled:opacity-40">整篇重新生成</button>
-        </div>
+        <button type="button" disabled={Boolean(busy)} onClick={onRetry} className="mt-4 min-h-11 rounded-xl bg-slate-900 px-4 text-sm font-semibold text-white disabled:opacity-40">重新生成这个版本</button>
       </div>
     );
   }
@@ -3233,6 +3210,13 @@ function Check({ check }: { check: ContentDraft["validation_checks"][number] }) 
     <div className={`rounded-xl px-3 py-2 text-xs ${check.status === "passed" ? "bg-emerald-50 text-emerald-800" : "bg-red-50 text-red-700"}`}>
       <b>{label}</b> · {check.status === "passed" ? "通过" : "需修改"}
       <div className="mt-1 opacity-75">{check.message}</div>
+      {check.details && check.details.length > 1 && (
+        <div className="mt-2 space-y-1 border-t border-current/10 pt-2">
+          {check.details.filter((item) => item.status !== "not_applicable").map((item) => (
+            <div key={item.code}>{item.status === "passed" ? "✓" : "•"} {item.message}</div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

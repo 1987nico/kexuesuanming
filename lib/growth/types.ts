@@ -128,6 +128,12 @@ export interface ValidationCheck {
   key: "source" | "identity" | "fulfillment" | "compliance" | "conversion";
   status: "passed" | "needs_edit" | "blocked";
   message: string;
+  /** 兑现等复合门禁的原子结果，便于只展示真正失败的原因。 */
+  details?: Array<{
+    code: string;
+    status: "passed" | "needs_edit" | "not_applicable";
+    message: string;
+  }>;
 }
 
 export type DraftValidationKey = "identity" | "fulfillment" | "conversion";

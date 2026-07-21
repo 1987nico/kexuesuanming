@@ -446,6 +446,16 @@ interface PromiseDeliverySpec {
   rule: string;
 }
 
+function promiseTypeForTopic(
+  topic: TopicCandidate,
+  spec: PromiseDeliverySpec,
+): NonNullable<DraftBlueprintContext["promise_type"]> {
+  if (topic.method_id === "tug_of_war") return "comparison";
+  if (spec.exactSections !== undefined) return "counted";
+  if (spec.format === "numbered") return "material";
+  return "ordinary";
+}
+
 function promiseDeliverySpec(topic: TopicCandidate): PromiseDeliverySpec {
   const count = extractPromisedCount(topic.title);
   if (count) {
@@ -565,6 +575,9 @@ function fallbackDraftBlueprint(
 ): DraftBlueprintContext {
   const businessLine = account.business_line ?? "executive";
   return {
+    contract_version: "v2",
+    promise_type: promiseTypeForTopic(topic, spec),
+    opening_intent: topic.title_promise,
     opening: identityOpening(account.persona, businessLine),
     core_judgement: businessLine === "overseas_student"
       ? "秋招真正难的不是同时准备两边，而是没有把岗位、材料和截止时间放进同一套节奏里。"
@@ -609,6 +622,9 @@ function normalizeDraftBlueprint(
   const serviceBridge = bodyHasConversionEvidence(serviceCandidate) ? serviceCandidate : fallback.service_bridge;
   const stageResultCandidate = asText(value.stage_result);
   return {
+    contract_version: "v2",
+    promise_type: fallback.promise_type,
+    opening_intent: asText(value.opening_intent) || fallback.opening_intent,
     opening,
     core_judgement: asText(value.core_judgement) || fallback.core_judgement,
     delivery_format: spec.format,
@@ -776,47 +792,6 @@ function identityOpening(persona: GrowthPersona, businessLine: GrowthBusinessLin
   return "最近我们给一位中高管梳理转型方向，没有先劝他辞职，而是先把三条候选路径摆在一起。";
 }
 
-function removeFormulaOpening(body: string) {
-  return body.replace(/^(?:作为|身为|我的判断是|我判断|先看这里|我们做.{0,16}(?:服务|咨询)时)[^。！？\n]*[。！？]\s*/u, "").trim();
-}
-
-function deterministicDraftRepair(
-  draft: ContentDraft,
-  persona: GrowthPersona,
-  businessLine: GrowthBusinessLine,
-) {
-  const failed = new Set(draft.validation_checks.filter((check) => check.status !== "passed").map((check) => check.key));
-  let body = draft.body.trim();
-  if (failed.has("identity") || failed.has("fulfillment")) {
-    body = removeFormulaOpening(body);
-    const opening = identityOpening(persona, businessLine);
-    if (!body.startsWith(opening)) body = `${opening}\n\n${body}`;
-  }
-  if (failed.has("conversion")) body = `${body}\n\n${serviceBridgeSentence(persona, businessLine)}`;
-  return body;
-}
-
-async function rewriteDraftForValidation(
-  draft: ContentDraft,
-  account: GrowthAccount,
-  blueprint: DraftBlueprintContext,
-  spec: PromiseDeliverySpec,
-) {
-  const persona = account.persona;
-  const businessLine = account.business_line ?? "executive";
-  const failedChecks = draft.validation_checks
-    .filter((check) => check.status !== "passed")
-    .map((check) => `${check.key}: ${check.message}`)
-    .join("\n");
-  const result = await llmJSON<any>({
-    system: GROWTH_SYSTEM_PROMPT,
-    user: `请修正下面这篇小红书正文，只输出 JSON：{"body":"修正后的完整正文"}。\n\n标题：${draft.title}\n标题承诺：${draft.title_promise}\n当前身份：${persona}\n业务：${businessLine}\n账号人设：${account.one_liner}\n账号语气：${account.tone_style}\n目标用户：${account.target_user}\n未通过项：\n${failedChecks}\n\n原始生成骨架（修正后仍必须完整保留这些环节）：\n${JSON.stringify(blueprint, null, 2)}\n标题兑现结构：${spec.rule}\n\n修正规则：\n1. 保持原账号人设和口吻，像同一个真人继续讲，不要改成标准化营销文案。\n2. 必须按“自然开头→核心判断→服务因果与阶段结果→标题承诺实际交付→唯一收束动作”重写，不能只在原文结尾补一句老师或顾问。\n3. 开头像真人自然开口，从动作、现场、念头或矛盾切入并回应标题。禁止以“作为××”“身为××”“我的判断是”“先看这里”“我们做××服务时”自报身份，也不要机械复述标题。\n4. 标题以“X项、X条、X步、X个方法”等作数量承诺时，正文必须用同等数量的编号内容逐项兑现；投递数、薪资、日期等背景数字不算清单承诺。\n5. 专业服务必须放在故事因果里：先有具体卡点或自己试过的动作，再写老师、机构或顾问做了什么，紧接着交代一个克制、可验证的阶段结果。不要在结尾突然加广告句。\n6. 阶段结果优先写岗位收窄、简历对齐、排除方向、明确下一步或反馈可复盘；没有真实依据不得编造 Offer、薪资、录取数量或保证成功。\n7. 保留原正文有价值的信息，不加入互动诱导或站外导流。\n\n原正文：\n${draft.body}`,
-    maxTokens: draft.selected_body_version === "long" ? 3500 : 1800,
-    temperature: 0.35,
-  });
-  return asText(result.data?.body);
-}
-
 async function passDraftValidationGate(
   initial: ContentDraft,
   input: {
@@ -830,30 +805,19 @@ async function passDraftValidationGate(
   },
 ) {
   let draft = withDraftValidation(initial, input.persona, 0);
-  for (let attempt = 1; attempt <= 2 && draft.validation_report?.status !== "passed"; attempt += 1) {
-    let repairedBody = "";
-    if (attempt === 1) {
-      try {
-        repairedBody = await rewriteDraftForValidation(draft, input.account, input.blueprint, input.spec);
-        if (!repairedBody) throw new Error("validation_rewrite_empty");
-      } catch (error) {
-        console.warn("[growth] validation rewrite fallback:", (error as Error).message);
-        repairedBody = deterministicDraftRepair(draft, input.persona, input.businessLine);
-      }
-    } else {
-      // 第二轮不再给自由正文打补丁，直接回到生成前骨架重组，确保三项要求是正文结构的一部分。
-      repairedBody = composeBlueprintBody(input.blueprint, input.spec, undefined, {
-        bodyVersion: draft.selected_body_version === "long" ? "long" : "short",
-        businessLine: input.businessLine,
-      });
-    }
+  if (draft.validation_report?.status !== "passed") {
+    // 只自动修复一次：不再自由改写整篇文章，而是回到兑现合同重新拼装。
+    const repairedBody = composeBlueprintBody(input.blueprint, input.spec, undefined, {
+      bodyVersion: draft.selected_body_version === "long" ? "long" : "short",
+      businessLine: input.businessLine,
+    });
     const checked = enforceDraftCompliance({
       ...draft,
       body: repairedBody,
       word_count: countPublishChars(draft.title, repairedBody, draft.hashtags),
       updated_at: now(),
     }, input.topic.title);
-    draft = withDraftValidation(checked, input.persona, attempt);
+    draft = withDraftValidation(checked, input.persona, 1);
   }
   return draft;
 }
@@ -888,6 +852,11 @@ ${draft.body}`,
   return asText(result.data?.body);
 }
 
+export function draftMeetsPublishTarget(draft: Pick<ContentDraft, "word_count" | "validation_report">) {
+  return draft.word_count.total <= XHS_PUBLISH_CHAR_TARGET
+    && draft.validation_report?.status === "passed";
+}
+
 async function fitDraftWithinPublishTarget(
   draft: ContentDraft,
   input: {
@@ -909,7 +878,7 @@ async function fitDraftWithinPublishTarget(
         word_count: countPublishChars(draft.title, compressedBody, draft.hashtags),
         updated_at: now(),
       }, input.topic.title), input.persona, (draft.validation_report?.attempts ?? 0) + 1);
-      if (compressed.word_count.total <= XHS_PUBLISH_CHAR_TARGET && compressed.validation_report?.status === "passed") {
+      if (draftMeetsPublishTarget(compressed)) {
         return compressed;
       }
     }
@@ -928,7 +897,7 @@ async function fitDraftWithinPublishTarget(
     word_count: countPublishChars(draft.title, fallbackBody, draft.hashtags),
     updated_at: now(),
   }, input.topic.title), input.persona, (draft.validation_report?.attempts ?? 0) + 1);
-  if (fallback.word_count.total <= XHS_PUBLISH_CHAR_TARGET) return fallback;
+  if (draftMeetsPublishTarget(fallback)) return fallback;
 
   fallbackBody = composeBlueprintBody(input.blueprint, input.spec, undefined, {
     bodyVersion: draft.selected_body_version === "long" ? "long" : "short",
@@ -942,6 +911,7 @@ async function fitDraftWithinPublishTarget(
     word_count: countPublishChars(draft.title, fallbackBody, draft.hashtags),
     updated_at: now(),
   }, input.topic.title), input.persona, (draft.validation_report?.attempts ?? 0) + 1);
+  // 字数和三项门禁必须同时通过；失败版本只返回给失败态展示，不能被选择或发布。
   return fallback;
 }
 
@@ -1028,10 +998,19 @@ async function generateSingleDraft(input: {
 export async function generateDraftVariants(input: {
   tenantId?: string; account: GrowthAccount; run: GrowthRun; topic: TopicCandidate;
   count?: number; excludeBodies?: string[]; learningBrief?: GrowthLearningBrief;
+  bodyVersion?: "short" | "long";
 }) {
   const cta = ctaType(input.account.persona);
   const planned = await generateDraftBlueprint({ account: input.account, topic: input.topic, cta });
   const shared = { ...input, blueprint: planned.blueprint, spec: planned.spec };
+  if (input.bodyVersion) {
+    const generated = await generateSingleDraft({
+      ...shared,
+      bodyVersion: input.bodyVersion,
+      excludeBodies: input.excludeBodies,
+    });
+    return { drafts: [generated.draft], usage: generated.usage || planned.usage };
+  }
   const short = await generateSingleDraft({ ...shared, bodyVersion: "short" });
   const long = await generateSingleDraft({ ...shared, bodyVersion: "long", excludeBodies: [...(input.excludeBodies ?? []), short.draft.body] });
   let longDraft = long.draft;

@@ -39,6 +39,10 @@ export interface AccountContext {
 }
 
 export interface DraftBlueprintContext {
+  /** v2 将标题承诺先固化为合同，再由系统拼装正文。 */
+  contract_version?: "v2";
+  promise_type?: "ordinary" | "counted" | "material" | "comparison";
+  opening_intent?: string;
   opening: string;
   core_judgement: string;
   delivery_format: "numbered" | "paragraphs";
@@ -313,9 +317,13 @@ ${accountContextBlock(input.context)}
 4. stage_result 单独摘录上一步的阶段结果。优先使用“不再、开始、收窄到、排除了、明确了、终于能”等可验证变化；不得虚构Offer、薪资、录取数量或确定性成功。
 5. 买家像真实经历转折；专家像复盘一次具体判断；商家用交付动作和阶段结果证明，不自夸。
 6. closing 只保留一个自然动作，不要求点赞、收藏、评论、私信或站外联系。
+7. promise_type 必须按标题承诺选择：普通经历/观点为 ordinary；明确数字项为 counted；资料、清单、表格或路线图为 material；两条路径比较为 comparison。
 
 只输出 JSON：
 {
+  "contract_version": "v2",
+  "promise_type": "ordinary|counted|material|comparison",
+  "opening_intent": "开头要回应的具体人物、处境和冲突",
   "opening": "自然开头完整段落",
   "core_judgement": "全文唯一核心判断",
   "delivery_sections": ["兑现段1", "兑现段2"],

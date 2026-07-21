@@ -281,11 +281,11 @@ export function extractPromisedCount(title: string) {
   return match ? Number(match[1]) : undefined;
 }
 
-function openingRespondsToTitle(draft: Pick<ContentDraft, "title" | "body">) {
-  const opening = draft.body.slice(0, 30).replace(/\s/g, "");
-  const identityTokens = ["中高管", "高管", "中层", "管理层", "总监", "负责人", "老板", "专家", "顾问", "留学生", "海归", "毕业生", "家长", "我", "孩子", "客户", "学员"];
-  const conflictTokens = ["离职", "留任", "转型", "跳槽", "重新定价", "两条路", "职业", "平台", "选择", "求职", "投递", "回国", "留当地", "岗位", "秋招"];
-  return identityTokens.some((token) => opening.includes(token)) && conflictTokens.some((token) => `${draft.title}${opening}`.includes(token));
+function openingHasConcreteSituation(draft: Pick<ContentDraft, "body">) {
+  const opening = draft.body.trimStart().slice(0, 72).replace(/\s+/g, "");
+  if (Array.from(opening).length < 12) return false;
+  return /[，。！？；]/u.test(opening)
+    && !/^(?:关于|针对|围绕|本文|这篇|今天(?:来)?(?:讲|聊|分享)|以下是)/u.test(opening);
 }
 
 function openingFeelsNatural(draft: Pick<ContentDraft, "body">) {
@@ -296,7 +296,10 @@ function openingFeelsNatural(draft: Pick<ContentDraft, "body">) {
 }
 
 export function bodyOpeningMeetsTitle(title: string, body: string) {
-  return openingRespondsToTitle({ title, body }) && openingFeelsNatural({ body });
+  // 标题与骨架的语义关系已在生成合同中锁定；这里仅验证可确定的正文结构，
+  // 不再用固定职业/冲突词表误伤“方向、试错、瞎忙”等开放表达。
+  void title;
+  return openingHasConcreteSituation({ body }) && openingFeelsNatural({ body });
 }
 
 interface IndexedBodyUnit {
@@ -348,6 +351,82 @@ function numberedBodyUnits(body: string): IndexedBodyUnit[] {
     if (quote) units.push({ quote, start, end: start + quote.length });
   }
   return units;
+}
+
+type ValidationCheckDetail = NonNullable<ValidationCheck["details"]>[number];
+
+function substantiveParagraphs(body: string) {
+  return body
+    .split(/\n\s*\n/u)
+    .map((item) => item.trim())
+    .filter((item) => Array.from(item).length >= 12);
+}
+
+function fulfillmentDetails(draft: ContentDraft): ValidationCheckDetail[] {
+  const details: ValidationCheckDetail[] = [];
+  const openingPassed = openingHasConcreteSituation(draft) && openingFeelsNatural(draft);
+  details.push({
+    code: "natural_opening",
+    status: openingPassed ? "passed" : "needs_edit",
+    message: openingPassed
+      ? "开头已从具体处境自然切入"
+      : "开头需要从具体动作、现场、念头或矛盾自然切入",
+  });
+
+  const numberedUnits = numberedBodyUnits(draft.body);
+  const concreteNumberedUnits = numberedUnits.filter((unit) =>
+    Array.from(unit.quote.replace(/^\s*(?:\d{1,2}[.、)]|[一二三四五六七八九十]+[、.])\s*/u, "")).length >= 8);
+  const count = extractPromisedCount(draft.title);
+  const promisedText = `${draft.title}${draft.title_promise}`;
+  const materialPromised = /时间表|节奏表|路线图|资料|清单|盘点|表格|这张表|这份表|步骤/u.test(promisedText);
+  const comparisonPromised = draft.method_id === "tug_of_war";
+
+  if (count !== undefined) {
+    const passed = numberedUnits.length === count && concreteNumberedUnits.length === count;
+    details.push({
+      code: "counted_delivery",
+      status: passed ? "passed" : "needs_edit",
+      message: passed
+        ? `标题承诺的${count}项已逐项交付`
+        : `标题承诺${count}项，正文需要正好交付${count}项具体内容；当前识别到${concreteNumberedUnits.length}项`,
+    });
+  }
+
+  if (materialPromised) {
+    const passed = concreteNumberedUnits.length >= 3;
+    details.push({
+      code: "material_delivery",
+      status: passed ? "passed" : "needs_edit",
+      message: passed
+        ? "资料、清单或路线图已交付可直接使用的具体内容"
+        : "标题承诺了资料、清单、表格或路线图，正文需要至少交付3段可直接使用的具体内容",
+    });
+  }
+
+  if (comparisonPromised) {
+    const passed = numberedUnits.length === 2 && concreteNumberedUnits.length === 2;
+    details.push({
+      code: "comparison_delivery",
+      status: passed ? "passed" : "needs_edit",
+      message: passed
+        ? "两条路径均已给出具体比较"
+        : "拔河式标题需要正好比较两条路径，并分别写清条件、代价或验证动作",
+    });
+  }
+
+  if (count === undefined && !materialPromised && !comparisonPromised) {
+    const paragraphCount = substantiveParagraphs(draft.body).length;
+    const passed = paragraphCount >= 4;
+    details.push({
+      code: "ordinary_delivery",
+      status: passed ? "passed" : "needs_edit",
+      message: passed
+        ? "普通标题已通过具体经历、判断和行动展开承诺"
+        : "正文需要用具体经历、核心判断和可执行动作完整展开标题承诺",
+    });
+  }
+
+  return details;
 }
 
 function identityEvidence(draft: ContentDraft, persona: GrowthPersona) {
@@ -419,22 +498,17 @@ export function analyzeDraftValidation(
       0.96,
     ));
   }
-  const count = extractPromisedCount(draft.title);
-  const hasPromisedMaterial = /清单|路线图|资料|盘点|表|步骤/.test(draft.title);
   const numberedUnits = numberedBodyUnits(draft.body);
-  const countFulfilled = count === undefined || numberedUnits.length === count;
-  const materialFulfilled = !hasPromisedMaterial || numberedUnits.length > 0 || draft.body.length >= 280;
-  const opensOnPromise = openingRespondsToTitle(draft);
-  const naturalOpening = openingFeelsNatural(draft);
-  const fulfillmentPassed = countFulfilled && materialFulfilled && opensOnPromise && naturalOpening;
+  const fulfillmentBreakdown = fulfillmentDetails(draft);
+  const fulfillmentPassed = fulfillmentBreakdown.every((item) => item.status !== "needs_edit");
   const openingUnit = indexedBodyUnits(draft.body)[0];
   if (fulfillmentPassed && openingUnit) {
-    annotations.push(annotation(draft, "fulfillment", openingUnit, "开头从具体处境自然切入，并回应了标题中的人物和核心冲突", 0.94));
+    annotations.push(annotation(draft, "fulfillment", openingUnit, "开头从具体处境自然切入，标题承诺由后续合同段落完整交付", 0.94));
     numberedUnits.slice(0, 10).forEach((unit, index) => annotations.push(annotation(
       draft,
       "fulfillment",
       unit,
-      count ? `对应标题承诺的第${index + 1}项` : "正文直接交付了标题承诺的内容",
+      `对应标题承诺的第${index + 1}项具体内容`,
       0.98,
     )));
   }
@@ -465,7 +539,8 @@ export function analyzeDraftValidation(
       status: fulfillmentPassed ? "passed" as const : "needs_edit" as const,
       message: fulfillmentPassed
         ? `正文已覆盖标题承诺：${draft.title_promise}`
-        : "正文尚未做到：开头自然回应人物与冲突、数字逐项一致、资料/路线图实际交付",
+        : `正文尚未做到：${fulfillmentBreakdown.filter((item) => item.status === "needs_edit").map((item) => item.message).join("；")}`,
+      details: fulfillmentBreakdown,
     },
     {
       key: "conversion" as const,

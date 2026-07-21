@@ -62,7 +62,7 @@ describe("growth publish validation", () => {
   });
 
   it("passes conversion when professional service is naturally embedded", () => {
-    const body = "中高管离职前先看这组冲突。\n1. 能力\n2. 现金流\n3. 市场\n4. 停止条件\n5. 证据\n\n后来我请职业决策顾问一起梳理，先把能力和市场机会拆开判断。最后没有立刻辞职，而是先排除了一个方向，也知道下一步该验证什么。";
+    const body = "中高管离职前先看这组冲突。\n1. 离开平台后仍可验证的能力\n2. 家庭现金流能承受的周期\n3. 目标市场给出的真实报价\n4. 提前写清楚的停止条件\n5. 能被外部识别的成果证据\n\n后来我请职业决策顾问一起梳理，先把能力和市场机会拆开判断。最后没有立刻辞职，而是先排除了一个方向，也知道下一步该验证什么。";
     const checks = validateDraftHardChecks(hardCheckDraft(body), "expert");
     expect(checks.find((item) => item.key === "conversion")?.status).toBe("passed");
     expect(hardChecksAllowPublishing(checks)).toBe(true);
@@ -91,6 +91,52 @@ describe("growth publish validation", () => {
   it("正文骨架开头必须自然回应标题人物与冲突", () => {
     expect(bodyOpeningMeetsTitle("留学生秋招节奏表", "前阵子陪孩子忙秋招，我们把两边截止时间写在了一张纸上。")).toBe(true);
     expect(bodyOpeningMeetsTitle("留学生秋招节奏表", "作为留学生家长，我来分享一张表。")).toBe(false);
+  });
+
+  it.each([
+    "我前后试了两个月，事情越做越多，心里反而越来越没底。",
+    "我后来才发现，真正的问题不是不努力，而是方向一直没理清。",
+    "折腾了两个月，我才承认自己一直在瞎忙。",
+  ])("普通标题不再依赖固定职业冲突词：%s", (opening) => {
+    expect(bodyOpeningMeetsTitle("找对方向，比瞎忙重要太多", opening)).toBe(true);
+  });
+
+  it("普通观点标题按经历、判断和行动结构兑现，不提示数字或资料错误", () => {
+    const body = [
+      "我前后试了两个月，事情越做越多，心里反而越来越没底。",
+      "后来我把职业上的几个想法放在一起，才发现自己一直把忙碌当成了进展。",
+      "我请一位职业决策顾问帮我梳理能力和市场机会，她先让我停掉没有反馈的尝试。最后我排除了一个方向，也明确了下一步。",
+      "现在每个方向都先做一次小验证，有反馈再继续，没有反馈就及时停下。",
+    ].join("\n\n");
+    const draft = {
+      ...hardCheckDraft(body),
+      method_id: "human_pain" as const,
+      method_label: "行业人性痛点",
+      title: "找对方向，比瞎忙重要太多",
+      title_promise: "讲清试错两个月后如何理清方向并得到阶段变化",
+    };
+    const check = analyzeDraftValidation(draft, "buyer").checks.find((item) => item.key === "fulfillment");
+
+    expect(check?.status).toBe("passed");
+    expect(check?.details?.map((item) => item.code)).toEqual(["natural_opening", "ordinary_delivery"]);
+    expect(check?.message).not.toMatch(/数字|资料|路线图/u);
+  });
+
+  it("资料承诺必须实际交付，篇幅够长也不能代替清单", () => {
+    const body = [
+      "前阵子我准备离职时，把手里的信息重新整理了一遍。",
+      "我写了很长的背景和判断，但没有列出任何可以直接执行的内容。".repeat(12),
+      "后来我请职业决策顾问梳理能力和市场机会，最后排除了一个方向，也明确了下一步。",
+    ].join("\n\n");
+    const draft = {
+      ...hardCheckDraft(body),
+      title: "中高管转型路线图公开了",
+      title_promise: "直接交付中高管转型路线图",
+    };
+    const check = analyzeDraftValidation(draft, "buyer").checks.find((item) => item.key === "fulfillment");
+
+    expect(check?.status).toBe("needs_edit");
+    expect(check?.details?.find((item) => item.code === "material_delivery")?.status).toBe("needs_edit");
   });
 
   it("rejects formulaic self-introductions even when the structure is complete", () => {

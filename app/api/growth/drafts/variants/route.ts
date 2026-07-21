@@ -19,6 +19,7 @@ const bodySchema = z.object({
   runId: z.string().min(1),
   topicId: z.string().min(1),
   count: z.number().int().min(1).max(3).optional(),
+  bodyVersion: z.enum(["short", "long"]).optional(),
   excludeBodies: z.array(z.string()).max(6).optional(),
 });
 
@@ -66,9 +67,28 @@ export async function POST(req: Request) {
     run,
     topic,
     count: parsed.data.count ?? 2,
+    bodyVersion: parsed.data.bodyVersion,
     excludeBodies: parsed.data.excludeBodies,
     learningBrief,
   });
+
+  console.info("[growth] draft validation summary", JSON.stringify({
+    runId: run.id,
+    topicId: topic.id,
+    businessLine: account.business_line ?? "executive",
+    persona: account.persona,
+    methodId: topic.method_id,
+    requestedVersion: parsed.data.bodyVersion ?? "both",
+    drafts: drafts.map((draft) => ({
+      version: draft.selected_body_version,
+      status: draft.validation_report?.status ?? "failed",
+      autoRepairAttempts: draft.validation_report?.attempts ?? 0,
+      totalChars: draft.word_count.total,
+      failedChecks: draft.validation_checks
+        .filter((check) => check.status !== "passed")
+        .map((check) => check.key),
+    })),
+  }));
 
   if (usage) {
     await store.saveUsage({

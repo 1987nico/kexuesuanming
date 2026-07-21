@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { DraftBlueprintContext } from "./agents";
-import { composeBlueprintBody, draftBodiesAreTooSimilar } from "./runner";
+import { composeBlueprintBody, draftBodiesAreTooSimilar, draftMeetsPublishTarget } from "./runner";
 import { countPublishChars } from "./validation";
 
 const blueprint: DraftBlueprintContext = {
@@ -66,5 +66,19 @@ describe("draft variants", () => {
 
     expect(countPublishChars("秋招前先查这10项", body, ["#留学生求职", "#秋招"]).total).toBeLessThanOrEqual(950);
     expect(body.match(/^\d+\. /gm)).toHaveLength(10);
+  });
+
+  it("never accepts a compact fallback on length alone", () => {
+    const failed = {
+      word_count: { title: 10, body_and_tags: 800, total: 810, within_limit: true },
+      validation_report: { status: "failed" as const, attempts: 1, checked_at: new Date().toISOString(), annotations: [] },
+    };
+    const passed = {
+      ...failed,
+      validation_report: { ...failed.validation_report, status: "passed" as const },
+    };
+
+    expect(draftMeetsPublishTarget(failed)).toBe(false);
+    expect(draftMeetsPublishTarget(passed)).toBe(true);
   });
 });
