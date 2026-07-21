@@ -37,6 +37,13 @@ export async function POST(req: Request, { params }: { params: { draftId: string
   }
 
   const checkedDraft = enforceDraftCompliance(draft);
+  if (!checkedDraft.word_count.within_limit) {
+    return NextResponse.json({
+      error: "publish_text_too_long",
+      message: `标题、正文和话题共${checkedDraft.word_count.total}字，超过小红书1000字限制，不能标记发布。`,
+      word_count: checkedDraft.word_count,
+    }, { status: 422 });
+  }
   if (checkedDraft.compliance?.status === "blocked") {
     return NextResponse.json(
       {

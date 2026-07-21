@@ -48,6 +48,13 @@ export async function POST(req: Request) {
     updated_at: timestamp,
   } as ContentDraft);
   draft = withDraftValidation(draft, account.persona);
+  if (!draft.word_count.within_limit) {
+    return NextResponse.json({
+      error: "publish_text_too_long",
+      message: `标题、正文和话题共${draft.word_count.total}字，超过小红书1000字限制。请重新生成或压缩后再选择。`,
+      word_count: draft.word_count,
+    }, { status: 422 });
+  }
   if (draft.validation_report?.status !== "passed") {
     return NextResponse.json({
       error: "validation_gate_failed",

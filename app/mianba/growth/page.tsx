@@ -2241,10 +2241,26 @@ const BODY_VALIDATION_META = {
 } as const;
 
 function draftReadyForOperator(draft: ContentDraft) {
-  return draft.validation_report?.status === "passed"
+  return draftPublishLength(draft).withinLimit
+    && draft.validation_report?.status === "passed"
     && BODY_VALIDATION_KEYS.every((key) =>
       draft.validation_checks.some((check) => check.key === key && check.status === "passed")
       && draft.validation_report?.annotations.some((item) => item.key === key));
+}
+
+function draftPublishLength(draft: ContentDraft) {
+  const bodyAndTags = `${draft.body}\n${draft.hashtags.join(" ")}`.length;
+  const total = draft.title.length + bodyAndTags;
+  return { total, withinLimit: total <= 1000 };
+}
+
+function PublishLengthBadge({ draft }: { draft: ContentDraft }) {
+  const length = draftPublishLength(draft);
+  return (
+    <div className={`mt-3 rounded-xl border px-3 py-2 text-xs font-medium ${length.withinLimit ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-red-200 bg-red-50 text-red-700"}`}>
+      发布总字数：{length.total}/1000（标题＋正文＋话题）{length.withinLimit ? "" : " · 已超限，不能选择、复制或发布"}
+    </div>
+  );
 }
 
 function annotationSegments(draft: ContentDraft) {
@@ -2367,6 +2383,21 @@ function DraftCard({
   onRetry: () => void;
 }) {
   const readyForOperator = draftReadyForOperator(draft);
+  const publishLength = draftPublishLength(draft);
+  if (!publishLength.withinLimit) {
+    return (
+      <div className="rounded-2xl border border-red-200 bg-red-50/60 p-5">
+        <div className="flex flex-wrap gap-2">
+          <Badge>{draft.selected_body_version === "long" ? "长版" : "短版"}</Badge>
+          <Badge>字数超限</Badge>
+        </div>
+        <h3 className="mt-4 text-lg font-semibold">正文超过小红书1000字限制</h3>
+        <PublishLengthBadge draft={draft} />
+        <p className="mt-3 text-sm leading-6 text-slate-600">为避免复制后无法发布，正文内容和复制入口已隐藏。重新生成时系统会以950字为目标自然压缩并预留余量。</p>
+        <button type="button" disabled={Boolean(busy)} onClick={onRetry} className="mt-4 min-h-11 rounded-xl bg-slate-900 px-4 text-sm font-semibold text-white disabled:opacity-40">重新生成两个版本</button>
+      </div>
+    );
+  }
   if (!readyForOperator) {
     return (
       <div className="rounded-2xl border border-amber-200 bg-amber-50/50 p-5">
@@ -2418,6 +2449,7 @@ function DraftCard({
         <Badge>同一核心判断</Badge>
       </div>
       <h3 className="mt-3 text-lg font-semibold">{draft.title}</h3>
+      <PublishLengthBadge draft={draft} />
       <OperatorAnnotatedBody draft={draft} />
       <div className="mt-4">
         <PrimaryButton disabled={Boolean(busy)} onClick={() => onChoose(draft)}>选定这个版本</PrimaryButton>
@@ -2460,6 +2492,7 @@ function FinalDraft({
           <div className="mt-3 text-sm text-[#9a6b24]">{draft.hashtags.join(" ")}</div>
         </div>
       </div>
+      <PublishLengthBadge draft={draft} />
       <div className="sticky bottom-3 z-10 mt-5 rounded-2xl border border-[#ead7b5] bg-[#fffaf1]/95 p-4 shadow-lg backdrop-blur sm:static sm:shadow-none">
         <div className="font-semibold text-slate-900">最终正文已选定，复制到小红书</div>
         <p className="mt-1 text-xs leading-5 text-slate-600">复制只读取纯净标题、正文和话题；系统内的彩色校验标注不会进入剪贴板。</p>
@@ -2475,6 +2508,7 @@ function FinalDraft({
             label="复制正文＋话题"
             copiedLabel="正文已复制"
             primary
+            disabled={!publishable}
           />
         </div>
         <details className="mt-3 border-t border-[#ead7b5] pt-3 text-sm text-slate-600">
@@ -2482,7 +2516,7 @@ function FinalDraft({
           <div className="mt-2 flex flex-wrap gap-2">
             {hashtagsText && <CopyButton text={hashtagsText} label="单独复制话题" copiedLabel="话题已复制" />}
             <CopyButton text={draft.cover_text} label="复制封面句" copiedLabel="封面句已复制" />
-            <CopyButton text={packageText} label="复制完整发布包" copiedLabel="发布包已复制" />
+            <CopyButton text={packageText} label="复制完整发布包" copiedLabel="发布包已复制" disabled={!publishable} />
           </div>
         </details>
       </div>
@@ -3276,12 +3310,14 @@ function CopyButton({
   copiedLabel = "已复制",
   primary = false,
   compact = false,
+  disabled = false,
 }: {
   text: string;
   label: string;
   copiedLabel?: string;
   primary?: boolean;
   compact?: boolean;
+  disabled?: boolean;
 }) {
   const [state, setState] = useState<"idle" | "copied" | "failed">("idle");
 
@@ -3311,7 +3347,7 @@ function CopyButton({
   return (
     <button
       type="button"
-      disabled={!text}
+      disabled={disabled || !text}
       onClick={copyText}
       className={`${compact ? "min-h-9 px-3 py-1.5 text-xs" : "min-h-11 px-4 py-2.5 text-sm"} rounded-xl border font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${primary ? "border-slate-900 bg-slate-900 text-white hover:bg-slate-800" : "border-slate-300 bg-white text-slate-800 hover:border-slate-400"}`}
     >

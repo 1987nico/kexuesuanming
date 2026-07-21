@@ -58,6 +58,7 @@ import {
   sourceIsUsable,
   validateTopicCandidate,
   withDraftValidation,
+  XHS_PUBLISH_CHAR_TARGET,
 } from "./validation";
 
 const DEFAULT_TENANT_ID = "mianbajun";
@@ -690,7 +691,12 @@ export function composeBlueprintBody(
   blueprint: DraftBlueprintContext,
   spec: PromiseDeliverySpec,
   rawStructure?: unknown,
-  options?: { bodyVersion?: "short" | "long"; businessLine?: GrowthBusinessLine },
+  options?: {
+    bodyVersion?: "short" | "long";
+    businessLine?: GrowthBusinessLine;
+    compact?: boolean;
+    aggressive?: boolean;
+  },
 ) {
   const structure = rawStructure && typeof rawStructure === "object"
     ? rawStructure as Record<string, unknown>
@@ -706,9 +712,24 @@ export function composeBlueprintBody(
     const fallbackCount = spec.exactSections ?? Math.max(spec.minimumSections, Math.min(5, blueprint.delivery_sections.length));
     sections = blueprint.delivery_sections.slice(0, fallbackCount);
   }
+  const compactSection = (section: string) => {
+    const value = firstSentence(section);
+    const maximum = options?.aggressive ? 34 : 52;
+    if (Array.from(value).length <= maximum) return value;
+    const chars = Array.from(value);
+    const window = chars.slice(20, maximum).join("");
+    const boundary = Math.max(window.lastIndexOf("，"), window.lastIndexOf("；"), window.lastIndexOf("、"), window.lastIndexOf("。"));
+    const end = boundary >= 0 ? 20 + boundary + 1 : maximum - 1;
+    return `${chars.slice(0, end).join("").replace(/[，；、]$/u, "")}。`;
+  };
   sections = bodyVersion === "short"
     ? sections.map(firstSentence)
     : sections.map((section, index) => {
+      if (options?.compact) {
+        const compact = compactSection(section);
+        if (options.aggressive || index > 1) return compact;
+        return `${compact} ${longVersionDetail(index, businessLine)}`;
+      }
       const detail = longVersionDetail(index, businessLine);
       return section.includes(detail) ? section : `${section.trim()} ${detail}`;
     });
@@ -718,7 +739,15 @@ export function composeBlueprintBody(
   const serviceCandidate = asText(structure.service_bridge);
   const serviceBridge = bodyHasConversionEvidence(serviceCandidate) ? serviceCandidate : blueprint.service_bridge;
   const closing = asText(structure.closing) || blueprint.closing;
-  const versionContext = bodyVersion === "long" ? longVersionContext(businessLine) : "";
+  const versionContext = bodyVersion === "long"
+    ? options?.aggressive
+      ? ""
+      : options?.compact
+        ? businessLine === "overseas_student"
+          ? "使用这份安排时，把岗位、材料版本和截止时间放在一起记录，每轮只根据真实反馈调整一个变量。"
+          : "使用这套判断时，把进入门槛、能力证据和停止条件放在一起记录，再根据现实反馈调整。"
+        : longVersionContext(businessLine)
+    : "";
   return [opening, coreJudgement, versionContext, serviceBridge, renderedSections, closing]
     .map((section) => section.trim())
     .filter(Boolean)
@@ -829,6 +858,93 @@ async function passDraftValidationGate(
   return draft;
 }
 
+async function rewriteDraftWithinPublishTarget(
+  draft: ContentDraft,
+  account: GrowthAccount,
+) {
+  const hashtagChars = draft.hashtags.join(" ").length;
+  const bodyBudget = Math.max(240, XHS_PUBLISH_CHAR_TARGET - draft.title.length - hashtagChars - 1);
+  const result = await llmJSON<any>({
+    system: GROWTH_SYSTEM_PROMPT,
+    user: `请把下面这篇小红书正文自然压缩到${bodyBudget}字以内，只输出 JSON：{"body":"压缩后的完整正文"}。
+
+标题：${draft.title}
+标题承诺：${draft.title_promise}
+当前身份：${account.persona}
+人设：${account.one_liner}
+
+硬规则：
+1. 不是从尾部截断，而是删掉重复解释、合并同义句、缩短背景铺垫。
+2. 保留自然开头、唯一核心判断、标题承诺的全部编号项、专业服务的动作与阶段结果、唯一收束动作。
+3. 标题承诺数字时，编号数量不得改变；不得删除资料、清单或路线图中的核心交付。
+4. 保持真人口吻，不新增广告、互动诱导、站外导流或未经证实的结果。
+5. 正文自身必须不超过${bodyBudget}字，为标题和话题预留空间。
+
+原正文：
+${draft.body}`,
+    maxTokens: 2400,
+    temperature: 0.25,
+  });
+  return asText(result.data?.body);
+}
+
+async function fitDraftWithinPublishTarget(
+  draft: ContentDraft,
+  input: {
+    account: GrowthAccount;
+    persona: GrowthPersona;
+    businessLine: GrowthBusinessLine;
+    topic: TopicCandidate;
+    blueprint: DraftBlueprintContext;
+    spec: PromiseDeliverySpec;
+  },
+) {
+  if (draft.word_count.total <= XHS_PUBLISH_CHAR_TARGET) return draft;
+  try {
+    const compressedBody = await rewriteDraftWithinPublishTarget(draft, input.account);
+    if (compressedBody) {
+      const compressed = withDraftValidation(enforceDraftCompliance({
+        ...draft,
+        body: compressedBody,
+        word_count: countPublishChars(draft.title, compressedBody, draft.hashtags),
+        updated_at: now(),
+      }, input.topic.title), input.persona, (draft.validation_report?.attempts ?? 0) + 1);
+      if (compressed.word_count.total <= XHS_PUBLISH_CHAR_TARGET && compressed.validation_report?.status === "passed") {
+        return compressed;
+      }
+    }
+  } catch (error) {
+    console.warn("[growth] publish length rewrite fallback:", (error as Error).message);
+  }
+
+  let fallbackBody = composeBlueprintBody(input.blueprint, input.spec, undefined, {
+    bodyVersion: draft.selected_body_version === "long" ? "long" : "short",
+    businessLine: input.businessLine,
+    compact: true,
+  });
+  let fallback = withDraftValidation(enforceDraftCompliance({
+    ...draft,
+    body: fallbackBody,
+    word_count: countPublishChars(draft.title, fallbackBody, draft.hashtags),
+    updated_at: now(),
+  }, input.topic.title), input.persona, (draft.validation_report?.attempts ?? 0) + 1);
+  if (fallback.word_count.total <= XHS_PUBLISH_CHAR_TARGET) return fallback;
+
+  fallbackBody = composeBlueprintBody(input.blueprint, input.spec, undefined, {
+    bodyVersion: draft.selected_body_version === "long" ? "long" : "short",
+    businessLine: input.businessLine,
+    compact: true,
+    aggressive: true,
+  });
+  fallback = withDraftValidation(enforceDraftCompliance({
+    ...draft,
+    body: fallbackBody,
+    word_count: countPublishChars(draft.title, fallbackBody, draft.hashtags),
+    updated_at: now(),
+  }, input.topic.title), input.persona, (draft.validation_report?.attempts ?? 0) + 1);
+  return fallback;
+}
+
 async function generateSingleDraft(input: {
   tenantId?: string; account: GrowthAccount; run: GrowthRun; topic: TopicCandidate;
   bodyVersion: "short" | "long"; excludeBodies?: string[]; learningBrief?: GrowthLearningBrief;
@@ -898,6 +1014,14 @@ async function generateSingleDraft(input: {
     blueprint: input.blueprint,
     spec: input.spec,
   });
+  draft = await fitDraftWithinPublishTarget(draft, {
+    account: input.account,
+    persona: input.account.persona,
+    businessLine,
+    topic: input.topic,
+    blueprint: input.blueprint,
+    spec: input.spec,
+  });
   return { draft, usage };
 }
 
@@ -923,6 +1047,14 @@ export async function generateDraftVariants(input: {
       word_count: countPublishChars(longDraft.title, distinctBody, longDraft.hashtags),
       updated_at: now(),
     }, input.topic.title), input.account.persona, longDraft.validation_report?.attempts ?? 0);
+    longDraft = await fitDraftWithinPublishTarget(longDraft, {
+      account: input.account,
+      persona: input.account.persona,
+      businessLine,
+      topic: input.topic,
+      blueprint: planned.blueprint,
+      spec: planned.spec,
+    });
   }
   return { drafts: [short.draft, longDraft], usage: long.usage || short.usage || planned.usage };
 }
@@ -971,12 +1103,25 @@ export async function repairDraftPart(input: {
   });
   const body = asText(result.data?.body);
   if (!body) throw new Error("draft_repair_empty");
-  const repaired = withDraftValidation(enforceDraftCompliance({
+  let repaired = withDraftValidation(enforceDraftCompliance({
     ...input.draft,
     body,
     word_count: countPublishChars(input.draft.title, body, input.draft.hashtags),
     updated_at: now(),
   }, input.topic.title), input.account.persona, (input.draft.validation_report?.attempts ?? 0) + 1);
+  if (repaired.word_count.total > XHS_PUBLISH_CHAR_TARGET) {
+    try {
+      const compressedBody = await rewriteDraftWithinPublishTarget(repaired, input.account);
+      if (compressedBody) repaired = withDraftValidation(enforceDraftCompliance({
+        ...repaired,
+        body: compressedBody,
+        word_count: countPublishChars(repaired.title, compressedBody, repaired.hashtags),
+        updated_at: now(),
+      }, input.topic.title), input.account.persona, (repaired.validation_report?.attempts ?? 0) + 1);
+    } catch (error) {
+      console.warn("[growth] repaired draft length rewrite skipped:", (error as Error).message);
+    }
+  }
   return { draft: repaired, usage: resultUsage(result) };
 }
 

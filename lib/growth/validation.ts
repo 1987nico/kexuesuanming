@@ -11,6 +11,9 @@ import type {
 } from "./types";
 import { methodApplicability, TITLE_METHOD_BY_ID } from "./methods";
 
+export const XHS_PUBLISH_CHAR_LIMIT = 1000;
+export const XHS_PUBLISH_CHAR_TARGET = 950;
+
 export function normalizeTags(tags: string[]) {
   return tags.map((tag) => (tag.startsWith("#") ? tag : `#${tag}`)).slice(0, 5);
 }
@@ -22,7 +25,7 @@ export function countPublishChars(title: string, body: string, hashtags: string[
     title: title.length,
     body_and_tags: bodyAndTags,
     total,
-    within_limit: total <= 1000,
+    within_limit: total <= XHS_PUBLISH_CHAR_LIMIT,
   };
 }
 
