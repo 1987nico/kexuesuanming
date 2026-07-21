@@ -658,15 +658,47 @@ function cleanDeliverySection(value: string) {
   return value.replace(/^\s*(?:\d{1,2}[.、)]|[一二三四五六七八九十]+[、.])\s*/u, "").trim();
 }
 
-function composeBlueprintBody(
+function firstSentence(value: string) {
+  const match = value.trim().match(/^.*?[。！？!?]/u);
+  return (match?.[0] || value).trim();
+}
+
+function longVersionContext(businessLine: GrowthBusinessLine) {
+  return businessLine === "overseas_student"
+    ? "真正执行时，岗位、材料和截止时间要放在同一张表里看。只看投了多少份没有意义，还要记下用了哪个版本、卡在哪一轮，以及下一次只改哪个变量。"
+    : "真正验证时，职位头衔、平台资源和个人能力要拆开记录。不能只问这条路听起来好不好，还要写清进入门槛、失败成本，以及下一步能拿到什么现实反馈。";
+}
+
+function longVersionDetail(index: number, businessLine: GrowthBusinessLine) {
+  const overseas = [
+    "执行时把目标岗位、截止日期和对应简历版本写在同一行，下一轮才能分清是方向还是材料出了问题。",
+    "每周只根据真实投递、笔试和面试反馈调整一个变量，别因为焦虑同时推翻全部计划。",
+    "遇到两边时间冲突时，先看不可逆的截止节点，再安排可以补做的材料和练习。",
+    "到了复盘日期就按证据收窄岗位，不用成功案例替代自己已经拿到的真实反馈。",
+  ];
+  const executive = [
+    "执行时要把进入门槛、可验证证据和停止条件写清楚，避免只凭职位想象判断机会。",
+    "先用访谈、试做或小样本报价拿到反馈，再决定是否投入更多时间和现金流。",
+    "复盘时把个人能力和原平台资源分开，确认离开现职位后哪些成果仍能被外部识别。",
+    "到了约定日期就看反对证据，不因为已经投入了时间而无限延长一条低胜率路径。",
+  ];
+  const details = businessLine === "overseas_student" ? overseas : executive;
+  return details[index % details.length];
+}
+
+export function composeBlueprintBody(
   blueprint: DraftBlueprintContext,
   spec: PromiseDeliverySpec,
   rawStructure?: unknown,
+  options?: { bodyVersion?: "short" | "long"; businessLine?: GrowthBusinessLine },
 ) {
   const structure = rawStructure && typeof rawStructure === "object"
     ? rawStructure as Record<string, unknown>
     : {};
-  const opening = blueprint.opening;
+  const bodyVersion = options?.bodyVersion ?? "short";
+  const businessLine = options?.businessLine ?? "executive";
+  const opening = asText(structure.opening) || blueprint.opening;
+  const coreJudgement = asText(structure.core_judgement) || blueprint.core_judgement;
   let sections = normalizeBlueprintSections(structure.delivery_sections);
   if (spec.exactSections && sections.length !== spec.exactSections) sections = blueprint.delivery_sections.slice(0, spec.exactSections);
   if (!spec.exactSections && sections.length > 5) sections = sections.slice(0, 5);
@@ -674,13 +706,20 @@ function composeBlueprintBody(
     const fallbackCount = spec.exactSections ?? Math.max(spec.minimumSections, Math.min(5, blueprint.delivery_sections.length));
     sections = blueprint.delivery_sections.slice(0, fallbackCount);
   }
+  sections = bodyVersion === "short"
+    ? sections.map(firstSentence)
+    : sections.map((section, index) => {
+      const detail = longVersionDetail(index, businessLine);
+      return section.includes(detail) ? section : `${section.trim()} ${detail}`;
+    });
   const renderedSections = spec.format === "numbered"
     ? sections.map((section, index) => `${index + 1}. ${cleanDeliverySection(section)}`).join("\n\n")
     : sections.join("\n\n");
   const serviceCandidate = asText(structure.service_bridge);
   const serviceBridge = bodyHasConversionEvidence(serviceCandidate) ? serviceCandidate : blueprint.service_bridge;
   const closing = asText(structure.closing) || blueprint.closing;
-  return [opening, blueprint.core_judgement, serviceBridge, renderedSections, closing]
+  const versionContext = bodyVersion === "long" ? longVersionContext(businessLine) : "";
+  return [opening, coreJudgement, versionContext, serviceBridge, renderedSections, closing]
     .map((section) => section.trim())
     .filter(Boolean)
     .join("\n\n");
@@ -774,7 +813,10 @@ async function passDraftValidationGate(
       }
     } else {
       // 第二轮不再给自由正文打补丁，直接回到生成前骨架重组，确保三项要求是正文结构的一部分。
-      repairedBody = composeBlueprintBody(input.blueprint, input.spec);
+      repairedBody = composeBlueprintBody(input.blueprint, input.spec, undefined, {
+        bodyVersion: draft.selected_body_version === "long" ? "long" : "short",
+        businessLine: input.businessLine,
+      });
     }
     const checked = enforceDraftCompliance({
       ...draft,
@@ -805,7 +847,9 @@ async function generateSingleDraft(input: {
         generationMode: input.topic.generation_mode, title: input.topic.title,
         titlePromise: input.topic.title_promise, testVariable: input.topic.test_variable,
         expectedSignal: input.topic.expected_signal, followReason: input.topic.follow_reason,
-        variantHint: input.bodyVersion === "short" ? "写150—300字短版。" : "写600—900字长版。",
+        variantHint: input.bodyVersion === "short"
+          ? "当前只写短版：150—300字，用更少的段落直接交付结论和必要动作，不展开背景解释。"
+          : "当前只写长版：600—900字。在同一核心判断下补充现场、判断依据、执行细节和避坑说明；不得复用短版原句或只做同义改写。",
         learningGuidance: input.learningBrief ? formatLearningBrief(input.learningBrief) : undefined,
         excludeBodies: input.excludeBodies, blueprint: input.blueprint,
         deliveryRule: input.spec.rule, ctaType: cta,
@@ -818,7 +862,10 @@ async function generateSingleDraft(input: {
   }
   const title = enforceTitleLimit(payload?.title || input.topic.title);
   const businessLine = input.account.business_line ?? "executive";
-  const body = composeBlueprintBody(input.blueprint, input.spec, payload?.body_structure);
+  const body = composeBlueprintBody(input.blueprint, input.spec, payload?.body_structure, {
+    bodyVersion: input.bodyVersion,
+    businessLine,
+  });
   const hashtags = normalizeTags(Array.isArray(payload?.hashtags) ? payload.hashtags : businessLine === "overseas_student" ? ["#留学生求职", "#海归求职", "#职业规划"] : ["#中高管", "#职业转型", "#职业决策"]);
   const timestamp = now();
   const raw: ContentDraft = {
@@ -863,7 +910,42 @@ export async function generateDraftVariants(input: {
   const shared = { ...input, blueprint: planned.blueprint, spec: planned.spec };
   const short = await generateSingleDraft({ ...shared, bodyVersion: "short" });
   const long = await generateSingleDraft({ ...shared, bodyVersion: "long", excludeBodies: [...(input.excludeBodies ?? []), short.draft.body] });
-  return { drafts: [short.draft, long.draft], usage: long.usage || short.usage || planned.usage };
+  let longDraft = long.draft;
+  if (draftBodiesAreTooSimilar(short.draft.body, longDraft.body)) {
+    const businessLine = input.account.business_line ?? "executive";
+    const distinctBody = composeBlueprintBody(planned.blueprint, planned.spec, undefined, {
+      bodyVersion: "long",
+      businessLine,
+    });
+    longDraft = withDraftValidation(enforceDraftCompliance({
+      ...longDraft,
+      body: distinctBody,
+      word_count: countPublishChars(longDraft.title, distinctBody, longDraft.hashtags),
+      updated_at: now(),
+    }, input.topic.title), input.account.persona, longDraft.validation_report?.attempts ?? 0);
+  }
+  return { drafts: [short.draft, longDraft], usage: long.usage || short.usage || planned.usage };
+}
+
+function comparisonBigrams(value: string) {
+  const normalized = value.replace(/[\s\p{P}\p{S}]/gu, "").toLowerCase();
+  const chars = Array.from(normalized);
+  return new Set(chars.slice(0, -1).map((char, index) => `${char}${chars[index + 1]}`));
+}
+
+export function draftBodiesAreTooSimilar(shortBody: string, longBody: string) {
+  const shortNormalized = shortBody.replace(/\s+/g, "").trim();
+  const longNormalized = longBody.replace(/\s+/g, "").trim();
+  if (!shortNormalized || !longNormalized) return false;
+  if (shortNormalized === longNormalized) return true;
+  const shortPairs = comparisonBigrams(shortBody);
+  const longPairs = comparisonBigrams(longBody);
+  if (!shortPairs.size || !longPairs.size) return false;
+  let overlap = 0;
+  for (const pair of shortPairs) if (longPairs.has(pair)) overlap += 1;
+  const lengthRatio = Math.max(shortNormalized.length, longNormalized.length)
+    / Math.min(shortNormalized.length, longNormalized.length);
+  return overlap / Math.min(shortPairs.size, longPairs.size) >= 0.9 && lengthRatio < 1.35;
 }
 
 export type DraftRepairType = "opening" | "fulfillment" | "identity" | "conversion" | "outcome";
