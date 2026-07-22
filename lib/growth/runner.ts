@@ -346,8 +346,32 @@ export function titlesAreNearDuplicate(left: string, right: string) {
   return bigramDice >= 0.76 || lcsRatio >= 0.84 || (characterDice >= 0.9 && lcsRatio >= 0.72);
 }
 
+function titlesAreSameMethodNearDuplicate(left: string, right: string) {
+  const a = normalizeTitleHistoryFingerprint(left);
+  const b = normalizeTitleHistoryFingerprint(right);
+  if (!a || !b) return false;
+  if (titlesAreNearDuplicate(left, right)) return true;
+  const shorter = Array.from(a).length <= Array.from(b).length ? a : b;
+  const longer = shorter === a ? b : a;
+  if (Array.from(shorter).length >= 6 && longer.includes(shorter)) return true;
+  const bigramDice = diceCoefficient(ngrams(a, 2), ngrams(b, 2));
+  const lcsRatio = longestCommonSubsequenceRatio(a, b);
+  return bigramDice >= 0.6 && lcsRatio >= 0.76;
+}
+
 export function findDuplicateTitle(title: string, history: string[]) {
   return history.find((item) => titlesAreNearDuplicate(title, item));
+}
+
+export interface TopicTitleHistoryEntry {
+  method_id?: TitleMethodId;
+  title: string;
+}
+
+function titlesHaveSameHistoryFingerprint(left: string, right: string) {
+  const a = normalizeTitleHistoryFingerprint(left);
+  const b = normalizeTitleHistoryFingerprint(right);
+  return Boolean(a && b && a === b);
 }
 
 export function selectFreshTitle(
@@ -408,14 +432,16 @@ function normalizeTopics(
     const row = rows.find((item) => item?.method_id === method.id);
     if (!row || !asText(row.title)) throw new Error(`missing_method_title:${method.id}`);
     const title = enforceTitleLimit(asText(row.title));
+    const base = fallbackTopic(account, method, mode, sources.get(method.id), title);
     const topic: TopicCandidate = {
-      ...fallbackTopic(account, method, mode, sources.get(method.id), title),
+      ...base,
       title,
       title_promise: asText(row.title_promise) || titles[method.id][1],
       target_user: asText(row.target_user) || account.target_user,
       pain: asText(row.pain) || account.core_problem,
       hook: asText(row.hook) || asText(row.title),
-      origin_force: asText(row.origin_force), conflict_judgement: asText(row.conflict_judgement),
+      origin_force: asText(row.origin_force) || base.origin_force,
+      conflict_judgement: asText(row.conflict_judgement) || base.conflict_judgement,
       follow_reason: asText(row.follow_reason) || account.follow_reason || (account.business_line === "overseas_student" ? "持续获得留学生求职判断。" : "持续获得中高管职业判断。"),
       test_variable: asText(row.test_variable) || `${method.label}标题入口`,
       expected_signal: asText(row.expected_signal) || "有效咨询",
@@ -428,14 +454,36 @@ function normalizeTopics(
   });
 }
 
-export function topicBatchDuplicateProblems(topics: TopicCandidate[], historyTitles: string[]) {
+function topicCandidateDuplicateProblems(
+  topic: TopicCandidate,
+  historyTitles: string[],
+  historyTopics: TopicTitleHistoryEntry[],
+  accepted: TopicCandidate[],
+) {
+  const problems: string[] = [];
+  // 全历史禁止原样、标点微调、数字替换和语气词微调；这才是“以前没有出现过”。
+  const sameFingerprint = historyTitles.find((item) => titlesHaveSameHistoryFingerprint(topic.title, item));
+  if (sameFingerprint) problems.push(`${topic.method_id}:与历史标题“${sameFingerprint}”实质相同`);
+  // 语义近似只和同一种方法比较。不同方法天然会共享业务词，跨方法近似拦截会让长期生成失去可用空间。
+  const sameMethodHistory = historyTopics.find((item) =>
+    item.method_id === topic.method_id && titlesAreSameMethodNearDuplicate(topic.title, item.title));
+  if (sameMethodHistory && sameMethodHistory.title !== sameFingerprint) {
+    problems.push(`${topic.method_id}:与该方法历史标题“${sameMethodHistory.title}”重复或近似`);
+  }
+  const inBatch = accepted.find((item) => titlesAreNearDuplicate(topic.title, item.title));
+  if (inBatch) problems.push(`${topic.method_id}:与本批次${inBatch.method_id}标题重复或近似`);
+  return problems;
+}
+
+export function topicBatchDuplicateProblems(
+  topics: TopicCandidate[],
+  historyTitles: string[],
+  historyTopics: TopicTitleHistoryEntry[] = [],
+) {
   const problems: string[] = [];
   const accepted: TopicCandidate[] = [];
   for (const topic of topics) {
-    const historical = findDuplicateTitle(topic.title, historyTitles);
-    if (historical) problems.push(`${topic.method_id}:与历史标题“${historical}”重复或近似`);
-    const inBatch = accepted.find((item) => titlesAreNearDuplicate(topic.title, item.title));
-    if (inBatch) problems.push(`${topic.method_id}:与本批次${inBatch.method_id}标题重复或近似`);
+    problems.push(...topicCandidateDuplicateProblems(topic, historyTitles, historyTopics, accepted));
     accepted.push(topic);
   }
   return problems;
@@ -517,6 +565,7 @@ export async function generateTopicBatch(input: {
   excludeTitles?: string[];
   currentTitles?: string[];
   historyTitles?: string[];
+  historyTopics?: TopicTitleHistoryEntry[];
   recentSignals?: string;
   learningBrief?: GrowthLearningBrief;
 }): Promise<{ topics: TopicCandidate[]; unavailableMethods: GrowthRun["unavailable_methods"]; generationAttempts: number; usage?: Record<string, unknown> }> {
@@ -533,11 +582,14 @@ export async function generateTopicBatch(input: {
     ...(input.excludeTitles ?? []),
     ...(input.currentTitles ?? []),
   ].filter(Boolean)));
+  const historyTopics = input.historyTopics ?? [];
   const rejectedTitles: string[] = [];
   let lastProblems: string[] = [];
   let usage: Record<string, unknown> | undefined;
+  const accepted = new Map<TitleMethodId, TopicCandidate>();
 
-  for (let attempt = 1; attempt <= 2; attempt += 1) {
+  for (let attempt = 1; attempt <= 3 && accepted.size < methods.length; attempt += 1) {
+    const pendingMethods = methods.filter((method) => !accepted.has(method.id));
     try {
       const result = await llmJSON<any>({
         system: GROWTH_SYSTEM_PROMPT,
@@ -545,31 +597,75 @@ export async function generateTopicBatch(input: {
           week: Math.max(1, Math.min(4, input.week ?? 1)), persona: input.account.persona,
           targetUser: input.account.target_user, coreProblem: input.account.core_problem,
           recentSignals: input.learningBrief ? formatLearningBrief(input.learningBrief) : input.recentSignals,
-          methods, generationMode,
-          sources: methods.map((method) => sources.get(method.id)).filter(Boolean) as TopicSourceSnapshot[],
-          excludeTitles: [...historyTitles, ...rejectedTitles], context: accountContext(input.account),
-        }), maxTokens: 5000, temperature: Math.min(0.72, 0.55 + attempt * 0.08),
-        timeoutMs: 35_000, jsonRetries: 1,
+          methods: pendingMethods, generationMode,
+          sources: pendingMethods.map((method) => sources.get(method.id)).filter(Boolean) as TopicSourceSnapshot[],
+          excludeTitles: [...historyTitles, ...rejectedTitles, ...[...accepted.values()].map((topic) => topic.title)],
+          context: accountContext(input.account),
+        }), maxTokens: 2200, temperature: Math.min(0.78, 0.58 + attempt * 0.07),
+        timeoutMs: 65_000, jsonRetries: 0,
       });
       usage = resultUsage(result);
-      const topics = normalizeTopics(result.data?.topics, input.account, methods, generationMode, sources);
-      const duplicateProblems = topicBatchDuplicateProblems(topics, historyTitles);
-      const migrationProblems = duplicateProblems.length
-        ? []
-        : sourceMigrationProblems(result.data?.topics, topics, sources);
-      lastProblems = [...duplicateProblems, ...migrationProblems];
-      if (!lastProblems.length) {
+      const rows = Array.isArray(result.data?.topics) ? result.data.topics : [];
+      const attemptProblems: string[] = [];
+
+      for (const method of pendingMethods) {
+        const row = rows.find((item: any) => item?.method_id === method.id);
+        if (!row) {
+          attemptProblems.push(`${method.id}:模型未返回该方法`);
+          continue;
+        }
+        const candidateTitles = Array.from(new Set([
+          asText(row.title),
+          ...(Array.isArray(row.alternative_titles) ? row.alternative_titles.map(asText) : []),
+        ].map(enforceTitleLimit).filter(Boolean))).slice(0, 3);
+        let acceptedTopic: TopicCandidate | undefined;
+        const candidateProblems: string[] = [];
+
+        for (const candidateTitle of candidateTitles) {
+          try {
+            const candidateRow = { ...row, title: candidateTitle };
+            const [topic] = normalizeTopics([candidateRow], input.account, [method], generationMode, sources);
+            const duplicateProblems = topicCandidateDuplicateProblems(
+              topic,
+              historyTitles,
+              historyTopics,
+              [...accepted.values()],
+            );
+            const migrationProblems = duplicateProblems.length
+              ? []
+              : sourceMigrationProblems([candidateRow], [topic], sources);
+            const problems = [...duplicateProblems, ...migrationProblems];
+            if (!problems.length) {
+              acceptedTopic = sources.has(topic.method_id)
+                ? { ...topic, source_usage_status: "passed" as const, source_usage_version: "v3_5" as const }
+                : topic;
+              accepted.set(method.id, acceptedTopic);
+              break;
+            }
+            candidateProblems.push(...problems);
+            rejectedTitles.push(candidateTitle);
+          } catch (error) {
+            candidateProblems.push(`${method.id}:${(error as Error).message}`);
+          }
+        }
+        if (!acceptedTopic) {
+          attemptProblems.push(candidateProblems[0] ?? `${method.id}:未返回可用的新标题候选`);
+        }
+      }
+
+      lastProblems = attemptProblems;
+      if (accepted.size === methods.length) {
         return {
-          topics: topics.map((topic) => sources.has(topic.method_id)
-            ? { ...topic, source_usage_status: "passed" as const, source_usage_version: "v3_5" as const }
-            : topic),
+          topics: methods.map((method) => accepted.get(method.id)!),
           unavailableMethods,
           generationAttempts: attempt,
           usage,
         };
       }
-      rejectedTitles.push(...topics.map((topic) => topic.title));
-      console.warn(`[growth] topic batch rejected attempt ${attempt}:`, lastProblems.join(" | "));
+      console.warn(
+        `[growth] topic batch partially accepted attempt ${attempt} (${accepted.size}/${methods.length}):`,
+        lastProblems.join(" | "),
+      );
     } catch (error) {
       lastProblems = [(error as Error).message || "标题批次生成失败"];
       console.warn(`[growth] topic batch attempt ${attempt} failed:`, lastProblems[0]);

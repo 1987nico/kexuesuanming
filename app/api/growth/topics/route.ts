@@ -114,6 +114,10 @@ export async function POST(req: Request) {
     ]),
     ...notes.map((draft) => draft.title),
   ].filter(Boolean)));
+  const historyTopics = runs.flatMap((item) => item.topic_pool.map((topic) => ({
+    method_id: topic.method_id,
+    title: topic.title,
+  })));
 
   let generated: Awaited<ReturnType<typeof generateTopicBatch>>;
   try {
@@ -123,6 +127,7 @@ export async function POST(req: Request) {
       generationMode,
       excludeTitles: historyTitles,
       historyTitles,
+      historyTopics,
       currentTitles,
       learningBrief,
     });

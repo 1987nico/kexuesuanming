@@ -5,6 +5,7 @@ import {
   normalizeTitleHistoryFingerprint,
   selectFreshTitle,
   titlesAreNearDuplicate,
+  topicBatchDuplicateProblems,
 } from "./runner";
 
 const len = (s: string) => Array.from(s).length;
@@ -89,5 +90,38 @@ describe("标题完整历史语义去重", () => {
       "学历越好，秋招越怕没回音",
       "秋招缺的不是海投，是反馈",
     ])).toBe("秋招缺的不是海投，是反馈");
+  });
+});
+
+describe("标题批次长期去重范围", () => {
+  const topic = (method_id: "human_pain" | "contrarian", title: string) => ({
+    method_id,
+    title,
+  }) as any;
+
+  it("跨方法仍拦截只改标点或数字的历史标题", () => {
+    expect(topicBatchDuplicateProblems(
+      [topic("contrarian", "高管离职前查这3项！")],
+      ["高管离职前查这5项"],
+    )).toHaveLength(1);
+  });
+
+  it("语义近似只拦截同方法历史，避免业务词重复拖垮整批", () => {
+    const current = topic("human_pain", "留英等工签，还是回国赶秋招？");
+    const history = "留英等工签，还是赶国内秋招？";
+    expect(topicBatchDuplicateProblems([current], [history], [
+      { method_id: "contrarian", title: history },
+    ])).toHaveLength(0);
+    expect(topicBatchDuplicateProblems([current], [history], [
+      { method_id: "human_pain", title: history },
+    ])).toHaveLength(1);
+  });
+
+  it("同方法旧标题删掉后半句仍不算新标题", () => {
+    expect(topicBatchDuplicateProblems(
+      [topic("human_pain", "留伦敦闯还是回上海稳")],
+      ["留伦敦闯还是回上海稳，两头难选"],
+      [{ method_id: "human_pain", title: "留伦敦闯还是回上海稳，两头难选" }],
+    )).toHaveLength(1);
   });
 });

@@ -123,7 +123,10 @@ function hasKey(provider: Provider): boolean {
 
 export async function llmComplete(req: LLMRequest): Promise<LLMResponse> {
   const primaryOK = hasKey(PRIMARY_PROVIDER);
-  const fallbackOK = hasKey(FALLBACK_PROVIDER);
+  // 生产环境可能把主、备都配置成同一个供应商和同一个模型。
+  // 这种情况下超时后再次调用同一路由只会把等待时间翻倍，不是真正的故障转移。
+  const fallbackIsDistinct = FALLBACK_PROVIDER !== PRIMARY_PROVIDER || FALLBACK_MODEL !== PRIMARY_MODEL;
+  const fallbackOK = hasKey(FALLBACK_PROVIDER) && fallbackIsDistinct;
   if (!primaryOK && !fallbackOK) {
     throw new Error(
       "未配置任何 AI 模型 API key。请在 .env 中设置以下任一变量：ARK_API_KEY（豆包/火山方舟）、DEEPSEEK_API_KEY、ANTHROPIC_API_KEY 或 OPENAI_API_KEY"
