@@ -2347,8 +2347,12 @@ function DraftCard({
 }) {
   const readyForOperator = draftReadyForOperator(draft);
   const publishLength = draftPublishLength(draft);
+  const compatibleLegacySelection = selected
+    && draft.certification_status === undefined
+    && publishLength.withinLimit;
   // 新接口只会返回认证正文；防御性拦截异常数据，但不把内部失败与修复责任暴露给操作者。
-  if (!publishLength.withinLimit || !readyForOperator) return null;
+  // 升级前已经被运营明确选定的正文继续保留查看和复制，避免历史选择在升级后变成空白。
+  if (!publishLength.withinLimit || (!readyForOperator && !compatibleLegacySelection)) return null;
 
   if (selected && onPublish) {
     return (
@@ -2388,13 +2392,15 @@ function FinalDraft({
   const bodyWithHashtags = hashtagsText ? `${draft.body}\n\n${hashtagsText}` : draft.body;
   const packageText = `${draft.title}\n\n${bodyWithHashtags}`;
   const feedback = `标题：${draft.title}\n方法：${draft.method_label}\n承诺：${draft.title_promise}\n复盘重点：${draft.review_points.join("、")}`;
-  const publishable = draftReadyForOperator(draft);
+  const publishable = draftReadyForOperator(draft)
+    || (draft.certification_status === undefined && draftPublishLength(draft).withinLimit);
   return (
     <div className="rounded-2xl border border-slate-200 p-5">
       <div className="flex flex-wrap gap-2">
         <Badge>{draft.method_group === "native" ? "原生法" : "对标法"}</Badge>
         <Badge>{draft.method_label}</Badge>
         <Badge>{draft.selected_body_version === "long" ? "长版" : "短版"}</Badge>
+        {draft.certification_status === undefined && <Badge>升级前已选正文</Badge>}
       </div>
       <div className="mt-5 grid gap-4 lg:grid-cols-[220px_1fr]">
         <div className="rounded-2xl bg-slate-900 p-5 text-white">
