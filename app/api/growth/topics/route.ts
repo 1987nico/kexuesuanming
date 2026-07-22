@@ -106,22 +106,37 @@ export async function POST(req: Request) {
   const previousRuns = runs.filter((item) => item.generation_mode === generationMode);
   const latestRun = previousRuns[0] ?? null;
   const currentTitles = latestRun?.topic_pool.map((topic) => topic.title) ?? [];
-  const seenTitles = Array.from(new Set(previousRuns.flatMap((item) => [
+  // 当前账号就是“业务×视角”隔离空间；读取全部批次、编辑历史和正文标题，永不只截最近120条。
+  const historyTitles = Array.from(new Set([
+    ...runs.flatMap((item) => [
     ...(item.seen_titles ?? []),
     ...item.topic_pool.map((topic) => topic.title),
-  ]))).slice(-120);
+    ]),
+    ...notes.map((draft) => draft.title),
+  ].filter(Boolean)));
 
-  const { topics, unavailableMethods, usage } = await generateTopicBatch({
-    account,
-    week: parsed.data.week ?? latestRun?.week ?? 1,
-    generationMode,
-    excludeTitles: seenTitles,
-    currentTitles,
-    learningBrief,
-  });
+  let generated: Awaited<ReturnType<typeof generateTopicBatch>>;
+  try {
+    generated = await generateTopicBatch({
+      account,
+      week: parsed.data.week ?? latestRun?.week ?? 1,
+      generationMode,
+      excludeTitles: historyTitles,
+      historyTitles,
+      currentTitles,
+      learningBrief,
+    });
+  } catch (error) {
+    console.error("[growth] atomic topic batch failed:", (error as Error).message);
+    return NextResponse.json({
+      error: "topic_batch_generation_failed",
+      message: "本轮未能生成完整的新标题，当前批次未被替换。请再次换一批。",
+    }, { status: 422 });
+  }
+  const { topics, unavailableMethods, usage, generationAttempts } = generated;
 
   const timestamp = now();
-  const nextSeen = Array.from(new Set([...seenTitles, ...topics.map((topic) => topic.title)])).slice(-120);
+  const nextSeen = Array.from(new Set(topics.map((topic) => topic.title)));
   // 每次生成都是一个独立批次。旧批次继续保留，前台可查看并恢复最近3批；
   // 新批次失败时不会覆盖当前批次，也不会清空操作者已经编辑或选中的标题。
   const run: GrowthRun = {
@@ -133,6 +148,9 @@ export async function POST(req: Request) {
     objective: generationMode === "default" ? "按当前视角的默认方法各生成1个标题。" : "按当前视角的探索方法各生成1个标题。",
     experiment_hypothesis: "用有效咨询率验证标题方法，而不是依赖主观评分。",
     generation_mode: generationMode,
+    generation_status: "completed",
+    uniqueness_status: "passed",
+    generation_attempts: generationAttempts,
     topic_pool: topics,
     unavailable_methods: unavailableMethods,
     seen_titles: nextSeen,
@@ -169,8 +187,12 @@ export async function POST(req: Request) {
   }
 
   return NextResponse.json({
+    status: "completed",
     run,
     newTopics: topics,
+    generatedCount: topics.length,
+    sourceUsageStatus: "passed",
+    uniquenessStatus: "passed",
     unavailableMethods,
     topicSources: account.topic_sources ?? [],
     sourceRefresh: discovered.summary,

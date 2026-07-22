@@ -477,6 +477,9 @@ export interface TopicCandidate {
   pain: string;
   hook: string;
   source_snapshot?: TopicSourceSnapshot;
+  /** 来源型标题已通过“确实使用母题逻辑”的内部二元门禁；不保存具体迁移推理。 */
+  source_usage_status?: "passed" | "failed";
+  source_usage_version?: "v3_5";
   internal_insight_source?: string;
   validation_checks?: ValidationCheck[];
   // 旧字段只用于打开历史数据；新流程不再写入或依赖。
@@ -516,6 +519,9 @@ export interface GrowthRun {
   selected_topic?: TopicCandidate;
   topic_pool: TopicCandidate[];
   generation_mode?: MethodGenerationMode;
+  generation_status?: "generating" | "completed" | "failed";
+  uniqueness_status?: "passed" | "failed";
+  generation_attempts?: number;
   unavailable_methods?: Array<{
     method_id: TitleMethodId;
     method_label: string;

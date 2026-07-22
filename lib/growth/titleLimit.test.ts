@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { enforceTitleLimit, selectFreshTitle } from "./runner";
+import {
+  enforceTitleLimit,
+  findDuplicateTitle,
+  normalizeTitleHistoryFingerprint,
+  selectFreshTitle,
+  titlesAreNearDuplicate,
+} from "./runner";
 
 const len = (s: string) => Array.from(s).length;
 
@@ -57,5 +63,31 @@ describe("selectFreshTitle（换一批不重复当前标题）", () => {
     expect(selectFreshTitle(options, {
       currentTitles: ["工资越高辞职信越难写！"],
     })).toBe(options[0]);
+  });
+});
+
+describe("标题完整历史语义去重", () => {
+  it("把只调整标点和语气词的标题识别为同一个", () => {
+    expect(titlesAreNearDuplicate(
+      "秋招缺的不是海投，是反馈",
+      "秋招真正缺的不是海投，而是反馈！",
+    )).toBe(true);
+  });
+
+  it("数字变化不能伪装成新标题", () => {
+    expect(normalizeTitleHistoryFingerprint("高管离职前查这5项"))
+      .toBe(normalizeTitleHistoryFingerprint("高管离职前查这3项"));
+  });
+
+  it("保留真正不同的选题", () => {
+    expect(titlesAreNearDuplicate("留英等工签，还是赶国内秋招？", "名校毕业，海投反而更吃亏"))
+      .toBe(false);
+  });
+
+  it("能返回命中的历史标题", () => {
+    expect(findDuplicateTitle("秋招真正缺的不是海投，而是反馈", [
+      "学历越好，秋招越怕没回音",
+      "秋招缺的不是海投，是反馈",
+    ])).toBe("秋招缺的不是海投，是反馈");
   });
 });

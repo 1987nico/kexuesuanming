@@ -773,7 +773,9 @@ export default function GrowthPage() {
     if (group) setExploreOpen((current) => ({ ...current, [group]: true }));
     try {
       const result = await requestJSON<{
+        status: "completed";
         run: GrowthRun;
+        generatedCount: number;
         unavailableMethods: GrowthRun["unavailable_methods"];
         topicSources: TopicSourceSnapshot[];
         sourceRefresh: {
@@ -802,7 +804,7 @@ export default function GrowthPage() {
       setSelectedTopic(null);
       setActiveTopic(null);
       setTitleEdits({});
-      setTopicMessage(`${result.sourceRefresh.message} 新批次已生成：原生法和对标法共${result.run.topic_pool.length}个；${result.unavailableMethods?.length || 0}个方法因来源不足暂停。旧批次仍可恢复。`);
+      setTopicMessage(`${result.sourceRefresh.message} 已生成一批全新标题，共${result.generatedCount}个，均已完成来源使用校验和历史去重；${result.unavailableMethods?.length || 0}个方法因来源不足暂停。旧批次仍可恢复。`);
     } catch (error) {
       setTopicMessage((error as Error).message);
     } finally {

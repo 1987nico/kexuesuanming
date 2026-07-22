@@ -235,7 +235,8 @@ export function buildTopicPoolUserPrompt(input: {
   excludeTitles?: string[];
   context?: AccountContext;
 }) {
-  const exclude = (input.excludeTitles ?? []).filter(Boolean);
+  // 历史全集由服务端做确定性去重；提示词只带最近一段，避免长期使用后挤爆上下文。
+  const exclude = (input.excludeTitles ?? []).filter(Boolean).slice(-160);
   const sourceByMethod = new Map((input.sources ?? []).map((source) => [source.method_id, source]));
   const methodLines = input.methods.map((method) => {
     const source = sourceByMethod.get(method.id);
@@ -263,6 +264,9 @@ ${methodLines.join("\n\n")}
 - 【原力要大】标题外层必须有至少 1 个具体实在、有画面的"原力词"：目标受众生活里能看见、摸到、遇到的物件、角色、场景或动作。例：工资条、合同、老板、合伙人、客户、会议室、工位、预算表、PPT、手机消息、加班、汇报、签合同、拍板、微信对话框、面试通知、离职交接、绩效面谈。禁止只用泛虚词做标题入口，如：成长、认知、觉醒、自由、焦虑、选择、结构、位置、命运、人生、体面；这些词可以进正文解释，但不能单独承担标题入口。
 - 【冲突要大】每个选题必须有反常识、反预期或强落差，让用户一眼看到"怎么会这样"的张力。冲突可以来自：想要稳定 vs 想要自由、职位很高 vs 离开平台不值钱、努力很多 vs 结果不变、想转型 vs 家庭/收入/年龄限制、以为是机会 vs 后来发现是坑。没有冲突的平铺题、纯建议题、纯清单题不进入候选池。
 - 每个候选题必须可比较、可复盘、可延展，并写清正文要兑现的唯一承诺。
+- 凡是出现“绑定母题”的方法，必须先在内部拆解母题的句式骨架、冲突关系、人物处境、情绪钩子和结果承诺，再严格按当前method_id迁移；不能只把母题当作来源附件，然后另写一个普通原创标题。
+- 蹭流量必须能从新标题中识别出所绑定热点的事件、人物或社会冲突；相同产品迁移产品表达或选择场景；相同功效迁移解决问题或降低风险的功效；相似人群迁移人群处境；终极结果相同迁移最终利益；爆款框架迁移句式与冲突结构。
+- 绑定母题的标题不得调用与母题无关的通用模板。只能继承结构和逻辑，必须替换业务内容，不得照抄原标题。
 ${exclude.length ? `- 严禁与以下已生成选题重复或近似：${exclude.join(" / ")}` : ""}
 
 输出 JSON：
@@ -279,6 +283,10 @@ ${exclude.length ? `- 严禁与以下已生成选题重复或近似：${exclude.
       "hook": "标题钩子",
       "origin_force": "原力判断（必填，不能为空）：标题里具体有画面的物件/角色/场景/动作是什么，为什么够实在",
       "conflict_judgement": "冲突判断（必填，不能为空）：本题的反常识/反预期/强落差是什么",
+      "source_usage": {
+        "inherited_structure": "仅供本次内部校验：从绑定母题继承了什么句式或冲突结构",
+        "replaced_content": "仅供本次内部校验：替换成了当前业务的哪些内容"
+      },
       "follow_reason": "关注理由",
       "test_variable": "验证变量",
       "expected_signal": "预期有效信号",
