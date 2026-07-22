@@ -6,7 +6,14 @@ import {
   createThreeDayReviewCycle,
   OFFICIAL_NOTE_LIST_MAX_BYTES,
   parseOfficialNoteListExcel,
+  type ReviewDraftContext,
 } from "@/lib/growth/threeDayReview";
+import { resolveAccountBusinessLine } from "@/lib/growth/businessCompatibility";
+import {
+  mergeThreeDayReviewCycles,
+  reviewWorkspaceAccounts,
+  saveSharedReviewCycles,
+} from "@/lib/growth/reviewCycleWorkspace";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -37,12 +44,21 @@ export async function POST(req: Request) {
   try {
     const buffer = Buffer.from(await file.arrayBuffer());
     const parsed = await parseOfficialNoteListExcel(buffer);
-    const drafts = await store.listDrafts(account.id);
-    const existingCycles = account.three_day_review_cycles ?? [];
+    const workspaceAccounts = await reviewWorkspaceAccounts(store, account, guard.auth.user.id);
+    const draftContexts: ReviewDraftContext[] = (await Promise.all(workspaceAccounts.map(async (workspaceAccount) => {
+      const drafts = await store.listDrafts(workspaceAccount.id);
+      return drafts.map((draft) => ({
+        draft,
+        account_id: workspaceAccount.id,
+        business_line: resolveAccountBusinessLine(workspaceAccount),
+        persona: workspaceAccount.persona,
+      }));
+    }))).flat();
+    const existingCycles = mergeThreeDayReviewCycles(workspaceAccounts);
     const existingDraftCycle = activeThreeDayCycle(existingCycles);
     const cycle = createThreeDayReviewCycle({
-      account,
-      drafts,
+      account: { ...account, business_line: resolveAccountBusinessLine(account) },
+      draftContexts,
       rows: parsed.rows,
       fileName: file.name,
       fileSize: file.size,
@@ -53,12 +69,13 @@ export async function POST(req: Request) {
       ...existingCycles.filter((item) => item.id !== cycle.id),
       cycle,
     ].sort((a, b) => a.cycle_number - b.cycle_number);
-    await store.saveAccount({ ...account, three_day_review_cycles: cycles, updated_at: new Date().toISOString() });
+    await saveSharedReviewCycles(store, workspaceAccounts, cycles);
 
     const counts = {
       matched: cycle.notes.filter((note) => note.match_status === "matched").length,
       suggested: cycle.notes.filter((note) => note.match_status === "suggested").length,
-      unmatched: cycle.notes.filter((note) => note.match_status === "unmatched").length,
+      external_history: cycle.notes.filter((note) => note.match_status === "external_history" || note.match_status === "unmatched").length,
+      excluded: cycle.notes.filter((note) => note.match_status === "excluded").length,
     };
     return NextResponse.json({ cycle, counts, warnings: parsed.warnings });
   } catch (error) {

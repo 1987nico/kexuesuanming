@@ -3,6 +3,11 @@ import { z } from "zod";
 import { requireMianbaApiAuth } from "@/lib/auth/mianba";
 import { growthStore } from "@/lib/growth/store";
 import { completeThreeDayReviewCycle } from "@/lib/growth/threeDayReview";
+import {
+  mergeThreeDayReviewCycles,
+  reviewWorkspaceAccounts,
+  saveSharedReviewCycles,
+} from "@/lib/growth/reviewCycleWorkspace";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -34,7 +39,8 @@ export async function POST(req: Request, { params }: { params: { cycleId: string
   if (guard.auth.role !== "admin" && account.owner_user_id && account.owner_user_id !== guard.auth.user.id) {
     return NextResponse.json({ error: "forbidden" }, { status: 403 });
   }
-  const cycles = account.three_day_review_cycles ?? [];
+  const workspaceAccounts = await reviewWorkspaceAccounts(store, account, guard.auth.user.id);
+  const cycles = mergeThreeDayReviewCycles(workspaceAccounts);
   const cycle = cycles.find((item) => item.id === params.cycleId);
   if (!cycle) return NextResponse.json({ error: "cycle_not_found", message: "本轮三日复盘不存在。" }, { status: 404 });
   if (cycle.status !== "draft") {
@@ -57,11 +63,11 @@ export async function POST(req: Request, { params }: { params: { cycleId: string
       previousLearningSourceKeys,
       previousLearningDraftIds,
     });
-    await store.saveAccount({
-      ...account,
-      three_day_review_cycles: cycles.map((item) => item.id === completed.id ? completed : item),
-      updated_at: new Date().toISOString(),
-    });
+    await saveSharedReviewCycles(
+      store,
+      workspaceAccounts,
+      cycles.map((item) => item.id === completed.id ? completed : item),
+    );
     return NextResponse.json({ cycle: completed });
   } catch (error) {
     return NextResponse.json({ error: "cycle_completion_failed", message: (error as Error).message }, { status: 400 });

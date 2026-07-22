@@ -2549,8 +2549,7 @@ function ThreeDayReviewPanel({
   const due = Date.now() >= Date.parse(dueAt);
   const [trafficConfirmed, setTrafficConfirmed] = useState(false);
   const [trafficExceptions, setTrafficExceptions] = useState<Record<string, ThreeDayTrafficStatus>>({});
-  const [confirmedSuggested, setConfirmedSuggested] = useState<Record<string, boolean>>({});
-  const [excluded, setExcluded] = useState<Record<string, boolean>>({});
+  const [selectedCandidates, setSelectedCandidates] = useState<Record<string, string>>({});
   const [qualifiedInquiries, setQualifiedInquiries] = useState("");
   const [diagnosis199Entries, setDiagnosis199Entries] = useState("");
   const [diagnosis199Sales, setDiagnosis199Sales] = useState("");
@@ -2561,8 +2560,7 @@ function ThreeDayReviewPanel({
   useEffect(() => {
     setTrafficConfirmed(active?.traffic_confirmed ?? false);
     setTrafficExceptions({});
-    setConfirmedSuggested({});
-    setExcluded({});
+    setSelectedCandidates({});
     setQualifiedInquiries("");
     setDiagnosis199Entries("");
     setDiagnosis199Sales("");
@@ -2582,7 +2580,32 @@ function ThreeDayReviewPanel({
       const result = await response.json().catch(() => ({})) as { message?: string; error?: string; counts?: Record<string, number> };
       if (!response.ok) throw new Error(result.message || result.error || "官方Excel导入失败");
       await onRefresh();
-      onMessage(`官方Excel已导入：自动匹配${result.counts?.matched || 0}篇，建议确认${result.counts?.suggested || 0}篇，未匹配${result.counts?.unmatched || 0}篇。`);
+      onMessage(`Excel数据已识别：自动匹配${result.counts?.matched || 0}篇，待确认${result.counts?.suggested || 0}篇，系统外历史${result.counts?.external_history || 0}篇。`);
+    } catch (error) {
+      onMessage((error as Error).message);
+    } finally {
+      onBusy(null);
+    }
+  }
+
+  async function resolveNote(
+    sourceKey: string,
+    action: "confirm" | "external_history" | "exclude" | "restore",
+    draftId?: string,
+    useOfficialTime = false,
+  ) {
+    if (!active) return;
+    onBusy(`three-day-note-${sourceKey}`);
+    try {
+      await requestJSON(`/api/growth/review-cycles/${active.id}/notes/${encodeURIComponent(sourceKey)}`, {
+        method: "PATCH",
+        body: JSON.stringify({ accountId: account.id, action, draftId, useOfficialTime }),
+      });
+      await onRefresh();
+      onMessage(action === "confirm"
+        ? useOfficialTime ? "已绑定系统正文，并以官方Excel修正首次发布时间。" : "已确认绑定系统正文。"
+        : action === "external_history" ? "已标记为系统外历史，只做描述统计。"
+          : action === "exclude" ? "已从本轮复盘排除。" : "已恢复这条笔记的匹配状态。");
     } catch (error) {
       onMessage((error as Error).message);
     } finally {
@@ -2598,8 +2621,6 @@ function ThreeDayReviewPanel({
         accountId: account.id,
         trafficConfirmed,
         trafficExceptions,
-        confirmedSuggested: Object.entries(confirmedSuggested).filter(([, value]) => value).map(([key]) => key),
-        excludedSourceKeys: Object.entries(excluded).filter(([, value]) => value).map(([key]) => key),
         qualifiedInquiries: Number(qualifiedInquiries),
         attributions: Object.fromEntries(Object.entries(attributions)
           .filter(([, value]) => value !== "")
@@ -2624,7 +2645,8 @@ function ThreeDayReviewPanel({
 
   const matchedCount = active?.notes.filter((note) => note.match_status === "matched").length ?? 0;
   const suggestedCount = active?.notes.filter((note) => note.match_status === "suggested").length ?? 0;
-  const unmatchedCount = active?.notes.filter((note) => note.match_status === "unmatched").length ?? 0;
+  const externalHistoryCount = active?.notes.filter((note) => note.match_status === "external_history" || note.match_status === "unmatched").length ?? 0;
+  const excludedCount = active?.notes.filter((note) => note.match_status === "excluded").length ?? 0;
   const attributionTotal = Object.values(attributions).reduce((sum, value) => sum + (value === "" ? 0 : Number(value)), 0);
   const eligibleHistoryCount = new Set(completed
     .flatMap((cycle) => cycle.notes)
@@ -2653,7 +2675,7 @@ function ThreeDayReviewPanel({
           <p className="mt-1 text-sm leading-6 text-slate-500">等待期也可以先把数据准备好，到开放时间后一次完成。</p>
           <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             <ReviewReadiness label="已发布、待进入本轮" value={`${publishedDrafts.filter((draft) => draft.status === "published").length}篇`} />
-            <ReviewReadiness label="尚未匹配系统内容" value={`${latest?.notes.filter((note) => note.match_status === "unmatched").length ?? 0}篇`} />
+            <ReviewReadiness label="系统外历史内容" value={`${latest?.notes.filter((note) => note.match_status === "external_history" || note.match_status === "unmatched").length ?? 0}篇`} />
             <ReviewReadiness label="方法未确认" value={`${publishedDrafts.filter((draft) => draft.method_attribution_status !== "confirmed").length}篇`} />
             <ReviewReadiness label="商业数据待补" value={`${publishedDrafts.filter((draft) => draft.status === "published").length}篇`} />
             <ReviewReadiness label="官方明细表" value="待准备" warning />
@@ -2665,7 +2687,7 @@ function ThreeDayReviewPanel({
       {!active && due && (
         <div className="rounded-2xl border border-dashed border-slate-300 p-5">
           <div className="font-semibold">1. 上传小红书官方Excel</div>
-          <p className="mt-2 text-sm leading-6 text-slate-600">只接受“笔记列表明细表.xlsx”，系统严格读取官方13列表头，不要求你补改Excel。</p>
+          <p className="mt-2 text-sm leading-6 text-slate-600">只接受“笔记列表明细表.xlsx”。系统会读取官方13列，并在当前业务的商家、买家、专家三个视角中共同查找对应笔记。</p>
           <input
             className="mt-4 block w-full text-sm"
             type="file"
@@ -2684,8 +2706,8 @@ function ThreeDayReviewPanel({
           <div className="rounded-2xl border border-slate-200 p-5">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div>
-                <div className="font-semibold">1. 官方Excel已读取</div>
-                <p className="mt-1 text-sm text-slate-600">{active.source_file_name} · {active.source_row_count}条 · 上传于{formatDateTime(active.imported_at)}</p>
+                <div className="font-semibold">1. Excel数据已识别</div>
+                <p className="mt-1 text-sm text-slate-600">{active.source_file_name} · 已完整读取{active.source_row_count}条 · 上传于{formatDateTime(active.imported_at)}</p>
               </div>
               <label className="cursor-pointer rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium">
                 重新上传
@@ -2697,38 +2719,85 @@ function ThreeDayReviewPanel({
                 />
               </label>
             </div>
-            <div className="mt-4 grid gap-3 sm:grid-cols-3">
+            <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
               <ReviewCount label="自动匹配" value={matchedCount} />
-              <ReviewCount label="建议确认" value={suggestedCount} emphasize={suggestedCount > 0} />
-              <ReviewCount label="未匹配" value={unmatchedCount} emphasize={unmatchedCount > 0} />
+              <ReviewCount label="待确认" value={suggestedCount} emphasize={suggestedCount > 0} />
+              <ReviewCount label="系统外历史" value={externalHistoryCount} />
+              <ReviewCount label="已排除" value={excludedCount} />
             </div>
             <details className="mt-4 rounded-xl border border-slate-200">
-              <summary className="cursor-pointer p-4 text-sm font-medium">数据质量收件箱 · 待处理{suggestedCount + unmatchedCount}条（含全部{active.notes.length}条证据）</summary>
+              <summary className="cursor-pointer p-4 text-sm font-medium">数据质量收件箱 · 待确认{suggestedCount}条（含全部{active.notes.length}条证据）</summary>
               <div className="max-h-96 space-y-2 overflow-y-auto px-4 pb-4">
-                {[...active.notes].sort((a, b) => (a.match_status === "matched" ? 1 : 0) - (b.match_status === "matched" ? 1 : 0)).map((note) => (
-                  <div key={note.source_key} className="rounded-xl bg-slate-50 p-3 text-sm">
-                    <div className="flex flex-wrap items-start justify-between gap-2">
-                      <div>
-                        <div className="font-medium">{note.source_title || "标题为空"}</div>
-                        <div className="mt-1 text-xs text-slate-500">{note.content_format} · {formatDateTime(note.published_at)} · {note.match_reason}</div>
+                {[...active.notes].sort((a, b) => (a.match_status === "matched" ? 1 : 0) - (b.match_status === "matched" ? 1 : 0)).map((note) => {
+                  const selectedDraftId = selectedCandidates[note.source_key] || note.match_candidates?.[0]?.draft_id || "";
+                  const candidate = note.match_candidates?.find((item) => item.draft_id === selectedDraftId);
+                  const needsOfficialTime = Boolean(candidate && (
+                    candidate.status === "ready"
+                    || !candidate.published_at
+                    || (candidate.time_delta_seconds ?? 0) > 5 * 60
+                  ));
+                  const statusLabel = note.match_status === "matched"
+                    ? "已匹配"
+                    : note.match_status === "suggested"
+                      ? "待确认"
+                      : note.match_status === "excluded"
+                        ? "已排除"
+                        : "系统外历史";
+                  return (
+                    <div key={note.source_key} className="rounded-xl bg-slate-50 p-3 text-sm">
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <div>
+                          <div className="font-medium">{note.source_title || "标题为空"}</div>
+                          <div className="mt-1 text-xs text-slate-500">{note.content_format} · 官方首次发布 {formatDateTime(note.published_at)}</div>
+                        </div>
+                        <Badge>{statusLabel}</Badge>
                       </div>
-                      <Badge>{note.match_status === "matched" ? "已匹配" : note.match_status === "suggested" ? "待确认" : "未匹配"}</Badge>
+                      <div className="mt-2 text-xs text-slate-600">曝光 {note.metrics.impressions.toLocaleString()} · 观看 {note.metrics.views.toLocaleString()} · 封面点击率 {formatPercent(note.metrics.cover_ctr)}</div>
+                      <div className="mt-2 text-xs leading-5 text-slate-500">{note.match_reason}</div>
+                      {note.match_status === "matched" && note.matched_persona && (
+                        <div className="mt-3 rounded-lg bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
+                          已绑定{GROWTH_PERSONA_LABELS[note.matched_persona]}视角 · {note.system_title || note.source_title}
+                        </div>
+                      )}
+                      {note.match_status === "suggested" && note.match_candidates?.length ? (
+                        <div className="mt-3 space-y-3 rounded-xl border border-amber-200 bg-amber-50 p-3">
+                          <Select
+                            label="候选系统正文"
+                            value={selectedDraftId}
+                            onChange={(value) => setSelectedCandidates({ ...selectedCandidates, [note.source_key]: value })}
+                            options={note.match_candidates.map((item) => ({
+                              value: item.draft_id,
+                              label: `${GROWTH_PERSONA_LABELS[item.persona]} · ${item.title} · ${STATUS_LABEL[item.status] || item.status}`,
+                            }))}
+                          />
+                          {candidate && (
+                            <div className="text-xs leading-5 text-slate-600">
+                              {candidate.match_reason}
+                              {candidate.published_at ? `；系统时间 ${formatDateTime(candidate.published_at)}` : "；系统未记录发布时间"}
+                            </div>
+                          )}
+                          <div className="flex flex-wrap gap-2">
+                            <PrimaryButton disabled={Boolean(busy)} onClick={() => void resolveNote(note.source_key, "confirm", selectedDraftId, needsOfficialTime)}>
+                              {needsOfficialTime ? "绑定并采用官方时间" : "确认绑定"}
+                            </PrimaryButton>
+                            <SecondaryButton disabled={Boolean(busy)} onClick={() => void resolveNote(note.source_key, "external_history")}>
+                              确认为系统外历史
+                            </SecondaryButton>
+                          </div>
+                        </div>
+                      ) : null}
+                      {(note.match_status === "external_history" || note.match_status === "unmatched") && (
+                        <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-lg bg-white px-3 py-2 text-xs text-slate-600">
+                          <span>保留平台指标，只做描述统计，不进入13种方法学习。</span>
+                          <SecondaryButton disabled={Boolean(busy)} onClick={() => void resolveNote(note.source_key, "exclude")}>本轮排除</SecondaryButton>
+                        </div>
+                      )}
+                      {note.match_status === "excluded" && (
+                        <div className="mt-3"><SecondaryButton disabled={Boolean(busy)} onClick={() => void resolveNote(note.source_key, "restore")}>恢复</SecondaryButton></div>
+                      )}
                     </div>
-                    <div className="mt-2 text-xs text-slate-600">曝光 {note.metrics.impressions.toLocaleString()} · 观看 {note.metrics.views.toLocaleString()} · 封面点击率 {formatPercent(note.metrics.cover_ctr)}</div>
-                    {note.match_status === "suggested" && (
-                      <label className="mt-3 flex items-center gap-2 text-xs">
-                        <input type="checkbox" checked={Boolean(confirmedSuggested[note.source_key])} onChange={(event) => setConfirmedSuggested({ ...confirmedSuggested, [note.source_key]: event.target.checked })} />
-                        确认绑定这篇系统笔记
-                      </label>
-                    )}
-                    {note.match_status !== "matched" && note.match_status !== "suggested" && (
-                      <label className="mt-3 flex items-center gap-2 text-xs">
-                        <input type="checkbox" checked={Boolean(excluded[note.source_key])} onChange={(event) => setExcluded({ ...excluded, [note.source_key]: event.target.checked })} />
-                        本轮排除，不进入方法学习
-                      </label>
-                    )}
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </details>
           </div>

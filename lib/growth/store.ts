@@ -38,6 +38,11 @@ export interface GrowthStore {
     ownerUserId?: string,
     businessLine?: GrowthBusinessLine,
   ): Promise<GrowthAccount | null>;
+  listAccounts(
+    tenantId: string,
+    ownerUserId?: string,
+    businessLine?: GrowthBusinessLine,
+  ): Promise<GrowthAccount[]>;
   savePlan(plan: GrowthPlan): Promise<void>;
   getPlan(id: string): Promise<GrowthPlan | null>;
   getLatestPlan(accountId: string): Promise<GrowthPlan | null>;
@@ -138,6 +143,14 @@ class MemoryGrowthStore implements GrowthStore {
         .filter((account) => matchesBusinessLine(account, businessLine))
         .sort((a, b) => b.created_at.localeCompare(a.created_at))[0] ?? null
     );
+  }
+
+  async listAccounts(tenantId: string, ownerUserId?: string, businessLine?: GrowthBusinessLine) {
+    return [...this.accounts.values()]
+      .filter((account) => account.tenant_id === tenantId)
+      .filter((account) => matchesOwner(account, ownerUserId))
+      .filter((account) => matchesBusinessLine(account, businessLine))
+      .sort((a, b) => b.created_at.localeCompare(a.created_at));
   }
 
   async savePlan(plan: GrowthPlan) {
@@ -279,6 +292,20 @@ class SupabaseGrowthStore implements GrowthStore {
     if (error) throw error;
     const accounts = (data ?? []).map((row) => row.payload as GrowthAccount);
     return accounts.find((account) => account.persona === persona && matchesOwner(account, ownerUserId) && matchesBusinessLine(account, businessLine)) ?? null;
+  }
+
+  async listAccounts(tenantId: string, ownerUserId?: string, businessLine?: GrowthBusinessLine) {
+    const { data, error } = await this.db
+      .from("growth_accounts")
+      .select("payload")
+      .eq("tenant_id", tenantId)
+      .order("created_at", { ascending: false })
+      .limit(100);
+    if (error) throw error;
+    return (data ?? [])
+      .map((row) => row.payload as GrowthAccount)
+      .filter((account) => matchesOwner(account, ownerUserId))
+      .filter((account) => matchesBusinessLine(account, businessLine));
   }
 
   async savePlan(plan: GrowthPlan) {

@@ -4,6 +4,7 @@ import type { ContentDraft, GrowthAccount } from "./types";
 import {
   completeThreeDayReviewCycle,
   createThreeDayReviewCycle,
+  normalizeReviewTitle,
   OFFICIAL_NOTE_LIST_HEADERS,
   parseOfficialNoteListExcel,
 } from "./threeDayReview";
@@ -136,5 +137,67 @@ describe("三日复盘周期", () => {
     expect(completed.notes[0].content_eligible).toBe(false);
     expect(completed.notes[0].commercial_eligible).toBe(false);
     expect(completed.notes[0].eligibility_reasons).toContain("已在历史周期计入学习");
+  });
+
+  it("在同一业务的其他视角找到标题与时间时自动匹配", async () => {
+    const expertAccount = { ...account, id: "expert-account", persona: "expert" as const };
+    const buyerDraft = { ...draft, id: "buyer-draft", account_id: account.id };
+    const buffer = await officialWorkbook([[
+      "《离职前先过一遍验尸清单》", "2026年07月14日07时34分35秒", "图文", 1000, 100, 0.1,
+      10, 1, 5, 0, 1, 20, 0,
+    ]]);
+    const parsed = await parseOfficialNoteListExcel(buffer);
+    const cycle = createThreeDayReviewCycle({
+      account: expertAccount,
+      draftContexts: [{ draft: buyerDraft, account_id: account.id, business_line: "executive", persona: "buyer" }],
+      rows: parsed.rows,
+      fileName: "x.xlsx",
+      fileSize: buffer.length,
+    });
+    expect(cycle.notes[0].match_status).toBe("matched");
+    expect(cycle.notes[0].matched_persona).toBe("buyer");
+    expect(cycle.notes[0].match_scope).toBe("same_business_other_persona");
+  });
+
+  it("同标题但发布时间差异较大时保留为人工候选", async () => {
+    const lateDraft = { ...draft, published_at: "2026-07-13T21:00:00.000Z" };
+    const buffer = await officialWorkbook([[
+      draft.title, "2026年07月14日07时34分35秒", "图文", 1000, 100, 0.1,
+      10, 1, 5, 0, 1, 20, 0,
+    ]]);
+    const parsed = await parseOfficialNoteListExcel(buffer);
+    const cycle = createThreeDayReviewCycle({ account, drafts: [lateDraft], rows: parsed.rows, fileName: "x.xlsx", fileSize: buffer.length });
+    expect(cycle.notes[0].match_status).toBe("suggested");
+    expect(cycle.notes[0].match_candidates?.[0].draft_id).toBe(lateDraft.id);
+    expect(cycle.notes[0].draft_id).toBeUndefined();
+  });
+
+  it("系统待发布正文只作为候选，不自动计入方法学习", async () => {
+    const readyDraft = { ...draft, status: "ready" as const, published_at: undefined };
+    const buffer = await officialWorkbook([[
+      draft.title, "2026年07月14日07时34分35秒", "图文", 1000, 100, 0.1,
+      10, 1, 5, 0, 1, 20, 0,
+    ]]);
+    const parsed = await parseOfficialNoteListExcel(buffer);
+    const cycle = createThreeDayReviewCycle({ account, drafts: [readyDraft], rows: parsed.rows, fileName: "x.xlsx", fileSize: buffer.length });
+    expect(cycle.notes[0].match_status).toBe("suggested");
+    expect(cycle.notes[0].match_candidates?.[0].status).toBe("ready");
+  });
+
+  it("系统中不存在的官方Excel笔记标记为系统外历史", async () => {
+    const buffer = await officialWorkbook([[
+      "系统中从未生成过的标题", "2026年07月15日07时34分35秒", "图文", 1000, 100, 0.1,
+      10, 1, 5, 0, 1, 20, 0,
+    ]]);
+    const parsed = await parseOfficialNoteListExcel(buffer);
+    const cycle = createThreeDayReviewCycle({ account, drafts: [draft], rows: parsed.rows, fileName: "x.xlsx", fileSize: buffer.length });
+    expect(cycle.notes[0].match_status).toBe("external_history");
+    expect(cycle.notes[0].match_scope).toBe("external");
+    expect(cycle.notes[0].content_eligible).toBe(false);
+  });
+
+  it("标题归一化忽略全半角、书名号、空格和常见标点", () => {
+    expect(normalizeReviewTitle("《离职前，先过一遍 验尸清单！》"))
+      .toBe(normalizeReviewTitle("离职前先过一遍验尸清单"));
   });
 });

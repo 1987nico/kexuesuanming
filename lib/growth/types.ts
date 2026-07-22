@@ -258,7 +258,31 @@ export type ThreeDayTrafficStatus =
   | "violation"
   | "deleted";
 
-export type ThreeDayMatchStatus = "matched" | "suggested" | "unmatched" | "excluded";
+export type ThreeDayMatchStatus =
+  | "matched"
+  | "suggested"
+  | "external_history"
+  | "unmatched" // 只读兼容旧周期；新导入统一写 external_history
+  | "excluded";
+
+export type ThreeDayMatchScope =
+  | "current_persona"
+  | "same_business_other_persona"
+  | "cross_business"
+  | "external";
+
+export interface ThreeDayMatchCandidate {
+  draft_id: string;
+  account_id: string;
+  business_line: GrowthBusinessLine;
+  persona: GrowthPersona;
+  title: string;
+  status: ContentStatus;
+  published_at?: string;
+  title_similarity: number;
+  time_delta_seconds?: number;
+  match_reason: string;
+}
 
 export interface ThreeDayNoteMetrics {
   impressions: number;
@@ -289,12 +313,24 @@ export interface ThreeDayNoteSnapshot {
   published_at: string;
   content_format: string;
   draft_id?: string;
+  matched_account_id?: string;
+  matched_business_line?: GrowthBusinessLine;
+  matched_persona?: GrowthPersona;
+  system_title?: string;
+  system_published_at?: string;
+  official_published_at?: string;
+  published_at_delta_seconds?: number;
   method_id?: TitleMethodId;
   method_label?: string;
   method_group?: TitleMethodGroup;
   generation_mode?: MethodGenerationMode;
   match_status: ThreeDayMatchStatus;
+  match_scope?: ThreeDayMatchScope;
+  match_confidence?: number;
   match_reason: string;
+  match_candidates?: ThreeDayMatchCandidate[];
+  resolution_type?: "automatic" | "confirmed" | "official_time" | "external_history" | "excluded";
+  resolved_at?: string;
   metrics: ThreeDayNoteMetrics;
   derived: ThreeDayDerivedMetrics;
   traffic_status: ThreeDayTrafficStatus;
@@ -601,6 +637,14 @@ export interface ContentDraft {
   original_post_url?: string;
   distributed_at?: string;
   is_paid_distribution?: boolean;
+  /** 官方Excel修正发布状态/时间时保留原值，避免静默覆盖。 */
+  publication_history?: Array<{
+    previous_status: ContentStatus;
+    previous_published_at?: string;
+    official_published_at: string;
+    source: "official_excel";
+    corrected_at: string;
+  }>;
   learning_trace?: GrowthLearningTrace;
   created_at: string;
   updated_at: string;

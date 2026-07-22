@@ -2,7 +2,9 @@ import ExcelJS from "exceljs";
 import type {
   ContentDraft,
   GrowthAccount,
+  GrowthBusinessLine,
   GrowthExperimentVariable,
+  GrowthPersona,
   ThreeDayDerivedMetrics,
   ThreeDayNoteMetrics,
   ThreeDayNoteSnapshot,
@@ -44,6 +46,13 @@ export interface OfficialNoteListResult {
   warnings: string[];
 }
 
+export interface ReviewDraftContext {
+  draft: ContentDraft;
+  account_id: string;
+  business_line: GrowthBusinessLine;
+  persona: GrowthPersona;
+}
+
 type CompleteCycleInput = {
   trafficConfirmed: boolean;
   trafficExceptions?: Record<string, ThreeDayTrafficStatus>;
@@ -61,7 +70,11 @@ type CompleteCycleInput = {
 };
 
 const normalizeHeader = (value: unknown) => String(value ?? "").trim().replace(/\s+/g, "");
-const normalizeTitle = (value: unknown) => String(value ?? "").trim().replace(/[\s“”"'《》]/g, "").toLowerCase();
+export const normalizeReviewTitle = (value: unknown) => String(value ?? "")
+  .normalize("NFKC")
+  .trim()
+  .replace(/[\s“”"'《》，。！？、；：,.!?;:（）()【】\[\]—\-|｜\/\\]/g, "")
+  .toLowerCase();
 
 function cellValue(value: ExcelJS.CellValue): unknown {
   if (value === null || value === undefined) return "";
@@ -112,7 +125,7 @@ function derive(metrics: ThreeDayNoteMetrics): ThreeDayDerivedMetrics {
 }
 
 function sourceKey(title: string | undefined, publishedAt: string, contentFormat: string) {
-  return `${normalizeTitle(title)}|${publishedAt}|${normalizeHeader(contentFormat)}`;
+  return `${normalizeReviewTitle(title)}|${publishedAt}|${normalizeHeader(contentFormat)}`;
 }
 
 export async function parseOfficialNoteListExcel(buffer: Buffer): Promise<OfficialNoteListResult> {
@@ -182,33 +195,111 @@ function draftPublishedAt(draft: ContentDraft) {
   return draft.published_at || draft.distributed_at;
 }
 
-function attachDraft(row: OfficialNoteListRow, drafts: ContentDraft[]): ThreeDayNoteSnapshot {
-  const availableDrafts = drafts.filter((draft) =>
-    draft.status === "published" || draft.status === "reviewed");
+function titleBigrams(value: string) {
+  const chars = Array.from(value);
+  const result = new Set<string>();
+  for (let index = 0; index < chars.length - 1; index += 1) result.add(chars.slice(index, index + 2).join(""));
+  return result;
+}
+
+function titleSimilarity(left: string | undefined, right: string) {
+  const a = normalizeReviewTitle(left);
+  const b = normalizeReviewTitle(right);
+  if (!a || !b) return 0;
+  if (a === b) return 1;
+  const leftBigrams = titleBigrams(a);
+  const rightBigrams = titleBigrams(b);
+  if (!leftBigrams.size || !rightBigrams.size) return 0;
+  let overlap = 0;
+  for (const item of leftBigrams) if (rightBigrams.has(item)) overlap += 1;
+  return (2 * overlap) / (leftBigrams.size + rightBigrams.size);
+}
+
+function candidateReason(input: {
+  exactTitle: boolean;
+  timeDelta?: number;
+  status: ContentDraft["status"];
+  persona: GrowthPersona;
+}) {
+  const personaLabel = ({ merchant: "商家", buyer: "买家", expert: "专家" } as const)[input.persona];
+  if (input.status === "ready") return `在${personaLabel}视角找到同标题正文，但系统尚未标记发布`;
+  if (input.exactTitle && input.timeDelta === undefined) return `在${personaLabel}视角找到唯一同标题正文，但系统缺少发布时间`;
+  if (input.exactTitle && (input.timeDelta ?? Infinity) <= 5 * 60) return `标题和首次发布时间均匹配${personaLabel}视角正文`;
+  if (input.exactTitle) return `在${personaLabel}视角找到唯一同标题正文，但发布时间存在差异`;
+  if ((input.timeDelta ?? Infinity) <= 5 * 60) return `首次发布时间唯一接近${personaLabel}视角正文，标题有差异`;
+  return `标题与发布时间接近${personaLabel}视角正文`;
+}
+
+function attachDraft(
+  row: OfficialNoteListRow,
+  contexts: ReviewDraftContext[],
+  currentAccount: GrowthAccount,
+): ThreeDayNoteSnapshot {
   const rowTime = Date.parse(row.published_at);
-  const withinFiveMinutes = (draft: ContentDraft) => {
-    const publishedAt = draftPublishedAt(draft);
-    return Boolean(publishedAt) && Math.abs(Date.parse(publishedAt!) - rowTime) <= 5 * 60 * 1000;
-  };
-  const exact = availableDrafts.filter((draft) =>
-    withinFiveMinutes(draft) && normalizeTitle(draft.title) === normalizeTitle(row.source_title));
-  const timeOnly = availableDrafts.filter(withinFiveMinutes);
-  const draft = exact.length === 1 ? exact[0] : exact.length === 0 && timeOnly.length === 1 ? timeOnly[0] : undefined;
-  const matchStatus = exact.length === 1 ? "matched" : draft ? "suggested" : "unmatched";
-  const matchReason = exact.length === 1
-    ? "标题与首次发布时间匹配"
-    : draft
-      ? "仅首次发布时间唯一匹配，需要人工确认"
-      : "当前业务与视角下未找到唯一笔记";
+  const candidates = contexts.flatMap((context) => {
+    const publishedAt = draftPublishedAt(context.draft);
+    const timeDelta = publishedAt && Number.isFinite(Date.parse(publishedAt))
+      ? Math.abs(Date.parse(publishedAt) - rowTime) / 1000
+      : undefined;
+    const similarity = titleSimilarity(row.source_title, context.draft.title);
+    const exactTitle = similarity === 1;
+    const nearTitleAndTime = similarity >= 0.88 && (timeDelta ?? Infinity) <= 24 * 60 * 60;
+    const timeOnly = (timeDelta ?? Infinity) <= 5 * 60;
+    if (!exactTitle && !nearTitleAndTime && !timeOnly) return [];
+    return [{
+      draft_id: context.draft.id,
+      account_id: context.account_id,
+      business_line: context.business_line,
+      persona: context.persona,
+      title: context.draft.title,
+      status: context.draft.status,
+      published_at: publishedAt,
+      title_similarity: Number(similarity.toFixed(4)),
+      time_delta_seconds: timeDelta === undefined ? undefined : Math.round(timeDelta),
+      match_reason: candidateReason({ exactTitle, timeDelta, status: context.draft.status, persona: context.persona }),
+    }];
+  }).sort((a, b) => {
+    const score = (candidate: typeof a) =>
+      candidate.title_similarity * 100
+      + ((candidate.time_delta_seconds ?? Infinity) <= 5 * 60 ? 20 : 0)
+      + (candidate.status === "published" || candidate.status === "reviewed" ? 5 : 0);
+    return score(b) - score(a);
+  }).slice(0, 5);
+  const automatic = candidates.filter((candidate) =>
+    candidate.title_similarity === 1
+    && (candidate.time_delta_seconds ?? Infinity) <= 5 * 60
+    && (candidate.status === "published" || candidate.status === "reviewed"));
+  const selected = automatic.length === 1 ? automatic[0] : undefined;
+  const suggested = selected ? undefined : candidates[0];
+  const matchStatus = selected ? "matched" : suggested ? "suggested" : "external_history";
+  const matchScope = selected || suggested
+    ? (selected || suggested)!.account_id === currentAccount.id
+      ? "current_persona" as const
+      : "same_business_other_persona" as const
+    : "external" as const;
+  const matchReason = selected?.match_reason
+    ?? suggested?.match_reason
+    ?? "Excel数据已识别，但当前业务的三个视角中没有对应系统正文";
   return {
     ...row,
-    draft_id: draft?.id,
-    method_id: draft?.method_id,
-    method_label: draft?.method_label,
-    method_group: draft?.method_group,
-    generation_mode: draft?.generation_mode,
+    official_published_at: row.published_at,
+    draft_id: selected?.draft_id,
+    matched_account_id: selected?.account_id,
+    matched_business_line: selected?.business_line,
+    matched_persona: selected?.persona,
+    system_title: selected?.title,
+    system_published_at: selected?.published_at,
+    published_at_delta_seconds: selected?.time_delta_seconds,
+    method_id: selected ? contexts.find((item) => item.draft.id === selected.draft_id)?.draft.method_id : undefined,
+    method_label: selected ? contexts.find((item) => item.draft.id === selected.draft_id)?.draft.method_label : undefined,
+    method_group: selected ? contexts.find((item) => item.draft.id === selected.draft_id)?.draft.method_group : undefined,
+    generation_mode: selected ? contexts.find((item) => item.draft.id === selected.draft_id)?.draft.generation_mode : undefined,
     match_status: matchStatus,
+    match_scope: matchScope,
+    match_confidence: selected ? 1 : suggested?.title_similarity ?? 0,
     match_reason: matchReason,
+    match_candidates: candidates,
+    resolution_type: selected ? "automatic" : matchStatus === "external_history" ? "external_history" : undefined,
     derived: derive(row.metrics),
     traffic_status: "unknown",
     content_eligible: false,
@@ -219,7 +310,8 @@ function attachDraft(row: OfficialNoteListRow, drafts: ContentDraft[]): ThreeDay
 
 export function createThreeDayReviewCycle(input: {
   account: GrowthAccount;
-  drafts: ContentDraft[];
+  drafts?: ContentDraft[];
+  draftContexts?: ReviewDraftContext[];
   rows: OfficialNoteListRow[];
   fileName: string;
   fileSize: number;
@@ -229,13 +321,20 @@ export function createThreeDayReviewCycle(input: {
 }) {
   const now = input.at ?? new Date();
   const nowIso = now.toISOString();
+  const businessLine = input.account.business_line ?? "executive";
+  const draftContexts = input.draftContexts ?? (input.drafts ?? []).map((draft) => ({
+    draft,
+    account_id: input.account.id,
+    business_line: businessLine,
+    persona: input.account.persona,
+  }));
   const completed = (input.previousCycles ?? []).filter((cycle) => cycle.status === "completed");
   const previous = [...completed].sort((a, b) => (b.completed_at || "").localeCompare(a.completed_at || ""))[0];
   const sortedDates = input.rows.map((row) => row.published_at).sort();
   return {
     id: input.existingDraftCycle?.id ?? crypto.randomUUID(),
     account_id: input.account.id,
-    business_line: input.account.business_line ?? "executive",
+    business_line: businessLine,
     persona: input.account.persona,
     cycle_number: input.existingDraftCycle?.cycle_number ?? completed.length + 1,
     status: "draft" as const,
@@ -248,7 +347,7 @@ export function createThreeDayReviewCycle(input: {
     source_date_to: sortedDates.at(-1),
     imported_at: nowIso,
     traffic_confirmed: false,
-    notes: input.rows.map((row) => attachDraft(row, input.drafts)),
+    notes: input.rows.map((row) => attachDraft(row, draftContexts, input.account)),
     created_at: input.existingDraftCycle?.created_at ?? nowIso,
     updated_at: nowIso,
   } satisfies ThreeDayReviewCycle;
