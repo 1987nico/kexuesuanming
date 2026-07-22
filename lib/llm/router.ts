@@ -20,6 +20,10 @@ export interface LLMRequest {
   // 最大 token
   maxTokens?: number;
   temperature?: number;
+  /** 单次供应商请求的上限；未设置时沿用 SDK 默认行为。 */
+  timeoutMs?: number;
+  /** JSON 解析失败后的模型重试次数，默认2次。 */
+  jsonRetries?: number;
 }
 
 export interface LLMResponse {
@@ -49,7 +53,7 @@ async function callAnthropic(req: LLMRequest, model: string): Promise<LLMRespons
     temperature: req.temperature ?? 0.7,
     system: req.system,
     messages: [{ role: "user", content: req.user }],
-  });
+  }, req.timeoutMs ? { signal: AbortSignal.timeout(req.timeoutMs) } : undefined);
   const text = r.content
     .filter((b: any) => b.type === "text")
     .map((b: any) => b.text)
@@ -92,7 +96,9 @@ async function callOpenAICompat(req: LLMRequest, provider: Provider, model: stri
     ],
     ...(req.json ? { response_format: { type: "json_object" as const } } : {}),
     ...doubaoThinking,
-  } as OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming);
+  } as OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming, req.timeoutMs
+    ? { signal: AbortSignal.timeout(req.timeoutMs) }
+    : undefined);
   const text = r.choices?.[0]?.message?.content ?? "";
   return {
     text,
@@ -147,7 +153,7 @@ export async function llmJSON<T = unknown>(req: LLMRequest): Promise<{ data: T; 
     system: req.system + "\n\n严格要求：仅输出合法 JSON，不要任何额外文字、解释、Markdown 代码块。",
   };
   let lastError: unknown = null;
-  for (let i = 0; i < 2; i++) {
+  for (let i = 0; i < Math.max(1, req.jsonRetries ?? 2); i++) {
     const raw = await llmComplete(finalReq);
     const parsed = safeParseJSON<T>(raw.text);
     if (parsed !== null) return { data: parsed, raw };
