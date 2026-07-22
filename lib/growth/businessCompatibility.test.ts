@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { accountForBusinessGeneration, isBusinessCompatibleText } from "./businessCompatibility";
+import {
+  accountForBusinessGeneration,
+  accountMatchesWorkspace,
+  isBusinessCompatibleText,
+  resolveAccountBusinessLine,
+} from "./businessCompatibility";
 import type { GrowthAccount } from "./types";
 
 describe("business compatibility", () => {
@@ -41,5 +46,59 @@ describe("business compatibility", () => {
     expect(sanitized.persona_specific?.identity).toBe("34岁前中层");
     expect(sanitized.content_directions).toEqual(["中高管真实复盘"]);
     expect(account.persona_specific?.bridge).toContain("留学生家长");
+  });
+
+  it("recognizes a legacy overseas account instead of defaulting it to executive", () => {
+    const account = {
+      id: "legacy-overseas",
+      tenant_id: "mianbajun",
+      persona: "expert",
+      name: "面霸君 · 留学生求职老师",
+      target_user: "准备回国求职的留学生",
+      core_problem: "海外秋招和回国求职节奏脱节",
+      account_value: "求职方向判断",
+      trust_source: "真实秋招陪跑",
+      not_doing: "不保Offer",
+      hypotheses: [],
+      created_at: "2026-07-20T00:00:00.000Z",
+      updated_at: "2026-07-20T00:00:00.000Z",
+    } satisfies GrowthAccount;
+
+    expect(resolveAccountBusinessLine(account)).toBe("overseas_student");
+    const sanitized = accountForBusinessGeneration(account);
+    expect(sanitized.business_line).toBe("overseas_student");
+    expect(accountMatchesWorkspace(account, {
+      accountId: account.id,
+      businessLine: "overseas_student",
+      persona: "expert",
+    })).toBe(true);
+    expect(accountMatchesWorkspace(account, {
+      accountId: account.id,
+      businessLine: "executive",
+      persona: "expert",
+    })).toBe(false);
+  });
+
+  it("replaces mixed core fields before generation", () => {
+    const account = {
+      id: "mixed",
+      tenant_id: "mianbajun",
+      business_line: "executive",
+      persona: "buyer",
+      name: "留学生家长",
+      target_user: "准备秋招的留学生",
+      core_problem: "孩子投递没回音",
+      account_value: "Offer复盘",
+      trust_source: "秋招陪跑",
+      not_doing: "不保Offer",
+      hypotheses: [],
+      created_at: "2026-07-20T00:00:00.000Z",
+      updated_at: "2026-07-20T00:00:00.000Z",
+    } satisfies GrowthAccount;
+    const sanitized = accountForBusinessGeneration(account);
+    expect(sanitized.name).toContain("转型中的中高管");
+    expect(sanitized.target_user).toContain("中高管");
+    expect(sanitized.core_problem).toContain("平台价值");
+    expect(sanitized.trust_source).toContain("252题测评");
   });
 });

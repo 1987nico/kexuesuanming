@@ -18,6 +18,7 @@ import {
   businessPositionsFromSettings,
   resolveBusinessPosition,
 } from "@/lib/growth/businessPosition";
+import { accountForBusinessGeneration } from "@/lib/growth/businessCompatibility";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -63,12 +64,15 @@ export async function GET(req: Request) {
   ]);
   const businessPositions = businessPositionsFromSettings(settings);
   // 人设确定后，计划、选题、正文和复盘彼此独立，并行读取以缩短切换等待。
-  const [plan, runs, drafts, reviewList] = account
+  // 旧账号没有 business_line；响应给工作台前先补齐并清洗生成上下文，
+  // 但不回写历史原始载荷。
+  const workspaceAccount = account ? accountForBusinessGeneration(account) : null;
+  const [plan, runs, drafts, reviewList] = workspaceAccount
     ? await Promise.all([
-      store.getLatestPlan(account.id),
-      store.listRuns(account.id),
-      store.listDrafts(account.id),
-      store.listReviewsByAccount(account.id),
+      store.getLatestPlan(workspaceAccount.id),
+      store.listRuns(workspaceAccount.id),
+      store.listDrafts(workspaceAccount.id),
+      store.listReviewsByAccount(workspaceAccount.id),
     ])
     : [null, [], [], []] as const;
   // 以笔记为单元：返回每篇笔记对应的复盘（draftId -> review），供历史查看
@@ -76,7 +80,7 @@ export async function GET(req: Request) {
   for (const review of reviewList) {
     if (!reviews[review.draft_id]) reviews[review.draft_id] = review;
   }
-  const storedWeeklyReview = account?.weekly_review ?? account?.stage_review;
+  const storedWeeklyReview = workspaceAccount?.weekly_review ?? workspaceAccount?.stage_review;
   // 旧版按 A/B/C 方向生成的周复盘仅保留在历史数据中，不能交给 v3.2 方法表渲染。
   const weeklyReview = isMethodWeeklyReview(storedWeeklyReview) ? storedWeeklyReview : null;
   const historicalDrafts = drafts.filter((draft) => draft.schema_version === "legacy_v1" || !draft.schema_version);
@@ -91,9 +95,9 @@ export async function GET(req: Request) {
   const validReviewDraftIds = new Set(reviewList.filter((review) => review.sample?.strategy_eligible).map((review) => review.draft_id));
   const historicalEffectiveSamples = historicalDrafts.filter((draft) => validReviewDraftIds.has(draft.id)).length;
   const newLearningSamples = currentDrafts.filter((draft) => draft.eligible_for_method_learning !== false && validReviewDraftIds.has(draft.id)).length;
-  const sourceCounts = account ? Object.fromEntries((["default", "explore"] as const).map((mode) => {
-    const methods = methodsForPersona(persona, mode, account.method_overrides);
-    const generatable = methods.filter((method) => !method.sourceRequired || (account.topic_sources ?? []).some((item) => item.method_id === method.id && sourceIsUsable(item))).length;
+  const sourceCounts = workspaceAccount ? Object.fromEntries((["default", "explore"] as const).map((mode) => {
+    const methods = methodsForPersona(persona, mode, workspaceAccount.method_overrides);
+    const generatable = methods.filter((method) => !method.sourceRequired || (workspaceAccount.topic_sources ?? []).some((item) => item.method_id === method.id && sourceIsUsable(item))).length;
     return [mode, { configured: methods.length, generatable, blockedBySource: methods.length - generatable }];
   })) : { default: { configured: 0, generatable: 0, blockedBySource: 0 }, explore: { configured: 0, generatable: 0, blockedBySource: 0 } };
   return NextResponse.json({
@@ -101,14 +105,14 @@ export async function GET(req: Request) {
     businessLine,
     businessPosition: businessPositions[businessLine],
     businessPositions,
-    account,
+    account: workspaceAccount,
     plan,
     runs,
     drafts,
     currentDrafts,
     historicalDrafts,
     reviews,
-    threeDayReviewCycles: account?.three_day_review_cycles ?? [],
+    threeDayReviewCycles: workspaceAccount?.three_day_review_cycles ?? [],
     weeklyReview,
     stageReview: weeklyReview,
     capabilities: { reviewScreenshot: isVisionConfigured() },

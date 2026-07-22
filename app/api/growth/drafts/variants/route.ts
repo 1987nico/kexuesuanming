@@ -3,7 +3,12 @@ import { z } from "zod";
 import { requireMianbaApiAuth } from "@/lib/auth/mianba";
 import { generateDraftVariants } from "@/lib/growth/runner";
 import { growthStore } from "@/lib/growth/store";
-import { accountForBusinessGeneration } from "@/lib/growth/businessCompatibility";
+import {
+  accountForBusinessGeneration,
+  accountMatchesWorkspace,
+  isBusinessCompatibleText,
+  resolveAccountBusinessLine,
+} from "@/lib/growth/businessCompatibility";
 import {
   buildLearningBrief,
   buildWeeklyReviewResult,
@@ -18,6 +23,9 @@ const DEFAULT_TENANT_ID = "mianbajun";
 const bodySchema = z.object({
   runId: z.string().min(1),
   topicId: z.string().min(1),
+  accountId: z.string().min(1),
+  businessLine: z.enum(["executive", "overseas_student"]),
+  persona: z.enum(["merchant", "buyer", "expert"]),
   count: z.number().int().min(1).max(3).optional(),
   bodyVersion: z.enum(["short", "long"]).optional(),
   excludeBodies: z.array(z.string()).max(6).optional(),
@@ -38,8 +46,27 @@ export async function POST(req: Request) {
   if (!run) return NextResponse.json({ error: "run_not_found" }, { status: 404 });
   const account = await store.getAccount(run.account_id);
   if (!account) return NextResponse.json({ error: "account_not_found" }, { status: 404 });
+  if (guard.auth.role !== "admin"
+    && ((run.owner_user_id && run.owner_user_id !== guard.auth.user.id)
+      || (account.owner_user_id && account.owner_user_id !== guard.auth.user.id))) {
+    return NextResponse.json({ error: "forbidden" }, { status: 403 });
+  }
+  if (run.account_id !== parsed.data.accountId || !accountMatchesWorkspace(account, parsed.data)) {
+    return NextResponse.json({
+      error: "workspace_context_mismatch",
+      message: "业务或视角已经切换，请回到选题重新选择当前业务的标题。",
+    }, { status: 409 });
+  }
   const topic = run.topic_pool.find((candidate) => candidate.id === parsed.data.topicId);
   if (!topic) return NextResponse.json({ error: "topic_not_found" }, { status: 404 });
+  const topicContext = [topic.title, topic.title_promise, topic.target_user, topic.pain].filter(Boolean).join(" ");
+  if (!isBusinessCompatibleText(topicContext, parsed.data.businessLine)) {
+    return NextResponse.json({
+      error: "topic_business_mismatch",
+      message: "这个标题属于另一条业务，系统已阻止生成。请在当前业务重新生成选题。",
+    }, { status: 409 });
+  }
+  const generationAccount = accountForBusinessGeneration(account);
 
   const notes = await store.listDrafts(account.id);
   const reviews = await store.listReviewsByAccount(account.id);
@@ -65,7 +92,7 @@ export async function POST(req: Request) {
   try {
     generated = await generateDraftVariants({
       tenantId: DEFAULT_TENANT_ID,
-      account: accountForBusinessGeneration(account),
+      account: generationAccount,
       run,
       topic,
       count: parsed.data.count ?? 2,
@@ -79,7 +106,7 @@ export async function POST(req: Request) {
       incidentId,
       runId: run.id,
       topicId: topic.id,
-      businessLine: account.business_line ?? "executive",
+      businessLine: resolveAccountBusinessLine(account),
       persona: account.persona,
       methodId: topic.method_id,
       error: error instanceof Error ? error.message : "unknown",
@@ -109,7 +136,7 @@ export async function POST(req: Request) {
   console.info("[growth] draft validation summary", JSON.stringify({
     runId: run.id,
     topicId: topic.id,
-    businessLine: account.business_line ?? "executive",
+    businessLine: resolveAccountBusinessLine(account),
     persona: account.persona,
     methodId: topic.method_id,
     requestedVersion: parsed.data.bodyVersion ?? "both",

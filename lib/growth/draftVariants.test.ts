@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
 import type { DraftBlueprintContext } from "./agents";
 import type { ContentDraft } from "./types";
-import { certifyDraftForOperator, composeBlueprintBody, draftBodiesAreTooSimilar, draftMeetsPublishTarget } from "./runner";
+import {
+  certifyDraftForOperator,
+  composeBlueprintBody,
+  draftBodiesAreTooSimilar,
+  draftMeetsPublishTarget,
+  draftVariantOrderIsValid,
+} from "./runner";
 import { countPublishChars } from "./validation";
 
 const blueprint: DraftBlueprintContext = {
@@ -71,6 +77,38 @@ describe("draft variants", () => {
     const body = "先把岗位和材料放在同一张表里，再根据真实反馈收窄方向。";
     expect(draftBodiesAreTooSimilar(body, body)).toBe(true);
     expect(draftBodiesAreTooSimilar(body, `${body}\n\n先记录结果。`)).toBe(true);
+  });
+
+  it("rejects a short draft that is longer than the long draft", () => {
+    const timestamp = new Date().toISOString();
+    const base = {
+      id: "base", tenant_id: "tenant", account_id: "account", run_id: "run", status: "ready",
+      business_line: "中高管职业决策", method_group: "native", method_id: "human_pain", method_label: "行业人性痛点",
+      generation_mode: "default", title_promise: "承诺", raw_body_tags: [], tagging_status: "pending",
+      canonical_tag_ids: [], cta_type: "service_entry", validation_checks: [], test_variable: "变量",
+      expected_signal: "信号", title: "标题", alternative_titles: [], target_user: "中高管", cover_text: "封面",
+      hashtags: ["#中高管"], comment_prompt: "", follow_reason: "", trust_anchor: "", review_points: [],
+      cover_suggestion: "", created_at: timestamp, updated_at: timestamp,
+    } as unknown as ContentDraft;
+    const shortDraft = {
+      ...base,
+      selected_body_version: "short" as const,
+      body: "短".repeat(500),
+      word_count: { title: 2, body_and_tags: 505, total: 507, within_limit: true },
+    };
+    const longDraft = {
+      ...base,
+      id: "long",
+      selected_body_version: "long" as const,
+      body: "长".repeat(440),
+      word_count: { title: 2, body_and_tags: 445, total: 447, within_limit: true },
+    };
+
+    expect(draftVariantOrderIsValid(shortDraft, longDraft)).toBe(false);
+    expect(draftVariantOrderIsValid(
+      { ...shortDraft, body: "短".repeat(300), word_count: { title: 2, body_and_tags: 305, total: 307, within_limit: true } },
+      longDraft,
+    )).toBe(true);
   });
 
   it("keeps the emergency long-form composition below the publish target", () => {

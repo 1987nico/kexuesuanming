@@ -35,7 +35,10 @@ import {
   TITLE_METHOD_BY_ID,
   type TitleMethodDefinition,
 } from "@/lib/growth/methods";
-import { visibleBusinessText } from "@/lib/growth/businessCompatibility";
+import {
+  accountMatchesWorkspace,
+  visibleBusinessText,
+} from "@/lib/growth/businessCompatibility";
 import {
   inquiryQualificationRate,
   perThousandImpressions,
@@ -779,7 +782,15 @@ export default function GrowthPage() {
         };
       }>(
         "/api/growth/topics",
-        { method: "POST", body: JSON.stringify({ accountId: data.account.id, generationMode: mode }) },
+        {
+          method: "POST",
+          body: JSON.stringify({
+            accountId: data.account.id,
+            businessLine,
+            persona,
+            generationMode: mode,
+          }),
+        },
       );
       setData((current) => current ? {
         ...current,
@@ -829,7 +840,14 @@ export default function GrowthPage() {
     if (nextTitle === topic.title) return { run, topic };
     const result = await requestJSON<{ run: GrowthRun; topic: TopicCandidate }>("/api/growth/topics", {
       method: "PATCH",
-      body: JSON.stringify({ runId: run.id, topicId: topic.id, title: nextTitle }),
+      body: JSON.stringify({
+        runId: run.id,
+        topicId: topic.id,
+        accountId: data?.account?.id,
+        businessLine,
+        persona,
+        title: nextTitle,
+      }),
     });
     setData((current) => current ? {
       ...current,
@@ -862,7 +880,14 @@ export default function GrowthPage() {
     try {
       const result = await requestJSON<{ run: GrowthRun; topic: TopicCandidate }>("/api/growth/topics", {
         method: "PATCH",
-        body: JSON.stringify({ runId: run.id, topicId: topic.id, syncPromise: true }),
+        body: JSON.stringify({
+          runId: run.id,
+          topicId: topic.id,
+          accountId: data?.account?.id,
+          businessLine,
+          persona,
+          syncPromise: true,
+        }),
       });
       setData((current) => current ? {
         ...current,
@@ -878,6 +903,19 @@ export default function GrowthPage() {
   }
 
   async function generateBodies(run: GrowthRun, topic: TopicCandidate) {
+    const account = data?.account;
+    if (!account
+      || activeWorkspace.current !== workspaceKey(businessLine, persona)
+      || run.account_id !== account.id
+      || !accountMatchesWorkspace(account, { accountId: account.id, businessLine, persona })) {
+      setVariants([]);
+      setSelectedTopic(null);
+      setActiveTopic(null);
+      setChosen(null);
+      setMessage("检测到业务或视角已经切换，已清空旧标题。请在当前业务重新选择标题。");
+      await load(businessLine, persona, true);
+      return;
+    }
     if (topic.title_promise_status === "stale" || topic.title_promise_status === "invalid") {
       setMessage("标题修改后，正文承诺尚未同步。请先点击“根据标题更新承诺”。");
       return;
@@ -899,6 +937,9 @@ export default function GrowthPage() {
         body: JSON.stringify({
           runId: saved.run.id,
           topicId: saved.topic.id,
+          accountId: account.id,
+          businessLine,
+          persona,
         }),
       });
       setVariants(result.drafts);

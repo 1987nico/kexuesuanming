@@ -10,7 +10,10 @@ import {
   isWeeklyReviewStale,
 } from "@/lib/growth/reviewLearning";
 import { ensureRecentTopicSources } from "@/lib/growth/sourceDiscovery";
-import { accountForBusinessGeneration } from "@/lib/growth/businessCompatibility";
+import {
+  accountForBusinessGeneration,
+  accountMatchesWorkspace,
+} from "@/lib/growth/businessCompatibility";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -19,6 +22,8 @@ const DEFAULT_TENANT_ID = "mianbajun";
 
 const bodySchema = z.object({
   accountId: z.string().min(1),
+  businessLine: z.enum(["executive", "overseas_student"]),
+  persona: z.enum(["merchant", "buyer", "expert"]),
   week: z.number().int().min(1).max(4).optional(),
   generationMode: z.enum(["default", "explore"]).optional(),
 });
@@ -26,6 +31,9 @@ const bodySchema = z.object({
 const updateTitleSchema = z.object({
   runId: z.string().min(1),
   topicId: z.string().min(1),
+  accountId: z.string().min(1),
+  businessLine: z.enum(["executive", "overseas_student"]),
+  persona: z.enum(["merchant", "buyer", "expert"]),
   title: z.string().trim().min(1, "标题不能为空").refine(
     (value) => Array.from(value).length <= 20,
     "小红书标题不能超过20个字",
@@ -61,6 +69,16 @@ export async function POST(req: Request) {
   const store = growthStore();
   let account = await store.getAccount(parsed.data.accountId);
   if (!account) return NextResponse.json({ error: "account_not_found" }, { status: 404 });
+  if (guard.auth.role !== "admin" && account.owner_user_id && account.owner_user_id !== guard.auth.user.id) {
+    return NextResponse.json({ error: "forbidden" }, { status: 403 });
+  }
+  if (!accountMatchesWorkspace(account, parsed.data)) {
+    return NextResponse.json({
+      error: "workspace_context_mismatch",
+      message: "业务或视角已经切换，请等待当前业务加载完成后再生成选题。",
+    }, { status: 409 });
+  }
+  account = accountForBusinessGeneration(account);
 
   // 生成选题前先按需调用真实的每日职业榜；当天已校验完整则直接复用，避免重复扣费。
   const discovered = await ensureRecentTopicSources(account);
@@ -94,7 +112,7 @@ export async function POST(req: Request) {
   ]))).slice(-120);
 
   const { topics, unavailableMethods, usage } = await generateTopicBatch({
-    account: accountForBusinessGeneration(account),
+    account,
     week: parsed.data.week ?? latestRun?.week ?? 1,
     generationMode,
     excludeTitles: seenTitles,
@@ -171,6 +189,19 @@ export async function PATCH(req: Request) {
   const store = growthStore();
   const run = await store.getRun(parsed.data.runId);
   if (!run) return NextResponse.json({ error: "run_not_found" }, { status: 404 });
+  const account = await store.getAccount(run.account_id);
+  if (!account) return NextResponse.json({ error: "account_not_found" }, { status: 404 });
+  if (guard.auth.role !== "admin"
+    && ((run.owner_user_id && run.owner_user_id !== guard.auth.user.id)
+      || (account.owner_user_id && account.owner_user_id !== guard.auth.user.id))) {
+    return NextResponse.json({ error: "forbidden" }, { status: 403 });
+  }
+  if (run.account_id !== parsed.data.accountId || !accountMatchesWorkspace(account, parsed.data)) {
+    return NextResponse.json({
+      error: "workspace_context_mismatch",
+      message: "业务或视角已经切换，请重新选择当前业务的标题。",
+    }, { status: 409 });
+  }
   const currentTopic = run.topic_pool.find((topic) => topic.id === parsed.data.topicId);
   if (!currentTopic) return NextResponse.json({ error: "topic_not_found" }, { status: 404 });
 

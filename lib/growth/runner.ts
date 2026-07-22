@@ -873,7 +873,7 @@ export function composeBlueprintBody(
     return `${chars.slice(0, end).join("").replace(/[，；、]$/u, "")}。`;
   };
   sections = bodyVersion === "short"
-    ? sections.map(firstSentence)
+    ? sections.map((section) => options?.compact ? compactSection(section) : firstSentence(section))
     : sections.map((section, index) => {
       if (options?.compact) {
         const compact = compactSection(section);
@@ -1182,7 +1182,9 @@ async function generateSingleDraft(input: {
   }
   const title = enforceTitleLimit(payload?.title || input.topic.title);
   const businessLine = input.account.business_line ?? "executive";
-  const body = composeBlueprintBody(input.blueprint, input.spec, payload?.body_structure, {
+  // 短长版必须从同一份已认证蓝图装配。模型返回的独立 body_structure
+  // 容易让短版扩写、长版压缩，甚至造成两个版本的业务上下文漂移。
+  const body = composeBlueprintBody(input.blueprint, input.spec, undefined, {
     bodyVersion: input.bodyVersion,
     businessLine,
   });
@@ -1257,6 +1259,7 @@ export async function generateDraftVariants(input: {
   }
   const short = await generateSingleDraft({ ...shared, bodyVersion: "short" });
   const long = await generateSingleDraft({ ...shared, bodyVersion: "long", excludeBodies: [...(input.excludeBodies ?? []), short.draft.body] });
+  let shortDraft = short.draft;
   let longDraft = long.draft;
   if (draftBodiesAreTooSimilar(short.draft.body, longDraft.body)) {
     const businessLine = input.account.business_line ?? "executive";
@@ -1291,7 +1294,96 @@ export async function generateDraftVariants(input: {
     });
     longDraft = certifyDraftForOperator(longDraft);
   }
-  return { drafts: [short.draft, longDraft], usage: long.usage || short.usage || planned.usage };
+  if (!draftVariantOrderIsValid(shortDraft, longDraft)) {
+    const businessLine = input.account.business_line ?? "executive";
+    shortDraft = await rebuildVariantForLengthOrder({
+      draft: shortDraft,
+      account: input.account,
+      topic: input.topic,
+      blueprint: planned.fallback,
+      spec: planned.spec,
+      businessLine,
+      compact: true,
+      aggressive: true,
+    });
+    longDraft = await rebuildVariantForLengthOrder({
+      draft: longDraft,
+      account: input.account,
+      topic: input.topic,
+      blueprint: planned.fallback,
+      spec: planned.spec,
+      businessLine,
+      compact: true,
+      aggressive: false,
+    });
+  }
+  if (!draftVariantOrderIsValid(shortDraft, longDraft)) {
+    throw new Error("draft_variant_length_order_failed");
+  }
+  return { drafts: [shortDraft, longDraft], usage: long.usage || short.usage || planned.usage };
+}
+
+async function rebuildVariantForLengthOrder(input: {
+  draft: ContentDraft;
+  account: GrowthAccount;
+  topic: TopicCandidate;
+  blueprint: DraftBlueprintContext;
+  spec: PromiseDeliverySpec;
+  businessLine: GrowthBusinessLine;
+  compact: boolean;
+  aggressive: boolean;
+}) {
+  const body = composeBlueprintBody(input.blueprint, input.spec, undefined, {
+    bodyVersion: input.draft.selected_body_version === "long" ? "long" : "short",
+    businessLine: input.businessLine,
+    compact: input.compact,
+    aggressive: input.aggressive,
+  });
+  let draft = withDraftValidation(attachBlueprintContract(enforceDraftCompliance({
+    ...input.draft,
+    body,
+    certification_status: "repairing",
+    fallback_used: true,
+    repair_history: [...(input.draft.repair_history ?? []), {
+      field: "length",
+      reason_code: "variant_length_order",
+      action: input.draft.selected_body_version === "long"
+        ? "按同一蓝图补足长版的判断依据与执行细节"
+        : "按同一蓝图压缩短版的背景与重复解释",
+      repaired_at: now(),
+    }],
+    word_count: countPublishChars(input.draft.title, body, input.draft.hashtags),
+    updated_at: now(),
+  }, input.topic.title), input.blueprint), input.account.persona, (input.draft.validation_report?.attempts ?? 0) + 1);
+  draft = await passDraftValidationGate(draft, {
+    account: input.account,
+    persona: input.account.persona,
+    businessLine: input.businessLine,
+    topic: input.topic,
+    cta: ctaType(input.account.persona),
+    blueprint: input.blueprint,
+    fallbackBlueprint: input.blueprint,
+    spec: input.spec,
+  });
+  draft = await fitDraftWithinPublishTarget(draft, {
+    account: input.account,
+    persona: input.account.persona,
+    businessLine: input.businessLine,
+    topic: input.topic,
+    blueprint: input.blueprint,
+    fallbackBlueprint: input.blueprint,
+    spec: input.spec,
+  });
+  return certifyDraftForOperator(draft);
+}
+
+export function draftVariantOrderIsValid(shortDraft: ContentDraft, longDraft: ContentDraft) {
+  if (shortDraft.selected_body_version === "long" || longDraft.selected_body_version !== "long") return false;
+  const shortLength = Array.from(shortDraft.body.replace(/\s+/gu, "")).length;
+  const longLength = Array.from(longDraft.body.replace(/\s+/gu, "")).length;
+  const minimumDelta = Math.max(80, Math.ceil(shortLength * 0.12));
+  return longLength >= shortLength + minimumDelta
+    && shortDraft.word_count.total < longDraft.word_count.total;
 }
 
 function comparisonBigrams(value: string) {
