@@ -1,9 +1,36 @@
 import { describe, expect, it } from "vitest";
 import type { DraftBlueprintContext } from "./agents";
-import { composeBlueprintBody, draftBodiesAreTooSimilar, draftMeetsPublishTarget } from "./runner";
+import type { ContentDraft } from "./types";
+import { certifyDraftForOperator, composeBlueprintBody, draftBodiesAreTooSimilar, draftMeetsPublishTarget } from "./runner";
 import { countPublishChars } from "./validation";
 
 const blueprint: DraftBlueprintContext = {
+  contract_version: "v3_4",
+  identity_contract: {
+    persona: "buyer",
+    expression_goal: "用家长亲历体现买家身份",
+    required_elements: ["家庭处境", "亲历行动"],
+    evidence_basis: "留学生家长人设",
+    target_section: "identity_evidence",
+    evidence: "这段时间我把孩子的毕业时间、目标岗位和每次投递反馈都记在一起，才看清我们真正卡住的地方。",
+  },
+  fulfillment_contract: {
+    promise_type: "material",
+    required_sections: [
+      { id: "section_1", requirement: "交付第一个节点", minimum_content: ["时间", "动作"] },
+      { id: "section_2", requirement: "交付第二个节点", minimum_content: ["时间", "动作"] },
+      { id: "section_3", requirement: "交付第三个节点", minimum_content: ["时间", "动作"] },
+    ],
+  },
+  conversion_contract: {
+    problem_context: "两边求职节奏没有对齐",
+    attempted_action: "反复修改材料",
+    professional_role: "求职老师",
+    intervention_action: "梳理岗位与招聘节奏",
+    stage_result: "孩子不再拿一份简历乱投。",
+    evidence_basis: "辅导流程",
+    bridge_paragraph: "我们自己折腾了几轮还是没理顺，后来才找了一位求职老师一起梳理现有材料。她先把岗位和招聘节奏对齐，孩子不再拿一份简历乱投，下一步也有了顺序。",
+  },
   opening: "前阵子陪孩子忙秋招，我们在回国还是留当地这件事上，来回改了好几次主意。",
   core_judgement: "秋招真正难的不是同时准备两边，而是没有把岗位、材料和截止时间放进同一套节奏里。",
   delivery_format: "numbered",
@@ -80,5 +107,29 @@ describe("draft variants", () => {
 
     expect(draftMeetsPublishTarget(failed)).toBe(false);
     expect(draftMeetsPublishTarget(passed)).toBe(true);
+  });
+
+  it("only exposes a draft after all machine contracts are certified", () => {
+    const timestamp = new Date().toISOString();
+    const candidate = {
+      id: "certified", tenant_id: "tenant", account_id: "account", run_id: "run", status: "ready",
+      business_line: "中高管职业决策", method_group: "native", method_id: "human_pain", method_label: "行业人性痛点",
+      generation_mode: "default", title_promise: "讲清真实处境与下一步", selected_body_version: "short", raw_body_tags: [],
+      tagging_status: "pending", canonical_tag_ids: [], cta_type: "service_entry",
+      validation_checks: ["identity", "fulfillment", "conversion"].map((key) => ({ key, status: "passed", message: "通过" })),
+      validation_report: { status: "passed", attempts: 1, checked_at: timestamp, annotations: [] },
+      test_variable: "认证", expected_signal: "有效咨询", title: "找对方向，比瞎忙重要太多", alternative_titles: [],
+      target_user: "中高管", cover_text: "找对方向", body: "已经通过合同的正文", hashtags: ["#中高管"], comment_prompt: "",
+      word_count: { title: 14, body_and_tags: 100, total: 114, within_limit: true },
+      follow_reason: "职业判断", trust_anchor: "真实咨询", review_points: [], cover_suggestion: "办公桌",
+      compliance: { status: "passed", checked_at: timestamp, issues: [] },
+      created_at: timestamp, updated_at: timestamp,
+    } as ContentDraft;
+
+    expect(certifyDraftForOperator(candidate).certification_status).toBe("certified");
+    expect(() => certifyDraftForOperator({
+      ...candidate,
+      validation_checks: candidate.validation_checks.map((check, index) => index === 0 ? { ...check, status: "needs_edit" } : check),
+    })).toThrow("draft_certification_failed");
   });
 });

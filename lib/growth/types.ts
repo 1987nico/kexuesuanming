@@ -155,6 +155,53 @@ export interface DraftValidationReport {
   annotations: DraftValidationAnnotation[];
 }
 
+export interface DraftIdentityContract {
+  persona: GrowthPersona;
+  expression_goal: string;
+  required_elements: string[];
+  evidence_basis: string;
+  target_section: "identity_evidence";
+  /** 已进入最终正文的身份依据原句；校验通过结构定位，不再猜固定关键词。 */
+  evidence: string;
+}
+
+export interface DraftFulfillmentContract {
+  promise_type: "ordinary" | "counted" | "material" | "comparison";
+  promised_count?: number;
+  required_sections: Array<{
+    id: string;
+    requirement: string;
+    minimum_content: string[];
+  }>;
+}
+
+export interface DraftConversionContract {
+  problem_context: string;
+  attempted_action: string;
+  professional_role: string;
+  intervention_action: string;
+  stage_result: string;
+  evidence_basis: string;
+  /** 已进入最终正文的完整因果桥接段。 */
+  bridge_paragraph: string;
+}
+
+export interface DraftDeliveryContract {
+  contract_version: "v3_4";
+  identity_contract: DraftIdentityContract;
+  fulfillment_contract: DraftFulfillmentContract;
+  conversion_contract: DraftConversionContract;
+}
+
+export type DraftCertificationStatus = "generating" | "repairing" | "certified" | "incident";
+
+export interface DraftRepairRecord {
+  field: DraftValidationKey | "length" | "fallback";
+  reason_code: string;
+  action: string;
+  repaired_at: string;
+}
+
 export interface RawBodyTag {
   id: string;
   text: string;
@@ -505,6 +552,13 @@ export interface ContentDraft {
   validation_checks: ValidationCheck[];
   /** 仅供操作者查看的正文证据层；复制和发布始终读取纯净 body。 */
   validation_report?: DraftValidationReport;
+  /** v3.4 正文交付合同：生成、修复和标注共享同一份结构化依据。 */
+  delivery_contract?: DraftDeliveryContract;
+  certification_status?: DraftCertificationStatus;
+  certified_at?: string;
+  repair_history?: DraftRepairRecord[];
+  fallback_used?: boolean;
+  incident_id?: string;
   /** v3.2兼容元数据：旧记录只做读取适配，不自动回写。 */
   schema_version?: GrowthSchemaVersion;
   method_attribution_status?: MethodAttributionStatus;

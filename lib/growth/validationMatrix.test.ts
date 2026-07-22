@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { METHOD_APPLICABILITY, TITLE_METHODS, type TitleMethodDefinition } from "./methods";
-import type { ContentDraft, GrowthPersona } from "./types";
+import type { ContentDraft, DraftFulfillmentContract, GrowthPersona } from "./types";
 import { analyzeDraftValidation } from "./validation";
 
 const personas: GrowthPersona[] = ["buyer", "expert", "merchant"];
@@ -43,13 +43,53 @@ function personaParagraphs(persona: GrowthPersona) {
   };
   if (persona === "merchant") return {
     opening: "最近接到一个很典型的情况，当事人忙了两个月，方向却越来越散。",
-    identity: "我们在服务中先梳理客户的职业经历和外部反馈，没有催他马上做决定。",
+    identity: "这次项目里，团队先把候选路径、职业经历和外部反馈放在同一张判断表里。",
     conversion: "那次职业决策服务里，我们先梳理能力和市场机会，最后排除了一个方向，也明确了下一步。",
   };
   return {
     opening: "我前后试了两个月，事情越做越多，心里反而越来越没底。",
     identity: "后来我把职业上的几个想法放在一起，才发现自己一直把忙碌当成了进展。",
     conversion: "我请一位职业决策顾问帮我梳理能力和市场机会，最后排除了一个方向，也明确了下一步。",
+  };
+}
+
+function fulfillmentContractFor(method: TitleMethodDefinition): DraftFulfillmentContract {
+  if (method.id === "tug_of_war") {
+    return {
+      promise_type: "comparison",
+      required_sections: [
+        { id: "path_1", requirement: "交付第一条路径", minimum_content: ["条件", "代价"] },
+        { id: "path_2", requirement: "交付第二条路径", minimum_content: ["条件", "代价"] },
+      ],
+    };
+  }
+  if (method.id === "scarce_material") {
+    return {
+      promise_type: "material",
+      required_sections: [
+        { id: "step_1", requirement: "交付第一步", minimum_content: ["时间", "动作"] },
+        { id: "step_2", requirement: "交付第二步", minimum_content: ["时间", "动作"] },
+        { id: "step_3", requirement: "交付第三步", minimum_content: ["时间", "动作"] },
+      ],
+    };
+  }
+  if (method.id === "inventory") {
+    return {
+      promise_type: "counted",
+      promised_count: 5,
+      required_sections: Array.from({ length: 5 }, (_, index) => ({
+        id: `item_${index + 1}`,
+        requirement: `交付第${index + 1}项检查`,
+        minimum_content: ["判断", "证据"],
+      })),
+    };
+  }
+  return {
+    promise_type: "ordinary",
+    required_sections: [
+      { id: "judgement", requirement: "交付核心判断", minimum_content: ["方向", "验证"] },
+      { id: "action", requirement: "交付下一步行动", minimum_content: ["行动", "反馈"] },
+    ],
   };
 }
 
@@ -89,6 +129,27 @@ function draftFor(method: TitleMethodDefinition, persona: GrowthPersona, version
     trust_anchor: "真实咨询",
     review_points: [],
     cover_suggestion: "办公桌",
+    delivery_contract: {
+      contract_version: "v3_4",
+      identity_contract: {
+        persona,
+        expression_goal: "通过具体处境和行动体现当前视角",
+        required_elements: ["具体处境", "当前视角行动"],
+        evidence_basis: "当前人设与业务事实",
+        target_section: "identity_evidence",
+        evidence: paragraphs.identity,
+      },
+      fulfillment_contract: fulfillmentContractFor(method),
+      conversion_contract: {
+        problem_context: "原有尝试没有形成清晰方向",
+        attempted_action: "自行反复比较候选方向",
+        professional_role: "职业决策顾问",
+        intervention_action: "梳理能力和市场机会",
+        stage_result: "排除一个方向并明确下一步",
+        evidence_basis: "职业决策服务流程",
+        bridge_paragraph: paragraphs.conversion,
+      },
+    },
     created_at: timestamp,
     updated_at: timestamp,
   };

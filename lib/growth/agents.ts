@@ -1,4 +1,7 @@
 import type {
+  DraftConversionContract,
+  DraftFulfillmentContract,
+  DraftIdentityContract,
   GrowthBusinessLine,
   GrowthBusinessPosition,
   GrowthPersona,
@@ -39,10 +42,13 @@ export interface AccountContext {
 }
 
 export interface DraftBlueprintContext {
-  /** v2 将标题承诺先固化为合同，再由系统拼装正文。 */
-  contract_version?: "v2";
+  /** v3.4 将身份、标题兑现和转化因果先固化为合同，再由系统拼装正文。 */
+  contract_version: "v3_4";
   promise_type?: "ordinary" | "counted" | "material" | "comparison";
   opening_intent?: string;
+  identity_contract: DraftIdentityContract;
+  fulfillment_contract: DraftFulfillmentContract;
+  conversion_contract: DraftConversionContract;
   opening: string;
   core_judgement: string;
   delivery_format: "numbered" | "paragraphs";
@@ -312,18 +318,41 @@ ${accountContextBlock(input.context)}
 
 骨架硬规则：
 1. opening 是可以直接放进正文的自然开头。必须从具体动作、现场、念头或矛盾切入，前30字回应标题人物与冲突；禁止“作为××”“身为××”“我的判断是”“先看这里”和机械复述标题。
-2. delivery_sections 必须直接交付标题承诺，不得只说“我整理了一份表/清单”。标题承诺时间表、节奏表、路线图、资料或清单时，必须写出读者可直接使用的具体内容。
-3. service_bridge 必须是一整段自然因果：先写当事人卡在哪里或自己试过什么，再自然出现老师、机构或顾问，写清对方具体做了什么，最后带出一个克制、可验证的阶段结果。
-4. stage_result 单独摘录上一步的阶段结果。优先使用“不再、开始、收窄到、排除了、明确了、终于能”等可验证变化；不得虚构Offer、薪资、录取数量或确定性成功。
-5. 买家像真实经历转折；专家像复盘一次具体判断；商家用交付动作和阶段结果证明，不自夸。
-6. closing 只保留一个自然动作，不要求点赞、收藏、评论、私信或站外联系。
-7. promise_type 必须按标题承诺选择：普通经历/观点为 ordinary；明确数字项为 counted；资料、清单、表格或路线图为 material；两条路径比较为 comparison。
+2. identity_contract.evidence 是可以直接进入正文的身份依据段。买家写本人/家庭处境与行动；专家写具体判断或方法应用；商家写服务对象、交付动作与阶段变化。不得只写“作为某某”，也不得依赖固定关键词自证身份。
+3. fulfillment_contract 必须把标题承诺拆成可检查的具体部分；delivery_sections 必须逐段交付，不得只说“我整理了一份表/清单”。
+4. conversion_contract 和 service_bridge 必须共同形成完整自然因果：具体卡点→原有尝试→专业角色→介入动作→克制且可验证的阶段结果。
+5. stage_result 单独摘录上一步的阶段结果。优先使用“不再、开始、收窄到、排除了、明确了、终于能”等可验证变化；不得虚构Offer、薪资、录取数量或确定性成功。
+6. 买家像真实经历转折；专家像复盘一次具体判断；商家用交付动作和阶段结果证明，不自夸。
+7. closing 只保留一个自然动作，不要求点赞、收藏、评论、私信或站外联系。
+8. promise_type 必须按标题承诺选择：普通经历/观点为 ordinary；明确数字项为 counted；资料、清单、表格或路线图为 material；两条路径比较为 comparison。
 
 只输出 JSON：
 {
-  "contract_version": "v2",
+  "contract_version": "v3_4",
   "promise_type": "ordinary|counted|material|comparison",
   "opening_intent": "开头要回应的具体人物、处境和冲突",
+  "identity_contract": {
+    "persona": "buyer|expert|merchant",
+    "expression_goal": "当前视角需要怎样自然表达",
+    "required_elements": ["必须出现的身份事实1", "身份动作或判断2"],
+    "evidence_basis": "来自人设、业务事实或真实方法流程的依据",
+    "target_section": "identity_evidence",
+    "evidence": "可直接进入正文、自然体现当前身份的完整段落"
+  },
+  "fulfillment_contract": {
+    "promise_type": "ordinary|counted|material|comparison",
+    "promised_count": 0,
+    "required_sections": [{"id":"section_1","requirement":"这一段必须完成什么","minimum_content":["最少包含的内容"]}]
+  },
+  "conversion_contract": {
+    "problem_context": "当事人的具体卡点",
+    "attempted_action": "原来试过什么",
+    "professional_role": "自然出现的老师、顾问或服务团队",
+    "intervention_action": "具体做了什么",
+    "stage_result": "克制且可验证的阶段变化",
+    "evidence_basis": "业务方法、匿名案例或过程事实",
+    "bridge_paragraph": "把上述五项自然连成一段的完整正文"
+  },
   "opening": "自然开头完整段落",
   "core_judgement": "全文唯一核心判断",
   "delivery_sections": ["兑现段1", "兑现段2"],
@@ -391,7 +420,7 @@ ${JSON.stringify(input.blueprint, null, 2)}
 - 专业服务只能出现在真实因果链里：先写当事人遇到的具体卡点或自己试过什么，再自然带到老师、机构或顾问做了哪一个关键动作，最后顺手交代一个克制、可验证的阶段变化。不要单独插入“我们很专业”“建议找机构”等广告句，也不能只在结尾突然宣传。
 - 服务介入后必须有结果，但结果优先写过程变化，例如岗位从很多类收窄到两类、简历与目标岗位对齐、能说清下一步、排除了一个不适合的方向、投递或面试反馈开始可复盘。没有真实依据时不得编造 Offer、薪资、录取数量或确定性成功；可以明确写“不是立刻拿到结果，而是先把什么理顺了”。
 - 买家视角要像经历自然转折，不要把老师写成产品说明书；专家视角要像复盘一次具体判断；商家视角要用真实交付动作和阶段结果证明，不要自夸。
-- 先按“opening→core_judgement→service_bridge→delivery_sections→closing”的骨架分别完成各段，再由系统拼成正文。不得先自由写一篇正文、最后再补老师或结果。
+- 先按“opening→identity_evidence→core_judgement→service_bridge→delivery_sections→closing”的骨架分别完成各段，再由系统拼成正文。不得先自由写一篇正文、最后再补身份、老师或结果。
 - 【互动合规硬规则】正文、标题、封面和 comment_prompt 都不得要求点赞、收藏、关注、评论、转发、互关或互赞；不得出现「评论区扣1」「留言关键词」「回复口令」「私信我」「加微信」等动作。
 - 【禁止利益交换】不得用资料、匿名样例、报告、清单、模板、链接、福利、抽奖、诊断或体检作为互动奖励。像「需要职业方向体检的评论区扣1，我发你匿名交付样例」这种表达一律禁止。
 - 结尾优先给出一个读者当下就能完成的自查动作或判断标准。可以提出与正文直接相关的自然问题，但不能承诺根据评论发送任何东西。
@@ -404,6 +433,7 @@ ${JSON.stringify(input.blueprint, null, 2)}
   "body": "正文",
   "body_structure": {
     "opening": "自然开头段",
+    "identity_evidence": "与正文合同一致的身份依据段",
     "core_judgement": "与另一版本一致的核心判断",
     "delivery_sections": ["按标题承诺展开的正文段落"],
     "service_bridge": "自然包含卡点、专业角色、动作和阶段结果的完整段落",

@@ -877,16 +877,14 @@ export default function GrowthPage() {
     }
   }
 
-  async function generateBodies(run: GrowthRun, topic: TopicCandidate, bodyVersion?: "short" | "long") {
+  async function generateBodies(run: GrowthRun, topic: TopicCandidate) {
     if (topic.title_promise_status === "stale" || topic.title_promise_status === "invalid") {
       setMessage("标题修改后，正文承诺尚未同步。请先点击“根据标题更新承诺”。");
       return;
     }
     setBusy(`body-${topic.id}`);
-    if (!bodyVersion) {
-      setVariants([]);
-      setChosen(null);
-    }
+    setVariants([]);
+    setChosen(null);
     try {
       const editedTitle = titleEdits[topic.id] ?? topic.title;
       const saved = await persistTopicTitle(run, topic, editedTitle);
@@ -901,23 +899,11 @@ export default function GrowthPage() {
         body: JSON.stringify({
           runId: saved.run.id,
           topicId: saved.topic.id,
-          bodyVersion,
-          excludeBodies: bodyVersion ? variants.map((draft) => draft.body) : undefined,
         }),
       });
-      setVariants((current) => bodyVersion
-        ? [
-          ...current.filter((draft) => (draft.selected_body_version === "long" ? "long" : "short") !== bodyVersion),
-          ...result.drafts,
-        ].sort((a, b) => Number(a.selected_body_version === "long") - Number(b.selected_body_version === "long"))
-        : result.drafts);
-      const passedCount = result.drafts.filter(draftReadyForOperator).length;
-      const versionLabel = bodyVersion === "short" ? "短版" : bodyVersion === "long" ? "长版" : "正文";
-      setMessage(passedCount
-        ? `${versionLabel}生成与校验完成，合格版本已呈现。`
-        : `${versionLabel}未通过生成门禁，可单独重新生成这个版本。`
-      );
-      setBodyVersionView(bodyVersion ?? (result.drafts.some((draft) => draft.selected_body_version !== "long") ? "short" : "long"));
+      setVariants(result.drafts);
+      setMessage("短版和长版已完成系统认证，可以直接选择使用。");
+      setBodyVersionView(result.drafts.some((draft) => draft.selected_body_version !== "long") ? "short" : "long");
       goToStep("4");
     } catch (error) {
       setMessage((error as Error).message);
@@ -1552,7 +1538,7 @@ export default function GrowthPage() {
                     ? `已选标题：${titleEdits[(activeTopic || selectedTopic)!.topic.id] ?? (activeTopic || selectedTopic)!.topic.title}；标题承诺：${(activeTopic || selectedTopic)!.topic.title_promise}`
                     : chosen
                       ? `已选最终正文：${chosen.title}；复制内容不会包含系统校验标注。`
-                      : "先在选题槽位中选择一个标题；短版和长版只有通过三项校验后才会呈现。"}
+                      : "先在选题槽位中选择一个标题；系统会在内部完成生成、修复和认证。"}
                 >
                   {variants.length > 0 && visibleBodyDraft ? (
                     <div>
@@ -1571,7 +1557,7 @@ export default function GrowthPage() {
                                 onClick={() => setBodyVersionView(version)}
                                 className={`min-h-11 rounded-lg px-4 text-sm font-semibold ${bodyVersionView === version ? "bg-white text-slate-900 shadow-sm" : "text-slate-600"}`}
                               >
-                                {version === "short" ? "短版" : "长版"} · {passed ? "可选" : "未完成"}
+                                {version === "short" ? "短版" : "长版"} · {passed ? "已认证" : "处理中"}
                               </button>
                             );
                           })}
@@ -1584,14 +1570,6 @@ export default function GrowthPage() {
                         selected={chosen?.id === visibleBodyDraft.id}
                         onChoose={chooseDraft}
                         onPublish={markPublished}
-                        onRetry={() => {
-                          const current = activeTopic || selectedTopic;
-                          if (current) void generateBodies(
-                            current.run,
-                            current.topic,
-                            visibleBodyDraft.selected_body_version === "long" ? "long" : "short",
-                          );
-                        }}
                       />
                       {chosen && variants.length === 1 && (
                         <button type="button" className="mt-4 min-h-11 text-sm font-medium text-slate-600 underline" onClick={() => {
@@ -1600,7 +1578,7 @@ export default function GrowthPage() {
                             setVariants([chosen, ...candidates]);
                             setChosen(null);
                             setBodyVersionView(candidates[0].selected_body_version === "long" ? "long" : "short");
-                          } else setMessage("另一个版本未保留为可选正文，可重新生成两个版本。");
+                          } else setMessage("另一版本已归档；如需新版本，请返回选题后重新生成正文。");
                         }}>更换正文版本</button>
                       )}
                     </div>
@@ -1611,20 +1589,12 @@ export default function GrowthPage() {
                       selected
                       onChoose={chooseDraft}
                       onPublish={markPublished}
-                      onRetry={() => {
-                        const current = activeTopic || selectedTopic;
-                        if (current) void generateBodies(
-                          current.run,
-                          current.topic,
-                          chosen.selected_body_version === "long" ? "long" : "short",
-                        );
-                      }}
                     />
                   ) : selectedTopic ? (
                     busy === `body-${selectedTopic.topic.id}` ? (
                       <div className="rounded-2xl border border-sky-200 bg-sky-50 p-5 text-sm text-slate-600">
-                        <div className="font-semibold text-slate-900">正在生成并校验正文</div>
-                        <p className="mt-2 leading-6">短版和长版正在依次完成身份、兑现和转化植入检查；未通过的版本会自动修正，合格后才呈现。</p>
+                        <div className="font-semibold text-slate-900">正在生成可交付正文</div>
+                        <p className="mt-2 leading-6">系统正在内部完成正文合同、短长版生成、定点修复和最终认证；无需重复点击。</p>
                       </div>
                     ) : (
                       <div className="rounded-2xl border border-dashed border-slate-300 p-5 text-sm text-slate-500">
@@ -2238,6 +2208,7 @@ const BODY_VALIDATION_META = {
 
 function draftReadyForOperator(draft: ContentDraft) {
   return draftPublishLength(draft).withinLimit
+    && (draft.certification_status === "certified" || draft.certification_status === undefined)
     && draft.validation_report?.status === "passed"
     && BODY_VALIDATION_KEYS.every((key) =>
       draft.validation_checks.some((check) => check.key === key && check.status === "passed")
@@ -2367,49 +2338,17 @@ function DraftCard({
   selected = false,
   onChoose,
   onPublish,
-  onRetry,
 }: {
   draft: ContentDraft;
   busy: string | null;
   selected?: boolean;
   onChoose: (draft: ContentDraft) => void;
   onPublish?: (draft: ContentDraft, publishedAt: string) => void;
-  onRetry: () => void;
 }) {
   const readyForOperator = draftReadyForOperator(draft);
   const publishLength = draftPublishLength(draft);
-  if (!publishLength.withinLimit) {
-    return (
-      <div className="rounded-2xl border border-red-200 bg-red-50/60 p-5">
-        <div className="flex flex-wrap gap-2">
-          <Badge>{draft.selected_body_version === "long" ? "长版" : "短版"}</Badge>
-          <Badge>字数超限</Badge>
-        </div>
-        <h3 className="mt-4 text-lg font-semibold">正文超过小红书1000字限制</h3>
-        <PublishLengthBadge draft={draft} />
-        <p className="mt-3 text-sm leading-6 text-slate-600">为避免复制后无法发布，正文内容和复制入口已隐藏。重新生成时系统会以950字为目标自然压缩并预留余量。</p>
-        <button type="button" disabled={Boolean(busy)} onClick={onRetry} className="mt-4 min-h-11 rounded-xl bg-slate-900 px-4 text-sm font-semibold text-white disabled:opacity-40">重新生成两个版本</button>
-      </div>
-    );
-  }
-  if (!readyForOperator) {
-    return (
-      <div className="rounded-2xl border border-amber-200 bg-amber-50/50 p-5">
-        <div className="flex flex-wrap gap-2">
-          <Badge>{draft.selected_body_version === "long" ? "长版" : "短版"}</Badge>
-          <Badge>校验未通过</Badge>
-        </div>
-        <h3 className="mt-4 text-lg font-semibold">正文暂不呈现</h3>
-        <p className="mt-2 text-sm leading-6 text-slate-600">
-          系统已按正文兑现合同完成一次内部修复，仍未形成可靠版本。为避免误选或误复制，未通过正文不会呈现。
-        </p>
-        <div className="mt-4 grid gap-2 sm:grid-cols-3">
-          {draft.validation_checks.map((check) => <Check key={check.key} check={check} />)}
-        </div>
-        <button type="button" disabled={Boolean(busy)} onClick={onRetry} className="mt-4 min-h-11 rounded-xl bg-slate-900 px-4 text-sm font-semibold text-white disabled:opacity-40">重新生成这个版本</button>
-      </div>
-    );
-  }
+  // 新接口只会返回认证正文；防御性拦截异常数据，但不把内部失败与修复责任暴露给操作者。
+  if (!publishLength.withinLimit || !readyForOperator) return null;
 
   if (selected && onPublish) {
     return (
@@ -3203,23 +3142,6 @@ function WeeklyMethodCard({ item }: { item: MethodAggregate }) {
 
 const formatPercent = (value?: number) => `${((value || 0) * 100).toFixed(2)}%`;
 const formatNumber = (value?: number) => Math.round(value || 0).toLocaleString("zh-CN");
-
-function Check({ check }: { check: ContentDraft["validation_checks"][number] }) {
-  const label = ({ source: "来源", identity: "身份", fulfillment: "兑现", compliance: "合规", conversion: "转化植入" } as Record<string, string>)[check.key];
-  return (
-    <div className={`rounded-xl px-3 py-2 text-xs ${check.status === "passed" ? "bg-emerald-50 text-emerald-800" : "bg-red-50 text-red-700"}`}>
-      <b>{label}</b> · {check.status === "passed" ? "通过" : "需修改"}
-      <div className="mt-1 opacity-75">{check.message}</div>
-      {check.details && check.details.length > 1 && (
-        <div className="mt-2 space-y-1 border-t border-current/10 pt-2">
-          {check.details.filter((item) => item.status !== "not_applicable").map((item) => (
-            <div key={item.code}>{item.status === "passed" ? "✓" : "•"} {item.message}</div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
 
 function MotherFact({ label, value }: { label: string; value: string }) {
   return <div><div className="text-xs font-medium text-slate-500">{label}</div><div className="mt-2 text-sm font-medium leading-6 text-slate-800">{value}</div></div>;

@@ -61,16 +61,50 @@ export async function POST(req: Request) {
     methodId: topic.method_id,
   });
 
-  const { drafts, usage } = await generateDraftVariants({
-    tenantId: DEFAULT_TENANT_ID,
-    account: accountForBusinessGeneration(account),
-    run,
-    topic,
-    count: parsed.data.count ?? 2,
-    bodyVersion: parsed.data.bodyVersion,
-    excludeBodies: parsed.data.excludeBodies,
-    learningBrief,
-  });
+  let generated: Awaited<ReturnType<typeof generateDraftVariants>>;
+  try {
+    generated = await generateDraftVariants({
+      tenantId: DEFAULT_TENANT_ID,
+      account: accountForBusinessGeneration(account),
+      run,
+      topic,
+      count: parsed.data.count ?? 2,
+      bodyVersion: parsed.data.bodyVersion,
+      excludeBodies: parsed.data.excludeBodies,
+      learningBrief,
+    });
+  } catch (error) {
+    const incidentId = crypto.randomUUID();
+    console.error("[growth] certified draft incident", JSON.stringify({
+      incidentId,
+      runId: run.id,
+      topicId: topic.id,
+      businessLine: account.business_line ?? "executive",
+      persona: account.persona,
+      methodId: topic.method_id,
+      error: error instanceof Error ? error.message : "unknown",
+    }));
+    return NextResponse.json({
+      error: "draft_certification_incident",
+      message: "本次正文认证出现异常，系统已记录处理，无需重复点击。",
+      incidentId,
+    }, { status: 503 });
+  }
+  const { drafts, usage } = generated;
+  if (drafts.some((draft) => draft.certification_status !== "certified")) {
+    const incidentId = crypto.randomUUID();
+    console.error("[growth] uncertified draft blocked", JSON.stringify({
+      incidentId,
+      runId: run.id,
+      topicId: topic.id,
+      versions: drafts.map((draft) => draft.selected_body_version),
+    }));
+    return NextResponse.json({
+      error: "draft_certification_incident",
+      message: "本次正文认证出现异常，系统已记录处理，无需重复点击。",
+      incidentId,
+    }, { status: 503 });
+  }
 
   console.info("[growth] draft validation summary", JSON.stringify({
     runId: run.id,
@@ -82,7 +116,9 @@ export async function POST(req: Request) {
     drafts: drafts.map((draft) => ({
       version: draft.selected_body_version,
       status: draft.validation_report?.status ?? "failed",
+      certificationStatus: draft.certification_status,
       autoRepairAttempts: draft.validation_report?.attempts ?? 0,
+      fallbackUsed: draft.fallback_used ?? false,
       totalChars: draft.word_count.total,
       failedChecks: draft.validation_checks
         .filter((check) => check.status !== "passed")

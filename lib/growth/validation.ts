@@ -376,10 +376,17 @@ function fulfillmentDetails(draft: ContentDraft): ValidationCheckDetail[] {
   const numberedUnits = numberedBodyUnits(draft.body);
   const concreteNumberedUnits = numberedUnits.filter((unit) =>
     Array.from(unit.quote.replace(/^\s*(?:\d{1,2}[.、)]|[一二三四五六七八九十]+[、.])\s*/u, "")).length >= 8);
-  const count = extractPromisedCount(draft.title);
+  const fulfillmentContract = draft.delivery_contract?.contract_version === "v3_4"
+    ? draft.delivery_contract.fulfillment_contract
+    : undefined;
+  const count = fulfillmentContract?.promised_count ?? extractPromisedCount(draft.title);
   const promisedText = `${draft.title}${draft.title_promise}`;
-  const materialPromised = /时间表|节奏表|路线图|资料|清单|盘点|表格|这张表|这份表|步骤/u.test(promisedText);
-  const comparisonPromised = draft.method_id === "tug_of_war";
+  const materialPromised = fulfillmentContract
+    ? fulfillmentContract.promise_type === "material"
+    : /时间表|节奏表|路线图|资料|清单|盘点|表格|这张表|这份表|步骤/u.test(promisedText);
+  const comparisonPromised = fulfillmentContract
+    ? fulfillmentContract.promise_type === "comparison"
+    : draft.method_id === "tug_of_war";
 
   if (count !== undefined) {
     const passed = numberedUnits.length === count && concreteNumberedUnits.length === count;
@@ -429,7 +436,24 @@ function fulfillmentDetails(draft: ContentDraft): ValidationCheckDetail[] {
   return details;
 }
 
+function exactContractUnit(body: string, quote: string | undefined) {
+  const evidence = quote?.trim();
+  if (!evidence) return undefined;
+  const start = body.indexOf(evidence);
+  if (start < 0) return undefined;
+  return { quote: evidence, start, end: start + evidence.length };
+}
+
 function identityEvidence(draft: ContentDraft, persona: GrowthPersona) {
+  const contract = draft.delivery_contract;
+  if (contract?.contract_version === "v3_4") {
+    if (contract.identity_contract.persona !== persona) return undefined;
+    const requiredComplete = contract.identity_contract.required_elements.length >= 2
+      && Array.from(contract.identity_contract.evidence).length >= 18;
+    return requiredComplete
+      ? exactContractUnit(draft.body, contract.identity_contract.evidence)
+      : undefined;
+  }
   const patterns: Record<GrowthPersona, RegExp> = {
     buyer: /(?:我|我们|我家|孩子|家长|自己).{0,36}(?:求职|秋招|投递|回国|留任|离职|转型|选择|岗位|职业|面试|简历)/,
     expert: /(?:我的判断|我判断|我见过|咨询中|咨询里|建议|先看|关键是|真正要看|需要判断|适合先|我.{0,24}(?:帮|让|问|拆|梳理|复盘|判断)|有次咨询|前几次咨询)/,
@@ -458,6 +482,22 @@ function conversionEvidenceInBody(body: string) {
 
 export function bodyHasConversionEvidence(body: string) {
   return Boolean(conversionEvidenceInBody(body));
+}
+
+function conversionEvidence(draft: ContentDraft) {
+  const contract = draft.delivery_contract;
+  if (contract?.contract_version === "v3_4") {
+    const conversion = contract.conversion_contract;
+    const complete = [
+      conversion.problem_context,
+      conversion.attempted_action,
+      conversion.professional_role,
+      conversion.intervention_action,
+      conversion.stage_result,
+    ].every((item) => Array.from(item.trim()).length >= 4);
+    return complete ? exactContractUnit(draft.body, conversion.bridge_paragraph) : undefined;
+  }
+  return conversionEvidenceInBody(draft.body);
 }
 
 export function analyzeDraftValidation(
@@ -512,7 +552,7 @@ export function analyzeDraftValidation(
       0.98,
     )));
   }
-  const conversionUnit = conversionEvidenceInBody(draft.body);
+  const conversionUnit = conversionEvidence(draft);
   const conversionPassed = Boolean(conversionUnit);
   if (conversionUnit) {
     annotations.push(annotation(

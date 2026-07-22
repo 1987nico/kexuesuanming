@@ -122,6 +122,114 @@ describe("growth publish validation", () => {
     expect(check?.message).not.toMatch(/数字|资料|路线图/u);
   });
 
+  it.each([
+    ["转型前必看，防止选错方向踩坑", "讲清职业转型前验证方向、规避风险的核心方法"],
+    ["找对方向，比瞎忙重要太多", "讲清试错两个月后如何理清方向并得到阶段变化"],
+  ])("v3.4商家身份合同不再依赖旧关键词：%s", (title, titlePromise) => {
+    const identity = "这次项目里，团队先把候选路径、能力证据和失败成本放在同一张判断表里。";
+    const conversion = "前面已经反复推演了几个方向，职业决策顾问随后把候选路径、能力证据和失败成本拆开，并安排最小验证。阶段变化是先排除了一个高风险方向，也明确了下一步顺序。";
+    const body = [
+      "最近接到一个很典型的情况，当事人忙了两个月，方向却越来越散。",
+      identity,
+      "真正需要先确认的，不是哪条路听起来更体面，而是哪条路能用外部反馈验证。",
+      conversion,
+      "下一步先选一条路径做最小验证，再根据真实反馈决定是否继续。",
+    ].join("\n\n");
+    const draft: ContentDraft = {
+      ...hardCheckDraft(body),
+      method_group: "benchmark",
+      method_id: "viral_framework",
+      method_label: "爆款框架",
+      title,
+      title_promise: titlePromise,
+      cta_type: "service_entry",
+      delivery_contract: {
+        contract_version: "v3_4",
+        identity_contract: {
+          persona: "merchant",
+          expression_goal: "通过服务现场体现商家身份",
+          required_elements: ["服务现场", "专业判断"],
+          evidence_basis: "职业决策服务流程",
+          target_section: "identity_evidence",
+          evidence: identity,
+        },
+        fulfillment_contract: {
+          promise_type: "ordinary",
+          required_sections: [
+            { id: "judgement", requirement: "给出核心判断", minimum_content: ["方向", "验证"] },
+            { id: "action", requirement: "给出下一步动作", minimum_content: ["最小验证", "反馈"] },
+          ],
+        },
+        conversion_contract: {
+          problem_context: "反复推演后方向仍然分散",
+          attempted_action: "自行比较多个候选方向",
+          professional_role: "职业决策顾问",
+          intervention_action: "拆开能力证据和失败成本并安排最小验证",
+          stage_result: "排除一个高风险方向并明确下一步顺序",
+          evidence_basis: "职业决策服务流程",
+          bridge_paragraph: conversion,
+        },
+      },
+    };
+
+    const analysis = analyzeDraftValidation(draft, "merchant", 1);
+    expect(analysis.report.status).toBe("passed");
+    expect(analysis.checks.every((item) => item.status === "passed")).toBe(true);
+    expect(analysis.report.annotations.find((item) => item.key === "identity")?.quote).toBe(identity);
+    expect(analysis.report.annotations.find((item) => item.key === "conversion")?.quote).toBe(conversion);
+  });
+
+  it("v3.4身份合同与当前视角不一致时仍会被系统内部拦回", () => {
+    const identity = "这次项目里，团队先把候选路径、能力证据和失败成本放在同一张判断表里。";
+    const conversion = "职业决策顾问随后把候选路径、能力证据和失败成本拆开，并安排最小验证。阶段变化是先排除了一个高风险方向，也明确了下一步顺序。";
+    const body = [
+      "最近接到一个很典型的情况，当事人忙了两个月，方向却越来越散。",
+      identity,
+      "真正需要先确认的，是哪条路能用外部反馈验证。",
+      conversion,
+      "下一步先选一条路径做最小验证，再根据真实反馈决定是否继续。",
+    ].join("\n\n");
+    const draft: ContentDraft = {
+      ...hardCheckDraft(body),
+      method_group: "benchmark",
+      method_id: "viral_framework",
+      method_label: "爆款框架",
+      title: "转型前必看，防止选错方向踩坑",
+      title_promise: "讲清职业转型前验证方向、规避风险的核心方法",
+      delivery_contract: {
+        contract_version: "v3_4",
+        identity_contract: {
+          persona: "expert",
+          expression_goal: "体现专家判断",
+          required_elements: ["具体处境", "专业判断"],
+          evidence_basis: "职业咨询",
+          target_section: "identity_evidence",
+          evidence: identity,
+        },
+        fulfillment_contract: {
+          promise_type: "ordinary",
+          required_sections: [
+            { id: "judgement", requirement: "给出核心判断", minimum_content: ["方向", "验证"] },
+            { id: "action", requirement: "给出下一步动作", minimum_content: ["验证", "反馈"] },
+          ],
+        },
+        conversion_contract: {
+          problem_context: "候选方向分散",
+          attempted_action: "自行反复推演",
+          professional_role: "职业决策顾问",
+          intervention_action: "拆开证据并安排验证",
+          stage_result: "排除高风险方向",
+          evidence_basis: "职业咨询",
+          bridge_paragraph: conversion,
+        },
+      },
+    };
+
+    const analysis = analyzeDraftValidation(draft, "merchant", 1);
+    expect(analysis.report.status).toBe("failed");
+    expect(analysis.checks.find((item) => item.key === "identity")?.status).toBe("needs_edit");
+  });
+
   it("资料承诺必须实际交付，篇幅够长也不能代替清单", () => {
     const body = [
       "前阵子我准备离职时，把手里的信息重新整理了一遍。",

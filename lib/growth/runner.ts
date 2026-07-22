@@ -26,6 +26,10 @@ import {
 } from "./reviewLearning";
 import type {
   ContentDraft,
+  DraftConversionContract,
+  DraftFulfillmentContract,
+  DraftIdentityContract,
+  DraftRepairRecord,
   GrowthAccount,
   GrowthBusinessLine,
   GrowthBusinessPosition,
@@ -49,7 +53,6 @@ import {
   PERSONA_SPECIFIC_FIELDS,
 } from "./types";
 import {
-  bodyHasConversionEvidence,
   bodyOpeningMeetsTitle,
   countPublishChars,
   enforceDraftCompliance,
@@ -567,6 +570,83 @@ function fallbackStageResult(persona: GrowthPersona, businessLine: GrowthBusines
   return "客户排除了一个高风险方向，并明确了下一步验证顺序。";
 }
 
+function fallbackIdentityEvidence(persona: GrowthPersona, businessLine: GrowthBusinessLine) {
+  if (businessLine === "overseas_student") {
+    if (persona === "buyer") return "这段时间我把孩子的毕业时间、目标岗位和每次投递反馈都记在一起，才看清我们真正卡住的地方。";
+    if (persona === "expert") return "做留学生求职判断时，我会先核对岗位要求、项目证据和招聘节奏，再决定应该改方向还是改材料。";
+    return "这类求职辅导交付里，团队先核对学生的岗位目标、项目证据和招聘节点，再决定后续辅导顺序。";
+  }
+  if (persona === "buyer") return "这段时间我把自己的职业经历、现实约束和几个候选方向放在一起，才看清过去哪些判断只是想当然。";
+  if (persona === "expert") return "做职业决策判断时，我会把候选方向、能力证据和失败成本拆开，而不是替来访者直接选答案。";
+  return "这类职业决策交付里，团队先拆开候选路径、能力证据和失败成本，再安排能够拿到现实反馈的验证动作。";
+}
+
+function fallbackIdentityContract(
+  account: GrowthAccount,
+  businessLine: GrowthBusinessLine,
+): DraftIdentityContract {
+  const required: Record<GrowthPersona, string[]> = {
+    buyer: ["本人或家庭的具体处境", "亲历选择、行动或变化"],
+    expert: ["具体问题判断", "方法或咨询观察"],
+    merchant: ["服务对象", "交付动作与阶段变化"],
+  };
+  const goal: Record<GrowthPersona, string> = {
+    buyer: "用第一人称经历自然体现目标人群身份",
+    expert: "用具体判断或方法应用体现专家身份",
+    merchant: "用真实交付动作体现经营者身份，不自夸",
+  };
+  return {
+    persona: account.persona,
+    expression_goal: goal[account.persona],
+    required_elements: required[account.persona],
+    evidence_basis: account.persona_specific?.identity || account.one_liner || account.trust_source || "当前业务与人设事实",
+    target_section: "identity_evidence",
+    evidence: fallbackIdentityEvidence(account.persona, businessLine),
+  };
+}
+
+function fallbackFulfillmentContract(
+  topic: TopicCandidate,
+  spec: PromiseDeliverySpec,
+): DraftFulfillmentContract {
+  const promiseType = promiseTypeForTopic(topic, spec);
+  const requiredCount = spec.exactSections ?? spec.minimumSections;
+  return {
+    promise_type: promiseType,
+    promised_count: spec.exactSections,
+    required_sections: Array.from({ length: requiredCount }, (_, index) => ({
+      id: `section_${index + 1}`,
+      requirement: promiseType === "ordinary"
+        ? index === 0 ? "给出标题承诺对应的核心判断" : "用具体事实、场景或行动完成承诺"
+        : `交付标题承诺的第${index + 1}部分`,
+      minimum_content: promiseType === "comparison"
+        ? ["适用条件", "代价或风险", "验证动作"]
+        : ["具体判断", "解释或证据", "可执行动作"],
+    })),
+  };
+}
+
+function fallbackConversionContract(
+  account: GrowthAccount,
+  businessLine: GrowthBusinessLine,
+): DraftConversionContract {
+  const overseas = businessLine === "overseas_student";
+  const role = overseas ? "求职老师或辅导团队" : "职业决策顾问或咨询团队";
+  const attempted = overseas ? "当事人已经反复改材料或扩大投递" : "当事人已经反复搜索信息或推演方向";
+  const intervention = overseas
+    ? "把目标岗位、项目证据和招聘节奏放在一起梳理"
+    : "把候选方向、能力证据和失败成本拆开并安排最小验证";
+  return {
+    problem_context: overseas ? "岗位、材料和招聘节奏没有对齐" : "候选方向很多，但缺少现实证据和停止条件",
+    attempted_action: attempted,
+    professional_role: role,
+    intervention_action: intervention,
+    stage_result: fallbackStageResult(account.persona, businessLine),
+    evidence_basis: account.trust_source || "当前业务方法与交付流程",
+    bridge_paragraph: serviceBridgeSentence(account.persona, businessLine),
+  };
+}
+
 function fallbackDraftBlueprint(
   account: GrowthAccount,
   topic: TopicCandidate,
@@ -574,18 +654,24 @@ function fallbackDraftBlueprint(
   spec: PromiseDeliverySpec,
 ): DraftBlueprintContext {
   const businessLine = account.business_line ?? "executive";
+  const identityContract = fallbackIdentityContract(account, businessLine);
+  const fulfillmentContract = fallbackFulfillmentContract(topic, spec);
+  const conversionContract = fallbackConversionContract(account, businessLine);
   return {
-    contract_version: "v2",
+    contract_version: "v3_4",
     promise_type: promiseTypeForTopic(topic, spec),
     opening_intent: topic.title_promise,
+    identity_contract: identityContract,
+    fulfillment_contract: fulfillmentContract,
+    conversion_contract: conversionContract,
     opening: identityOpening(account.persona, businessLine),
     core_judgement: businessLine === "overseas_student"
       ? "秋招真正难的不是同时准备两边，而是没有把岗位、材料和截止时间放进同一套节奏里。"
       : "职业选择真正难的不是缺少选项，而是没有把能力证据、市场机会和失败成本放在一起判断。",
     delivery_format: spec.format,
     delivery_sections: fallbackDeliverySections(topic, businessLine, spec),
-    service_bridge: serviceBridgeSentence(account.persona, businessLine),
-    stage_result: fallbackStageResult(account.persona, businessLine),
+    service_bridge: conversionContract.bridge_paragraph,
+    stage_result: conversionContract.stage_result,
     closing: fallbackClosing(cta, businessLine),
   };
 }
@@ -600,6 +686,49 @@ function normalizeBlueprintSections(raw: unknown) {
     }
     return "";
   }).filter(Boolean);
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+function normalizedIdentityContract(raw: unknown, fallback: DraftIdentityContract): DraftIdentityContract {
+  const value = asRecord(raw);
+  const evidenceCandidate = asText(value.evidence);
+  return {
+    persona: fallback.persona,
+    expression_goal: asText(value.expression_goal) || fallback.expression_goal,
+    required_elements: Array.isArray(value.required_elements)
+      ? value.required_elements.map(asText).filter(Boolean).slice(0, 4)
+      : fallback.required_elements,
+    evidence_basis: asText(value.evidence_basis) || fallback.evidence_basis,
+    target_section: "identity_evidence",
+    evidence: Array.from(evidenceCandidate).length >= 18 ? evidenceCandidate : fallback.evidence,
+  };
+}
+
+function normalizedConversionContract(raw: unknown, fallback: DraftConversionContract): DraftConversionContract {
+  const value = asRecord(raw);
+  const normalized: DraftConversionContract = {
+    problem_context: asText(value.problem_context) || fallback.problem_context,
+    attempted_action: asText(value.attempted_action) || fallback.attempted_action,
+    professional_role: asText(value.professional_role) || fallback.professional_role,
+    intervention_action: asText(value.intervention_action) || fallback.intervention_action,
+    stage_result: asText(value.stage_result) || fallback.stage_result,
+    evidence_basis: asText(value.evidence_basis) || fallback.evidence_basis,
+    bridge_paragraph: asText(value.bridge_paragraph) || fallback.bridge_paragraph,
+  };
+  const complete = [
+    normalized.problem_context,
+    normalized.attempted_action,
+    normalized.professional_role,
+    normalized.intervention_action,
+    normalized.stage_result,
+  ].every((item) => Array.from(item).length >= 4)
+    && Array.from(normalized.bridge_paragraph).length >= 36;
+  return complete ? normalized : fallback;
 }
 
 function normalizeDraftBlueprint(
@@ -618,19 +747,21 @@ function normalizeDraftBlueprint(
   if (sections.length < spec.minimumSections) {
     sections = [...sections, ...fallback.delivery_sections].slice(0, spec.minimumSections);
   }
-  const serviceCandidate = asText(value.service_bridge);
-  const serviceBridge = bodyHasConversionEvidence(serviceCandidate) ? serviceCandidate : fallback.service_bridge;
-  const stageResultCandidate = asText(value.stage_result);
+  const identityContract = normalizedIdentityContract(value.identity_contract, fallback.identity_contract);
+  const conversionContract = normalizedConversionContract(value.conversion_contract, fallback.conversion_contract);
   return {
-    contract_version: "v2",
+    contract_version: "v3_4",
     promise_type: fallback.promise_type,
     opening_intent: asText(value.opening_intent) || fallback.opening_intent,
+    identity_contract: identityContract,
+    fulfillment_contract: fallback.fulfillment_contract,
+    conversion_contract: conversionContract,
     opening,
     core_judgement: asText(value.core_judgement) || fallback.core_judgement,
     delivery_format: spec.format,
     delivery_sections: sections,
-    service_bridge: serviceBridge,
-    stage_result: stageResultCandidate || fallback.stage_result,
+    service_bridge: conversionContract.bridge_paragraph,
+    stage_result: conversionContract.stage_result,
     closing: asText(value.closing) || fallback.closing,
   };
 }
@@ -662,12 +793,13 @@ async function generateDraftBlueprint(input: {
     });
     return {
       blueprint: normalizeDraftBlueprint(result.data?.blueprint ?? result.data, fallback, spec, input.topic.title),
+      fallback,
       spec,
       usage: resultUsage(result),
     };
   } catch (error) {
     console.warn("[growth] draft blueprint fallback:", (error as Error).message);
-    return { blueprint: fallback, spec, usage: undefined };
+    return { blueprint: fallback, fallback, spec, usage: undefined };
   }
 }
 
@@ -720,6 +852,8 @@ export function composeBlueprintBody(
   const bodyVersion = options?.bodyVersion ?? "short";
   const businessLine = options?.businessLine ?? "executive";
   const opening = asText(structure.opening) || blueprint.opening;
+  // 身份是交付合同的硬字段，由系统直接装配；不允许正文模型省略后再靠关键词猜测。
+  const identityEvidence = blueprint.identity_contract.evidence;
   const coreJudgement = asText(structure.core_judgement) || blueprint.core_judgement;
   let sections = normalizeBlueprintSections(structure.delivery_sections);
   if (spec.exactSections && sections.length !== spec.exactSections) sections = blueprint.delivery_sections.slice(0, spec.exactSections);
@@ -752,8 +886,8 @@ export function composeBlueprintBody(
   const renderedSections = spec.format === "numbered"
     ? sections.map((section, index) => `${index + 1}. ${cleanDeliverySection(section)}`).join("\n\n")
     : sections.join("\n\n");
-  const serviceCandidate = asText(structure.service_bridge);
-  const serviceBridge = bodyHasConversionEvidence(serviceCandidate) ? serviceCandidate : blueprint.service_bridge;
+  // 转化桥同样来自已标准化的合同，确保卡点、介入动作和阶段结果一次写全。
+  const serviceBridge = blueprint.conversion_contract.bridge_paragraph;
   const closing = asText(structure.closing) || blueprint.closing;
   const versionContext = bodyVersion === "long"
     ? options?.aggressive
@@ -764,7 +898,7 @@ export function composeBlueprintBody(
           : "使用这套判断时，把进入门槛、能力证据和停止条件放在一起记录，再根据现实反馈调整。"
         : longVersionContext(businessLine)
     : "";
-  return [opening, coreJudgement, versionContext, serviceBridge, renderedSections, closing]
+  return [opening, identityEvidence, coreJudgement, versionContext, serviceBridge, renderedSections, closing]
     .map((section) => section.trim())
     .filter(Boolean)
     .join("\n\n");
@@ -792,6 +926,83 @@ function identityOpening(persona: GrowthPersona, businessLine: GrowthBusinessLin
   return "最近我们给一位中高管梳理转型方向，没有先劝他辞职，而是先把三条候选路径摆在一起。";
 }
 
+function deliveryContractFromBlueprint(blueprint: DraftBlueprintContext) {
+  return {
+    contract_version: "v3_4" as const,
+    identity_contract: blueprint.identity_contract,
+    fulfillment_contract: blueprint.fulfillment_contract,
+    conversion_contract: blueprint.conversion_contract,
+  };
+}
+
+function attachBlueprintContract(draft: ContentDraft, blueprint: DraftBlueprintContext): ContentDraft {
+  return { ...draft, delivery_contract: deliveryContractFromBlueprint(blueprint) };
+}
+
+function failedContractKeys(draft: ContentDraft) {
+  return new Set(draft.validation_checks
+    .filter((check) => check.status !== "passed")
+    .map((check) => check.key));
+}
+
+function targetedRepairBlueprint(
+  blueprint: DraftBlueprintContext,
+  fallback: DraftBlueprintContext,
+  draft: ContentDraft,
+): DraftBlueprintContext {
+  const failed = failedContractKeys(draft);
+  const fulfillmentFailed = failed.has("fulfillment");
+  const repairedConversion = failed.has("conversion") ? fallback.conversion_contract : blueprint.conversion_contract;
+  return {
+    ...blueprint,
+    opening: fulfillmentFailed ? fallback.opening : blueprint.opening,
+    identity_contract: failed.has("identity") ? fallback.identity_contract : blueprint.identity_contract,
+    fulfillment_contract: fulfillmentFailed ? fallback.fulfillment_contract : blueprint.fulfillment_contract,
+    delivery_sections: fulfillmentFailed ? fallback.delivery_sections : blueprint.delivery_sections,
+    conversion_contract: repairedConversion,
+    service_bridge: repairedConversion.bridge_paragraph,
+    stage_result: repairedConversion.stage_result,
+  };
+}
+
+function rebuildDraftFromBlueprint(
+  draft: ContentDraft,
+  blueprint: DraftBlueprintContext,
+  spec: PromiseDeliverySpec,
+  businessLine: GrowthBusinessLine,
+  topicTitle: string,
+  repair: DraftRepairRecord,
+) {
+  const body = composeBlueprintBody(blueprint, spec, undefined, {
+    bodyVersion: draft.selected_body_version === "long" ? "long" : "short",
+    businessLine,
+  });
+  return attachBlueprintContract(enforceDraftCompliance({
+    ...draft,
+    body,
+    certification_status: "repairing",
+    repair_history: [...(draft.repair_history ?? []), repair],
+    word_count: countPublishChars(draft.title, body, draft.hashtags),
+    updated_at: now(),
+  }, topicTitle), blueprint);
+}
+
+export function certifyDraftForOperator(draft: ContentDraft): ContentDraft {
+  const certified = draft.validation_report?.status === "passed"
+    && draft.validation_checks.every((check) => check.status === "passed")
+    && draft.word_count.total <= XHS_PUBLISH_CHAR_TARGET
+    && draft.compliance?.status !== "blocked";
+  if (!certified) {
+    throw new Error("draft_certification_failed");
+  }
+  return {
+    ...draft,
+    certification_status: "certified",
+    certified_at: now(),
+    incident_id: undefined,
+  };
+}
+
 async function passDraftValidationGate(
   initial: ContentDraft,
   input: {
@@ -801,23 +1012,30 @@ async function passDraftValidationGate(
     topic: TopicCandidate;
     cta: ContentDraft["cta_type"];
     blueprint: DraftBlueprintContext;
+    fallbackBlueprint: DraftBlueprintContext;
     spec: PromiseDeliverySpec;
   },
 ) {
   let draft = withDraftValidation(initial, input.persona, 0);
   if (draft.validation_report?.status !== "passed") {
-    // 只自动修复一次：不再自由改写整篇文章，而是回到兑现合同重新拼装。
-    const repairedBody = composeBlueprintBody(input.blueprint, input.spec, undefined, {
-      bodyVersion: draft.selected_body_version === "long" ? "long" : "short",
-      businessLine: input.businessLine,
+    const failed = [...failedContractKeys(draft)].join(",") || "unknown";
+    const repairedBlueprint = targetedRepairBlueprint(input.blueprint, input.fallbackBlueprint, draft);
+    const checked = rebuildDraftFromBlueprint(draft, repairedBlueprint, input.spec, input.businessLine, input.topic.title, {
+      field: "fallback",
+      reason_code: `targeted_${failed}`,
+      action: "只替换失败的合同字段并重新组装正文",
+      repaired_at: now(),
     });
-    const checked = enforceDraftCompliance({
-      ...draft,
-      body: repairedBody,
-      word_count: countPublishChars(draft.title, repairedBody, draft.hashtags),
-      updated_at: now(),
-    }, input.topic.title);
     draft = withDraftValidation(checked, input.persona, 1);
+  }
+  if (draft.validation_report?.status !== "passed") {
+    const fallback = rebuildDraftFromBlueprint(draft, input.fallbackBlueprint, input.spec, input.businessLine, input.topic.title, {
+      field: "fallback",
+      reason_code: "deterministic_contract_fallback",
+      action: "使用确定性合同骨架完成最终兜底",
+      repaired_at: now(),
+    });
+    draft = withDraftValidation({ ...fallback, fallback_used: true }, input.persona, 2);
   }
   return draft;
 }
@@ -865,6 +1083,7 @@ async function fitDraftWithinPublishTarget(
     businessLine: GrowthBusinessLine;
     topic: TopicCandidate;
     blueprint: DraftBlueprintContext;
+    fallbackBlueprint: DraftBlueprintContext;
     spec: PromiseDeliverySpec;
   },
 ) {
@@ -886,39 +1105,54 @@ async function fitDraftWithinPublishTarget(
     console.warn("[growth] publish length rewrite fallback:", (error as Error).message);
   }
 
-  let fallbackBody = composeBlueprintBody(input.blueprint, input.spec, undefined, {
+  // 长度兜底始终使用确定性合同，避免上一轮定向修复后的合同与原始模型骨架错位。
+  let fallbackBody = composeBlueprintBody(input.fallbackBlueprint, input.spec, undefined, {
     bodyVersion: draft.selected_body_version === "long" ? "long" : "short",
     businessLine: input.businessLine,
     compact: true,
   });
-  let fallback = withDraftValidation(enforceDraftCompliance({
+  let fallback = withDraftValidation(attachBlueprintContract(enforceDraftCompliance({
     ...draft,
     body: fallbackBody,
+    fallback_used: true,
+    repair_history: [...(draft.repair_history ?? []), {
+      field: "length",
+      reason_code: "publish_length_compaction",
+      action: "使用确定性合同压缩正文并保留全部交付字段",
+      repaired_at: now(),
+    }],
     word_count: countPublishChars(draft.title, fallbackBody, draft.hashtags),
     updated_at: now(),
-  }, input.topic.title), input.persona, (draft.validation_report?.attempts ?? 0) + 1);
+  }, input.topic.title), input.fallbackBlueprint), input.persona, (draft.validation_report?.attempts ?? 0) + 1);
   if (draftMeetsPublishTarget(fallback)) return fallback;
 
-  fallbackBody = composeBlueprintBody(input.blueprint, input.spec, undefined, {
+  fallbackBody = composeBlueprintBody(input.fallbackBlueprint, input.spec, undefined, {
     bodyVersion: draft.selected_body_version === "long" ? "long" : "short",
     businessLine: input.businessLine,
     compact: true,
     aggressive: true,
   });
-  fallback = withDraftValidation(enforceDraftCompliance({
+  fallback = withDraftValidation(attachBlueprintContract(enforceDraftCompliance({
     ...draft,
     body: fallbackBody,
+    fallback_used: true,
+    repair_history: [...(fallback.repair_history ?? []), {
+      field: "length",
+      reason_code: "publish_length_aggressive_compaction",
+      action: "进一步压缩非必要解释并保留全部合同字段",
+      repaired_at: now(),
+    }],
     word_count: countPublishChars(draft.title, fallbackBody, draft.hashtags),
     updated_at: now(),
-  }, input.topic.title), input.persona, (draft.validation_report?.attempts ?? 0) + 1);
-  // 字数和三项门禁必须同时通过；失败版本只返回给失败态展示，不能被选择或发布。
+  }, input.topic.title), input.fallbackBlueprint), input.persona, (draft.validation_report?.attempts ?? 0) + 1);
+  // 字数和三项合同必须同时通过；仍异常时由最终认证抛出事件，绝不返回操作者。
   return fallback;
 }
 
 async function generateSingleDraft(input: {
   tenantId?: string; account: GrowthAccount; run: GrowthRun; topic: TopicCandidate;
   bodyVersion: "short" | "long"; excludeBodies?: string[]; learningBrief?: GrowthLearningBrief;
-  blueprint: DraftBlueprintContext; spec: PromiseDeliverySpec;
+  blueprint: DraftBlueprintContext; fallbackBlueprint: DraftBlueprintContext; spec: PromiseDeliverySpec;
 }) {
   let payload: any;
   let usage: Record<string, unknown> | undefined;
@@ -961,6 +1195,8 @@ async function generateSingleDraft(input: {
     generation_mode: input.topic.generation_mode, title_promise: input.topic.title_promise,
     source_snapshot: input.topic.source_snapshot, selected_body_version: input.bodyVersion,
     raw_body_tags: [], tagging_status: "pending", canonical_tag_ids: [], cta_type: cta, validation_checks: [],
+    delivery_contract: deliveryContractFromBlueprint(input.blueprint), certification_status: "generating",
+    repair_history: [], fallback_used: false,
     schema_version: "method_v3_2", method_attribution_status: "confirmed", eligible_for_method_learning: true,
     test_variable: input.topic.test_variable, expected_signal: input.topic.expected_signal, title,
     alternative_titles: (Array.isArray(payload?.alternative_titles) ? payload.alternative_titles : [input.topic.title]).slice(0, 3).map(enforceTitleLimit),
@@ -982,6 +1218,7 @@ async function generateSingleDraft(input: {
     topic: input.topic,
     cta,
     blueprint: input.blueprint,
+    fallbackBlueprint: input.fallbackBlueprint,
     spec: input.spec,
   });
   draft = await fitDraftWithinPublishTarget(draft, {
@@ -990,8 +1227,10 @@ async function generateSingleDraft(input: {
     businessLine,
     topic: input.topic,
     blueprint: input.blueprint,
+    fallbackBlueprint: input.fallbackBlueprint,
     spec: input.spec,
   });
+  draft = certifyDraftForOperator(draft);
   return { draft, usage };
 }
 
@@ -1002,7 +1241,12 @@ export async function generateDraftVariants(input: {
 }) {
   const cta = ctaType(input.account.persona);
   const planned = await generateDraftBlueprint({ account: input.account, topic: input.topic, cta });
-  const shared = { ...input, blueprint: planned.blueprint, spec: planned.spec };
+  const shared = {
+    ...input,
+    blueprint: planned.blueprint,
+    fallbackBlueprint: planned.fallback,
+    spec: planned.spec,
+  };
   if (input.bodyVersion) {
     const generated = await generateSingleDraft({
       ...shared,
@@ -1026,14 +1270,26 @@ export async function generateDraftVariants(input: {
       word_count: countPublishChars(longDraft.title, distinctBody, longDraft.hashtags),
       updated_at: now(),
     }, input.topic.title), input.account.persona, longDraft.validation_report?.attempts ?? 0);
+    longDraft = await passDraftValidationGate(longDraft, {
+      account: input.account,
+      persona: input.account.persona,
+      businessLine,
+      topic: input.topic,
+      cta,
+      blueprint: planned.blueprint,
+      fallbackBlueprint: planned.fallback,
+      spec: planned.spec,
+    });
     longDraft = await fitDraftWithinPublishTarget(longDraft, {
       account: input.account,
       persona: input.account.persona,
       businessLine,
       topic: input.topic,
       blueprint: planned.blueprint,
+      fallbackBlueprint: planned.fallback,
       spec: planned.spec,
     });
+    longDraft = certifyDraftForOperator(longDraft);
   }
   return { drafts: [short.draft, longDraft], usage: long.usage || short.usage || planned.usage };
 }
@@ -1117,6 +1373,7 @@ export async function generateDraft(input: {
     topic,
     bodyVersion: "short",
     blueprint: planned.blueprint,
+    fallbackBlueprint: planned.fallback,
     spec: planned.spec,
   });
   const run: GrowthRun = { ...input.run, status: "ready", selected_topic: topic, draft: generated.draft, updated_at: now() };
