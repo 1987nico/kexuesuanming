@@ -23,13 +23,13 @@ export interface GrowthStore {
   getAccount(id: string): Promise<GrowthAccount | null>;
   /**
    * 取该租户下最新账号。
-   * ownerUserId 传入时只返回「自己的或未归属（历史共享）」账号——操作者工作台隔离用；
+   * ownerUserId 传入时只返回本人账号；未归属历史账号仅管理员可见。
    * 不传则不限归属（管理员视角）。
    */
   getLatestAccount(tenantId: string, ownerUserId?: string): Promise<GrowthAccount | null>;
   /**
    * 取指定视角下最新的账号。
-   * ownerUserId 传入时只返回「自己的或未归属（历史共享）」账号——操作者工作台隔离用；
+   * ownerUserId 传入时只返回本人账号；未归属历史账号仅管理员可见。
    * 不传则不限归属（管理员视角）。
    */
   getLatestAccountByPersona(
@@ -62,7 +62,7 @@ export interface GrowthStore {
 
 function matchesOwner(account: GrowthAccount, ownerUserId?: string) {
   if (!ownerUserId) return true;
-  return account.owner_user_id === ownerUserId || account.owner_user_id == null;
+  return account.owner_user_id === ownerUserId;
 }
 
 export function inferGrowthBusinessLine(account: GrowthAccount): GrowthBusinessLine {
@@ -270,37 +270,39 @@ class SupabaseGrowthStore implements GrowthStore {
   }
 
   async getLatestAccount(tenantId: string, ownerUserId?: string) {
-    // owner_user_id 存在 payload 里，无法用 SQL 直接过滤，取近 50 条后在内存里按归属挑选
-    const { data, error } = await this.db
+    let query = this.db
       .from("growth_accounts")
       .select("payload")
       .eq("tenant_id", tenantId)
-      .order("created_at", { ascending: false })
-      .limit(50);
+      .order("created_at", { ascending: false });
+    if (ownerUserId) query = query.eq("owner_user_id", ownerUserId);
+    const { data, error } = await query.limit(50);
     if (error) throw error;
     const accounts = (data ?? []).map((row) => row.payload as GrowthAccount);
     return accounts.find((account) => matchesOwner(account, ownerUserId)) ?? null;
   }
 
   async getLatestAccountByPersona(tenantId: string, persona: GrowthPersona, ownerUserId?: string, businessLine?: GrowthBusinessLine) {
-    const { data, error } = await this.db
+    let query = this.db
       .from("growth_accounts")
       .select("payload")
       .eq("tenant_id", tenantId)
-      .order("created_at", { ascending: false })
-      .limit(50);
+      .order("created_at", { ascending: false });
+    if (ownerUserId) query = query.eq("owner_user_id", ownerUserId);
+    const { data, error } = await query.limit(50);
     if (error) throw error;
     const accounts = (data ?? []).map((row) => row.payload as GrowthAccount);
     return accounts.find((account) => account.persona === persona && matchesOwner(account, ownerUserId) && matchesBusinessLine(account, businessLine)) ?? null;
   }
 
   async listAccounts(tenantId: string, ownerUserId?: string, businessLine?: GrowthBusinessLine) {
-    const { data, error } = await this.db
+    let query = this.db
       .from("growth_accounts")
       .select("payload")
       .eq("tenant_id", tenantId)
-      .order("created_at", { ascending: false })
-      .limit(100);
+      .order("created_at", { ascending: false });
+    if (ownerUserId) query = query.eq("owner_user_id", ownerUserId);
+    const { data, error } = await query.limit(500);
     if (error) throw error;
     return (data ?? [])
       .map((row) => row.payload as GrowthAccount)

@@ -19,6 +19,7 @@ import {
   resolveBusinessPosition,
 } from "@/lib/growth/businessPosition";
 import { accountForBusinessGeneration } from "@/lib/growth/businessCompatibility";
+import { mergeThreeDayReviewCycles, reviewWorkspaceAccounts } from "@/lib/growth/reviewCycleWorkspace";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -67,14 +68,16 @@ export async function GET(req: Request) {
   // 旧账号没有 business_line；响应给工作台前先补齐并清洗生成上下文，
   // 但不回写历史原始载荷。
   const workspaceAccount = account ? accountForBusinessGeneration(account) : null;
-  const [plan, runs, drafts, reviewList] = workspaceAccount
+  const [plan, runs, drafts, reviewList, threeDayReviewCycles] = workspaceAccount
     ? await Promise.all([
       store.getLatestPlan(workspaceAccount.id),
       store.listRuns(workspaceAccount.id),
       store.listDrafts(workspaceAccount.id),
       store.listReviewsByAccount(workspaceAccount.id),
+      reviewWorkspaceAccounts(store, workspaceAccount, guard.auth.user.id)
+        .then(mergeThreeDayReviewCycles),
     ])
-    : [null, [], [], []] as const;
+    : [null, [], [], [], []] as const;
   // 以笔记为单元：返回每篇笔记对应的复盘（draftId -> review），供历史查看
   const reviews: Record<string, (typeof reviewList)[number]> = {};
   for (const review of reviewList) {
@@ -112,7 +115,7 @@ export async function GET(req: Request) {
     currentDrafts,
     historicalDrafts,
     reviews,
-    threeDayReviewCycles: workspaceAccount?.three_day_review_cycles ?? [],
+    threeDayReviewCycles,
     weeklyReview,
     stageReview: weeklyReview,
     capabilities: { reviewScreenshot: isVisionConfigured() },
@@ -148,6 +151,14 @@ export async function POST(req: Request) {
   if (parsed.data.regenerateAccountId) {
     const existing = await store.getAccount(parsed.data.regenerateAccountId);
     if (existing) {
+      if (guard.auth.role !== "admin" && existing.owner_user_id !== guard.auth.user.id) {
+        return NextResponse.json({ error: "forbidden", message: "不能修改其他用户或未归属的历史人设。" }, { status: 403 });
+      }
+      if (existing.tenant_id !== DEFAULT_TENANT_ID
+        || existing.persona !== parsed.data.persona
+        || accountForBusinessGeneration(existing).business_line !== parsed.data.businessLine) {
+        return NextResponse.json({ error: "account_context_mismatch", message: "待更新人设与当前业务或视角不一致。" }, { status: 409 });
+      }
       existingAccount = existing;
       createdAt = existing.created_at;
       existingOwner = existing.owner_user_id ?? null;
@@ -168,7 +179,7 @@ export async function POST(req: Request) {
   });
 
   // 数据归属：新账号归创建者；重生成保留原归属
-  account.owner_user_id = existingOwner ?? guard.auth.user.id;
+  account.owner_user_id = existingAccount ? existingOwner : guard.auth.user.id;
   if (existingAccount) {
     // 生成只更新定位判断；所有历史字段、专属业务事实与高级事实都必须合并保留。
     account.content_directions = existingAccount.content_directions;

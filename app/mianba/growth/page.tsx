@@ -15,6 +15,7 @@ import type {
   MethodAggregate,
   MethodGenerationMode,
   ThreeDayReviewCycle,
+  ThreeDayMatchCandidate,
   ThreeDayTrafficStatus,
   TitleMethodGroup,
   TitleMethodId,
@@ -1671,6 +1672,11 @@ export default function GrowthPage() {
                     onBusy={setBusy}
                     onMessage={setMessage}
                     onRefresh={async () => {
+                      // 三日复盘是业务级共享数据；任一视角修改后，其他两个
+                      // 视角的预取缓存必须失效，避免切换后暂时看到旧计数。
+                      for (const view of GROWTH_PERSONAS) {
+                        workspaceCache.current.delete(workspaceKey(businessLine, view));
+                      }
                       await load(businessLine, persona, true);
                       goToStep("5");
                     }}
@@ -2550,6 +2556,10 @@ function ThreeDayReviewPanel({
   const [trafficConfirmed, setTrafficConfirmed] = useState(false);
   const [trafficExceptions, setTrafficExceptions] = useState<Record<string, ThreeDayTrafficStatus>>({});
   const [selectedCandidates, setSelectedCandidates] = useState<Record<string, string>>({});
+  const [manualBindingOpen, setManualBindingOpen] = useState<Record<string, boolean>>({});
+  const [candidateQueries, setCandidateQueries] = useState<Record<string, string>>({});
+  const [candidateSearchResults, setCandidateSearchResults] = useState<Record<string, ThreeDayMatchCandidate[]>>({});
+  const [candidateSearchMessages, setCandidateSearchMessages] = useState<Record<string, string>>({});
   const [qualifiedInquiries, setQualifiedInquiries] = useState("");
   const [diagnosis199Entries, setDiagnosis199Entries] = useState("");
   const [diagnosis199Sales, setDiagnosis199Sales] = useState("");
@@ -2561,6 +2571,10 @@ function ThreeDayReviewPanel({
     setTrafficConfirmed(active?.traffic_confirmed ?? false);
     setTrafficExceptions({});
     setSelectedCandidates({});
+    setManualBindingOpen({});
+    setCandidateQueries({});
+    setCandidateSearchResults({});
+    setCandidateSearchMessages({});
     setQualifiedInquiries("");
     setDiagnosis199Entries("");
     setDiagnosis199Sales("");
@@ -2608,6 +2622,34 @@ function ThreeDayReviewPanel({
           : action === "exclude" ? "已从本轮复盘排除。" : "已恢复这条笔记的匹配状态。");
     } catch (error) {
       onMessage((error as Error).message);
+    } finally {
+      onBusy(null);
+    }
+  }
+
+  async function searchAllDrafts(sourceKey: string) {
+    if (!active) return;
+    const query = candidateQueries[sourceKey]?.trim() || "";
+    if (Array.from(query).length < 2) {
+      setCandidateSearchMessages({ ...candidateSearchMessages, [sourceKey]: "请输入至少2个字。" });
+      return;
+    }
+    onBusy(`three-day-search-${sourceKey}`);
+    try {
+      const params = new URLSearchParams({ accountId: account.id, sourceKey, q: query });
+      const result = await requestJSON<{ candidates: ThreeDayMatchCandidate[] }>(
+        `/api/growth/review-cycles/${active.id}/candidates?${params.toString()}`,
+      );
+      setCandidateSearchResults({ ...candidateSearchResults, [sourceKey]: result.candidates });
+      setCandidateSearchMessages({
+        ...candidateSearchMessages,
+        [sourceKey]: result.candidates.length ? `找到${result.candidates.length}篇。` : "没有找到同标题正文，可换关键词重试。",
+      });
+      if (result.candidates[0]) {
+        setSelectedCandidates({ ...selectedCandidates, [sourceKey]: result.candidates[0].draft_id });
+      }
+    } catch (error) {
+      setCandidateSearchMessages({ ...candidateSearchMessages, [sourceKey]: (error as Error).message });
     } finally {
       onBusy(null);
     }
@@ -2729,13 +2771,25 @@ function ThreeDayReviewPanel({
               <summary className="cursor-pointer p-4 text-sm font-medium">数据质量收件箱 · 待确认{suggestedCount}条（含全部{active.notes.length}条证据）</summary>
               <div className="max-h-96 space-y-2 overflow-y-auto px-4 pb-4">
                 {[...active.notes].sort((a, b) => (a.match_status === "matched" ? 1 : 0) - (b.match_status === "matched" ? 1 : 0)).map((note) => {
-                  const selectedDraftId = selectedCandidates[note.source_key] || note.match_candidates?.[0]?.draft_id || "";
-                  const candidate = note.match_candidates?.find((item) => item.draft_id === selectedDraftId);
-                  const needsOfficialTime = Boolean(candidate && (
-                    candidate.status === "ready"
-                    || !candidate.published_at
-                    || (candidate.time_delta_seconds ?? 0) > 5 * 60
-                  ));
+                  const availableCandidates = [
+                    ...(candidateSearchResults[note.source_key] ?? []),
+                    ...(note.match_candidates ?? []),
+                  ].filter((item, index, items) => items.findIndex((other) => other.draft_id === item.draft_id) === index);
+                  const selectedDraftId = selectedCandidates[note.source_key] || availableCandidates[0]?.draft_id || note.draft_id || "";
+                  const candidate = availableCandidates.find((item) => item.draft_id === selectedDraftId);
+                  const legacySuggested = note.match_status === "suggested"
+                    && !note.match_candidates?.length
+                    && Boolean(note.draft_id);
+                  const canManuallyBind = note.match_status === "suggested"
+                    || note.match_status === "external_history"
+                    || note.match_status === "unmatched";
+                  const showCandidatePicker = note.match_status === "suggested"
+                    || Boolean(manualBindingOpen[note.source_key]);
+                  const needsOfficialTime = legacySuggested || Boolean(candidate && (
+                      candidate.status === "ready"
+                      || !candidate.published_at
+                      || (candidate.time_delta_seconds ?? 0) > 5 * 60
+                    ));
                   const statusLabel = note.match_status === "matched"
                     ? "已匹配"
                     : note.match_status === "suggested"
@@ -2759,13 +2813,24 @@ function ThreeDayReviewPanel({
                           已绑定{GROWTH_PERSONA_LABELS[note.matched_persona]}视角 · {note.system_title || note.source_title}
                         </div>
                       )}
-                      {note.match_status === "suggested" && note.match_candidates?.length ? (
-                        <div className="mt-3 space-y-3 rounded-xl border border-amber-200 bg-amber-50 p-3">
+                      {canManuallyBind && showCandidatePicker && note.match_candidates?.length ? (
+                        <div className={`mt-3 space-y-3 rounded-xl border p-3 ${note.match_status === "suggested" ? "border-amber-200 bg-amber-50" : "border-slate-200 bg-white"}`}>
+                          <div className="grid gap-2 sm:grid-cols-[1fr_auto] sm:items-end">
+                            <TextInput
+                              label="搜索同业务全部正文"
+                              value={candidateQueries[note.source_key] || ""}
+                              onChange={(value) => setCandidateQueries({ ...candidateQueries, [note.source_key]: value })}
+                            />
+                            <SecondaryButton disabled={Boolean(busy)} onClick={() => void searchAllDrafts(note.source_key)}>搜索</SecondaryButton>
+                          </div>
+                          {candidateSearchMessages[note.source_key] ? (
+                            <div className="text-xs text-slate-500">{candidateSearchMessages[note.source_key]}</div>
+                          ) : null}
                           <Select
-                            label="候选系统正文"
+                            label={note.match_status === "suggested" ? "候选系统正文" : "手动查找同业务正文"}
                             value={selectedDraftId}
                             onChange={(value) => setSelectedCandidates({ ...selectedCandidates, [note.source_key]: value })}
-                            options={note.match_candidates.map((item) => ({
+                            options={availableCandidates.map((item) => ({
                               value: item.draft_id,
                               label: `${GROWTH_PERSONA_LABELS[item.persona]} · ${item.title} · ${STATUS_LABEL[item.status] || item.status}`,
                             }))}
@@ -2780,16 +2845,37 @@ function ThreeDayReviewPanel({
                             <PrimaryButton disabled={Boolean(busy)} onClick={() => void resolveNote(note.source_key, "confirm", selectedDraftId, needsOfficialTime)}>
                               {needsOfficialTime ? "绑定并采用官方时间" : "确认绑定"}
                             </PrimaryButton>
-                            <SecondaryButton disabled={Boolean(busy)} onClick={() => void resolveNote(note.source_key, "external_history")}>
-                              确认为系统外历史
-                            </SecondaryButton>
+                            {note.match_status === "suggested" ? (
+                              <SecondaryButton disabled={Boolean(busy)} onClick={() => void resolveNote(note.source_key, "external_history")}>
+                                确认为系统外历史
+                              </SecondaryButton>
+                            ) : (
+                              <SecondaryButton disabled={Boolean(busy)} onClick={() => setManualBindingOpen({ ...manualBindingOpen, [note.source_key]: false })}>
+                                收起
+                              </SecondaryButton>
+                            )}
                           </div>
                         </div>
                       ) : null}
+                      {legacySuggested && (
+                        <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-slate-600">
+                          <span>这是旧版待确认记录，可继续绑定原系统正文；官方首次发布时间将作为准确信息保存。</span>
+                          <PrimaryButton disabled={Boolean(busy)} onClick={() => void resolveNote(note.source_key, "confirm", note.draft_id, true)}>
+                            确认旧版匹配
+                          </PrimaryButton>
+                        </div>
+                      )}
                       {(note.match_status === "external_history" || note.match_status === "unmatched") && (
                         <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-lg bg-white px-3 py-2 text-xs text-slate-600">
                           <span>保留平台指标，只做描述统计，不进入13种方法学习。</span>
-                          <SecondaryButton disabled={Boolean(busy)} onClick={() => void resolveNote(note.source_key, "exclude")}>本轮排除</SecondaryButton>
+                          <div className="flex flex-wrap gap-2">
+                            {note.match_candidates?.length && !showCandidatePicker ? (
+                              <SecondaryButton disabled={Boolean(busy)} onClick={() => setManualBindingOpen({ ...manualBindingOpen, [note.source_key]: true })}>
+                                手动绑定系统正文
+                              </SecondaryButton>
+                            ) : null}
+                            <SecondaryButton disabled={Boolean(busy)} onClick={() => void resolveNote(note.source_key, "exclude")}>本轮排除</SecondaryButton>
+                          </div>
                         </div>
                       )}
                       {note.match_status === "excluded" && (

@@ -194,6 +194,40 @@ describe("三日复盘周期", () => {
     expect(cycle.notes[0].match_status).toBe("external_history");
     expect(cycle.notes[0].match_scope).toBe("external");
     expect(cycle.notes[0].content_eligible).toBe(false);
+    expect(cycle.notes[0].match_candidates?.[0].draft_id).toBe(draft.id);
+  });
+
+  it("未选定草稿不能成为官方笔记的绑定候选", async () => {
+    const unfinishedDraft = { ...draft, status: "draft" as const };
+    const buffer = await officialWorkbook([[
+      draft.title, "2026年07月14日07时34分35秒", "图文", 1000, 100, 0.1,
+      10, 1, 5, 0, 1, 20, 0,
+    ]]);
+    const parsed = await parseOfficialNoteListExcel(buffer);
+    const cycle = createThreeDayReviewCycle({ account, drafts: [unfinishedDraft], rows: parsed.rows, fileName: "x.xlsx", fileSize: buffer.length });
+    expect(cycle.notes[0].match_status).toBe("external_history");
+    expect(cycle.notes[0].match_candidates).toEqual([]);
+  });
+
+  it("新周期编号取历史最大值递增，不受重复旧轮次影响", async () => {
+    const buffer = await officialWorkbook([[
+      draft.title, "2026年07月14日07时34分35秒", "图文", 1000, 100, 0.1,
+      10, 1, 5, 0, 1, 20, 0,
+    ]]);
+    const parsed = await parseOfficialNoteListExcel(buffer);
+    const prior = createThreeDayReviewCycle({ account, drafts: [draft], rows: parsed.rows, fileName: "x.xlsx", fileSize: buffer.length });
+    const cycle = createThreeDayReviewCycle({
+      account,
+      drafts: [draft],
+      rows: parsed.rows,
+      fileName: "x.xlsx",
+      fileSize: buffer.length,
+      previousCycles: [
+        { ...prior, id: "old-5", cycle_number: 5, status: "completed", completed_at: "2026-07-18T00:00:00.000Z" },
+        { ...prior, id: "old-2", cycle_number: 2, status: "completed", completed_at: "2026-07-19T00:00:00.000Z" },
+      ],
+    });
+    expect(cycle.cycle_number).toBe(6);
   });
 
   it("标题归一化忽略全半角、书名号、空格和常见标点", () => {

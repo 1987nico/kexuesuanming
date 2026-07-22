@@ -37,7 +37,7 @@ export async function POST(req: Request) {
   const store = growthStore();
   const account = await store.getAccount(accountId);
   if (!account) return NextResponse.json({ error: "account_not_found", message: "当前人设不存在。" }, { status: 404 });
-  if (guard.auth.role !== "admin" && account.owner_user_id && account.owner_user_id !== guard.auth.user.id) {
+  if (guard.auth.role !== "admin" && account.owner_user_id !== guard.auth.user.id) {
     return NextResponse.json({ error: "forbidden" }, { status: 403 });
   }
 

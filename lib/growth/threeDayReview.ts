@@ -202,7 +202,7 @@ function titleBigrams(value: string) {
   return result;
 }
 
-function titleSimilarity(left: string | undefined, right: string) {
+export function reviewTitleSimilarity(left: string | undefined, right: string) {
   const a = normalizeReviewTitle(left);
   const b = normalizeReviewTitle(right);
   if (!a || !b) return 0;
@@ -217,6 +217,7 @@ function titleSimilarity(left: string | undefined, right: string) {
 
 function candidateReason(input: {
   exactTitle: boolean;
+  similarity: number;
   timeDelta?: number;
   status: ContentDraft["status"];
   persona: GrowthPersona;
@@ -227,7 +228,8 @@ function candidateReason(input: {
   if (input.exactTitle && (input.timeDelta ?? Infinity) <= 5 * 60) return `标题和首次发布时间均匹配${personaLabel}视角正文`;
   if (input.exactTitle) return `在${personaLabel}视角找到唯一同标题正文，但发布时间存在差异`;
   if ((input.timeDelta ?? Infinity) <= 5 * 60) return `首次发布时间唯一接近${personaLabel}视角正文，标题有差异`;
-  return `标题与发布时间接近${personaLabel}视角正文`;
+  if (input.similarity >= 0.88) return `标题接近${personaLabel}视角正文，但发布时间存在差异`;
+  return `可人工绑定${personaLabel}视角正文；标题和时间未达到自动匹配阈值`;
 }
 
 function attachDraft(
@@ -236,17 +238,16 @@ function attachDraft(
   currentAccount: GrowthAccount,
 ): ThreeDayNoteSnapshot {
   const rowTime = Date.parse(row.published_at);
-  const candidates = contexts.flatMap((context) => {
+  const rankedCandidates = contexts
+    .filter((context) => context.draft.status !== "draft")
+    .map((context) => {
     const publishedAt = draftPublishedAt(context.draft);
     const timeDelta = publishedAt && Number.isFinite(Date.parse(publishedAt))
       ? Math.abs(Date.parse(publishedAt) - rowTime) / 1000
       : undefined;
-    const similarity = titleSimilarity(row.source_title, context.draft.title);
+    const similarity = reviewTitleSimilarity(row.source_title, context.draft.title);
     const exactTitle = similarity === 1;
-    const nearTitleAndTime = similarity >= 0.88 && (timeDelta ?? Infinity) <= 24 * 60 * 60;
-    const timeOnly = (timeDelta ?? Infinity) <= 5 * 60;
-    if (!exactTitle && !nearTitleAndTime && !timeOnly) return [];
-    return [{
+    return {
       draft_id: context.draft.id,
       account_id: context.account_id,
       business_line: context.business_line,
@@ -256,21 +257,28 @@ function attachDraft(
       published_at: publishedAt,
       title_similarity: Number(similarity.toFixed(4)),
       time_delta_seconds: timeDelta === undefined ? undefined : Math.round(timeDelta),
-      match_reason: candidateReason({ exactTitle, timeDelta, status: context.draft.status, persona: context.persona }),
-    }];
+      match_reason: candidateReason({ exactTitle, similarity, timeDelta, status: context.draft.status, persona: context.persona }),
+    };
   }).sort((a, b) => {
     const score = (candidate: typeof a) =>
       candidate.title_similarity * 100
       + ((candidate.time_delta_seconds ?? Infinity) <= 5 * 60 ? 20 : 0)
       + (candidate.status === "published" || candidate.status === "reviewed" ? 5 : 0);
     return score(b) - score(a);
-  }).slice(0, 5);
-  const automatic = candidates.filter((candidate) =>
+  });
+  const strongCandidates = rankedCandidates.filter((candidate) =>
+    candidate.title_similarity === 1
+    || (candidate.title_similarity >= 0.88 && (candidate.time_delta_seconds ?? Infinity) <= 24 * 60 * 60)
+    || (candidate.time_delta_seconds ?? Infinity) <= 5 * 60);
+  // 前端保留强候选，同时提供有限的同业务正文供人工兜底绑定。
+  // 低相关候选不会改变“系统外历史”的自动判断。
+  const candidates = rankedCandidates.slice(0, 30);
+  const automatic = strongCandidates.filter((candidate) =>
     candidate.title_similarity === 1
     && (candidate.time_delta_seconds ?? Infinity) <= 5 * 60
     && (candidate.status === "published" || candidate.status === "reviewed"));
   const selected = automatic.length === 1 ? automatic[0] : undefined;
-  const suggested = selected ? undefined : candidates[0];
+  const suggested = selected ? undefined : strongCandidates[0];
   const matchStatus = selected ? "matched" : suggested ? "suggested" : "external_history";
   const matchScope = selected || suggested
     ? (selected || suggested)!.account_id === currentAccount.id
@@ -336,7 +344,8 @@ export function createThreeDayReviewCycle(input: {
     account_id: input.account.id,
     business_line: businessLine,
     persona: input.account.persona,
-    cycle_number: input.existingDraftCycle?.cycle_number ?? completed.length + 1,
+    cycle_number: input.existingDraftCycle?.cycle_number
+      ?? Math.max(0, ...(input.previousCycles ?? []).map((cycle) => cycle.cycle_number)) + 1,
     status: "draft" as const,
     started_at: input.existingDraftCycle?.started_at ?? previous?.completed_at ?? nowIso,
     due_at: input.existingDraftCycle?.due_at ?? previous?.next_due_at ?? nowIso,

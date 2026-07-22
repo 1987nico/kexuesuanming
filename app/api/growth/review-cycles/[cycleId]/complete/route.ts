@@ -36,7 +36,7 @@ export async function POST(req: Request, { params }: { params: { cycleId: string
   const store = growthStore();
   const account = await store.getAccount(parsed.data.accountId);
   if (!account) return NextResponse.json({ error: "account_not_found" }, { status: 404 });
-  if (guard.auth.role !== "admin" && account.owner_user_id && account.owner_user_id !== guard.auth.user.id) {
+  if (guard.auth.role !== "admin" && account.owner_user_id !== guard.auth.user.id) {
     return NextResponse.json({ error: "forbidden" }, { status: 403 });
   }
   const workspaceAccounts = await reviewWorkspaceAccounts(store, account, guard.auth.user.id);
