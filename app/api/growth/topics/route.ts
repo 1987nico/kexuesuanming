@@ -25,6 +25,10 @@ import {
   withHistoricalBenchmarkSourceUsage,
 } from "@/lib/growth/sourceRotation";
 import {
+  buildSingleTitleMutation,
+  mergeRegeneratedNativeTopic,
+} from "@/lib/growth/singleTitleRegeneration";
+import {
   accountForBusinessGeneration,
   accountMatchesWorkspace,
 } from "@/lib/growth/businessCompatibility";
@@ -44,10 +48,12 @@ const bodySchema = z.object({
   generationMode: z.enum(["default", "explore"]).optional(),
   action: z.enum([
     "regenerate_titles",
+    "regenerate_single_title",
     "rotate_single_source",
     "rotate_all_sources",
   ]).optional(),
   methodId: z.string().optional(),
+  topicId: z.string().optional(),
   baseRunId: z.string().optional(),
 });
 
@@ -167,6 +173,18 @@ export async function POST(req: Request) {
       message: "当前业务、视角或生成区域不包含这个来源型方法。",
     }, { status: 400 });
   }
+  if (
+    action === "regenerate_single_title"
+    && (!requestedMethod
+      || requestedMethod.group !== "native"
+      || !applicableMethods.some((method) => method.id === requestedMethod.id)
+      || !parsed.data.topicId)
+  ) {
+    return NextResponse.json({
+      error: "invalid_single_title_method",
+      message: "当前业务、视角或生成区域不包含这个原生法标题。",
+    }, { status: 400 });
+  }
   const notes = await store.listDrafts(account.id);
   const reviews = await store.listReviewsByAccount(account.id);
   const runs = await store.listRuns(account.id);
@@ -178,8 +196,54 @@ export async function POST(req: Request) {
   if (action !== "regenerate_titles" && !latestRun) {
     return NextResponse.json({
       error: "rotation_requires_batch",
-      message: "请先生成一批标题，再更换对标母题。",
+      message: "请先生成一批标题，再进行单槽更新。",
     }, { status: 409 });
+  }
+  const requestedTopic = action === "regenerate_single_title"
+    ? latestRun?.topic_pool.find((topic) =>
+      topic.id === parsed.data.topicId
+      && topic.method_id === requestedMethod!.id
+      && topic.method_group === "native"
+    )
+    : undefined;
+  if (action === "regenerate_single_title" && !requestedTopic) {
+    return NextResponse.json({
+      error: "single_title_topic_not_found",
+      message: "当前标题批次已经变化，请刷新后再换标题。",
+    }, { status: 409 });
+  }
+  if (
+    action === "regenerate_single_title"
+    && (requestedTopic?.title_promise_status === "stale"
+      || requestedTopic?.title_promise_status === "invalid")
+  ) {
+    return NextResponse.json({
+      error: "single_title_direction_not_synced",
+      message: "当前手工标题与正文承诺尚未同步，请先更新正文承诺，再换标题。",
+    }, { status: 409 });
+  }
+  if (
+    action === "regenerate_single_title"
+    && requestedMethod?.sourceRequired
+    && !sourceIsUsable(requestedTopic?.source_snapshot)
+  ) {
+    return NextResponse.json({
+      error: "single_title_source_unavailable",
+      message: requestedMethod.id === "traffic"
+        ? "当前热点已超过有效期，请先点击“换一个热点”，再生成新标题。"
+        : "当前来源已经失效，请先更换来源。",
+    }, { status: 422 });
+  }
+  if (action === "regenerate_single_title" && requestedTopic?.source_snapshot) {
+    account = {
+      ...account,
+      topic_sources: [
+        requestedTopic.source_snapshot,
+        ...(account.topic_sources ?? []).filter((source) =>
+          source.method_id !== requestedTopic.method_id
+        ),
+      ],
+    };
   }
 
   const sourceAccountBefore = account;
@@ -222,7 +286,7 @@ export async function POST(req: Request) {
       changedMethodIds,
       dropMissing: action === "rotate_all_sources",
     });
-  } else {
+  } else if (action === "regenerate_titles") {
     // 普通“换一批标题”优先复用有效母题；缺失或硬失效来源由系统补齐。
     const discovered = await ensureRecentTopicSources(account);
     sourceRefreshSummary = discovered.summary;
@@ -252,6 +316,16 @@ export async function POST(req: Request) {
         sourceRefreshSummary = rotated.summary;
       }
     }
+  } else {
+    sourceRefreshSummary = {
+      status: "cached",
+      provider: "redfox_daily",
+      rank_date: "",
+      fetched_count: 0,
+      selected_count: 0,
+      usable_count: 0,
+      message: "保留当前选题方向和来源，只更新这个标题的表达。",
+    };
   }
 
   let weeklyReview = account.weekly_review ?? account.stage_review;
@@ -281,6 +355,8 @@ export async function POST(req: Request) {
 
   const generationMethodIds = action === "rotate_single_source"
     ? [requestedMethod!.id]
+    : action === "regenerate_single_title"
+      ? [requestedMethod!.id]
     : action === "rotate_all_sources"
       ? rotationMethodIds
       : undefined;
@@ -296,11 +372,21 @@ export async function POST(req: Request) {
     learningBrief,
     allowSourcePause,
     methodIds: generationMethodIds,
+    directionLocks: action === "regenerate_single_title" && requestedTopic
+      ? { [requestedTopic.method_id]: requestedTopic }
+      : undefined,
   });
   try {
     generated = await generateTopicBatch(generationInput(action === "rotate_all_sources"));
   } catch (error) {
     const firstMessage = (error as Error).message;
+    if (action === "regenerate_single_title") {
+      console.error("[growth] single title regeneration failed:", firstMessage);
+      return NextResponse.json({
+        error: "single_title_regeneration_failed",
+        message: "暂时没有生成更合适的新标题，当前标题已保留。可以稍后再试，或直接编辑当前标题。",
+      }, { status: 422 });
+    }
     if (action !== "regenerate_titles") {
       console.error("[growth] manual source rotation failed:", firstMessage);
       return NextResponse.json({
@@ -370,6 +456,14 @@ export async function POST(req: Request) {
       message: "新母题没有形成通过审核的迁移标题；当前批次和原来源保持不变。",
     }, { status: 422 });
   }
+  if (action === "regenerate_single_title" && !generatedTopics.some((topic) =>
+    topic.method_id === requestedMethod!.id
+  )) {
+    return NextResponse.json({
+      error: "single_title_regeneration_failed",
+      message: "暂时没有生成更合适的新标题，当前标题已保留。可以稍后再试，或直接编辑当前标题。",
+    }, { status: 422 });
+  }
   if (action === "rotate_all_sources" && generatedTopics.length === 0) {
     return NextResponse.json({
       error: "benchmark_rotation_failed",
@@ -395,7 +489,16 @@ export async function POST(req: Request) {
   }
 
   const timestamp = now();
-  const topics = action === "rotate_single_source" || action === "rotate_all_sources"
+  const regeneratedTopic = action === "regenerate_single_title"
+    ? generatedTopics.find((topic) => topic.method_id === requestedMethod!.id)
+    : undefined;
+  const topics = action === "regenerate_single_title" && requestedTopic && regeneratedTopic
+    ? mergeRegeneratedNativeTopic({
+      previous: latestRun?.topic_pool ?? [],
+      current: requestedTopic,
+      generated: regeneratedTopic,
+    })
+    : action === "rotate_single_source" || action === "rotate_all_sources"
     ? mergeRotatedTopicPool({
       previous: latestRun?.topic_pool ?? [],
       generated: generatedTopics,
@@ -404,7 +507,11 @@ export async function POST(req: Request) {
     })
     : generatedTopics;
   const rotatedMethods = new Set(rotationMethodIds);
-  const unavailableMethods = action === "rotate_single_source"
+  const unavailableMethods = action === "regenerate_single_title"
+    ? (latestRun?.unavailable_methods ?? []).filter((item) =>
+      item.method_id !== requestedMethod!.id
+    )
+    : action === "rotate_single_source"
     ? [
       ...(latestRun?.unavailable_methods ?? []).filter((item) => item.method_id !== requestedMethod!.id),
       ...(generatedUnavailableMethods ?? []),
@@ -437,14 +544,20 @@ export async function POST(req: Request) {
     }),
     updated_at: timestamp,
   };
-  const nextSeen = Array.from(new Set(topics.map((topic) => topic.title)));
+  const nextSeen = Array.from(new Set([
+    ...(latestRun?.seen_titles ?? []),
+    ...topics.map((topic) => topic.title),
+  ]));
+  const reportedChangedMethodIds = action === "regenerate_single_title"
+    ? [requestedMethod!.id]
+    : changedMethodIds;
   const sourceRotation: NonNullable<GrowthRun["source_rotation"]> = {
     mode: sourceRotationMode,
     requested_method_id: requestedMethod?.id,
-    changed_method_ids: changedMethodIds,
+    changed_method_ids: reportedChangedMethodIds,
     retained_method_ids: topics
       .map((topic) => topic.method_id)
-      .filter((methodId) => !changedMethodIds.includes(methodId)),
+      .filter((methodId) => !reportedChangedMethodIds.includes(methodId)),
     paused_method_ids: pausedMethodIds,
     previous_source_ids: previousSourceIds,
     new_source_ids: newSourceIds,
@@ -467,6 +580,15 @@ export async function POST(req: Request) {
     structure_version: "v3_7",
     migration_status: "passed",
     source_rotation: sourceRotation,
+    title_mutation: action === "regenerate_single_title" && requestedTopic && regeneratedTopic && latestRun
+      ? buildSingleTitleMutation({
+        parentRunId: latestRun.id,
+        current: requestedTopic,
+        generated: regeneratedTopic,
+        generationAttempts,
+        createdAt: timestamp,
+      })
+      : undefined,
     topic_pool: topics,
     unavailable_methods: unavailableMethods,
     seen_titles: nextSeen,
@@ -522,7 +644,7 @@ export async function POST(req: Request) {
     migrationStatus: "passed",
     structureVersion: "v3_7",
     rotationMode: sourceRotationMode,
-    changedMethods: changedMethodIds,
+    changedMethods: reportedChangedMethodIds,
     retainedMethods: sourceRotation.retained_method_ids,
     pausedMethods: unavailableMethods,
     unavailableMethods,

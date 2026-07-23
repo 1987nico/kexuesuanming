@@ -600,6 +600,7 @@ export async function generateTopicBatch(input: {
   learningBrief?: GrowthLearningBrief;
   allowSourcePause?: boolean;
   methodIds?: TitleMethodId[];
+  directionLocks?: Partial<Record<TitleMethodId, TopicCandidate>>;
 }): Promise<{
   topics: TopicCandidate[];
   unavailableMethods: GrowthRun["unavailable_methods"];
@@ -691,6 +692,18 @@ export async function generateTopicBatch(input: {
           sources: pendingMethods.map((method) => sources.get(method.id)).filter(Boolean) as TopicSourceSnapshot[],
           structureCards: pendingMethods.map((method) => structureCards.get(method.id)).filter(Boolean) as BenchmarkStructureCard[],
           excludeTitles: [...historyTitles, ...rejectedTitles, ...[...accepted.values()].map((topic) => topic.title)],
+          directionLocks: pendingMethods.flatMap((method) => {
+            const lock = input.directionLocks?.[method.id];
+            return lock ? [{
+              method_id: method.id,
+              current_title: lock.title,
+              title_promise: lock.title_promise,
+              target_user: lock.target_user,
+              pain: lock.pain,
+              origin_force: lock.origin_force,
+              conflict_judgement: lock.conflict_judgement,
+            }] : [];
+          }),
           context: accountContext(input.account),
         }), maxTokens: 2200, temperature: Math.min(0.78, 0.58 + attempt * 0.07),
         timeoutMs: 65_000, jsonRetries: 0,
@@ -712,10 +725,11 @@ export async function generateTopicBatch(input: {
           attemptProblems.push(`${method.id}:模型未返回该方法`);
           continue;
         }
+        const directionLock = input.directionLocks?.[method.id];
         const candidateTitles = Array.from(new Set([
           asText(row.title),
           ...(Array.isArray(row.alternative_titles) ? row.alternative_titles.map(asText) : []),
-        ].map(enforceTitleLimit).filter(Boolean))).slice(0, 3);
+        ].map(enforceTitleLimit).filter(Boolean))).slice(0, directionLock ? 5 : 3);
         let acceptedTopic: TopicCandidate | undefined;
         const candidateProblems: string[] = [];
         candidateProblemsByMethod.set(method.id, candidateProblems);
@@ -723,7 +737,34 @@ export async function generateTopicBatch(input: {
         for (const [candidateIndex, candidateTitle] of candidateTitles.entries()) {
           try {
             const candidateRow = { ...row, title: candidateTitle };
-            const [topic] = normalizeTopics([candidateRow], input.account, [method], generationMode, sources);
+            const [normalizedTopic] = normalizeTopics([candidateRow], input.account, [method], generationMode, sources);
+            const topic: TopicCandidate = directionLock ? {
+              ...normalizedTopic,
+              title: candidateTitle,
+              title_promise: directionLock.title_promise,
+              title_promise_status: "synced",
+              title_promise_validation: undefined,
+              target_user: directionLock.target_user,
+              pain: directionLock.pain,
+              hook: candidateTitle,
+              origin_force: directionLock.origin_force,
+              conflict_judgement: directionLock.conflict_judgement,
+              source_snapshot: directionLock.source_snapshot ?? normalizedTopic.source_snapshot,
+            } : normalizedTopic;
+            topic.validation_checks = validateTopicCandidate(topic, input.account.persona);
+            const previousCount = directionLock ? extractPromisedCount(directionLock.title) : undefined;
+            const candidateCount = directionLock ? extractPromisedCount(candidateTitle) : undefined;
+            if (
+              directionLock
+              && previousCount !== candidateCount
+              && (previousCount !== undefined || candidateCount !== undefined)
+            ) {
+              candidateProblems.push(
+                `${topic.method_id}:新标题改变了原方向中的数字承诺`,
+              );
+              rejectedTitles.push(candidateTitle);
+              continue;
+            }
             const duplicateProblems = topicCandidateDuplicateProblems(
               topic,
               historyTitles,

@@ -168,9 +168,32 @@ export interface GrowthTitleFingerprint {
 
 export type TopicBatchRotationMode =
   | "regenerate_titles"
+  | "regenerate_single_title"
   | "rotate_single_source"
   | "rotate_all_sources"
   | "automatic_rotation";
+
+export interface TopicDirectionLock {
+  method_id: TitleMethodId;
+  target_user: string;
+  pain: string;
+  title_promise: string;
+  origin_force?: string;
+  conflict_judgement?: string;
+  source_id?: string;
+}
+
+export interface TopicTitleMutation {
+  mutation_type: "single_title_regeneration";
+  parent_run_id: string;
+  regenerated_topic_id: string;
+  method_id: TitleMethodId;
+  previous_title: string;
+  new_title: string;
+  direction_lock: TopicDirectionLock;
+  generation_attempts: number;
+  created_at: string;
+}
 
 export interface BenchmarkSourceUsage {
   business_line: GrowthBusinessLine;
@@ -671,6 +694,7 @@ export interface GrowthRun {
   migration_status?: "passed" | "failed";
   title_fingerprints?: GrowthTitleFingerprint[];
   source_rotation?: TopicBatchRotation;
+  title_mutation?: TopicTitleMutation;
   unavailable_methods?: Array<{
     method_id: TitleMethodId;
     method_label: string;

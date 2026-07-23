@@ -235,15 +235,26 @@ export function buildTopicPoolUserPrompt(input: {
   sources?: TopicSourceSnapshot[];
   structureCards?: BenchmarkStructureCard[];
   excludeTitles?: string[];
+  directionLocks?: Array<{
+    method_id: TitleMethodId;
+    current_title: string;
+    title_promise: string;
+    target_user: string;
+    pain: string;
+    origin_force?: string;
+    conflict_judgement?: string;
+  }>;
   context?: AccountContext;
 }) {
   // 历史全集由服务端做确定性去重；提示词只带最近一段，避免长期使用后挤爆上下文。
   const exclude = (input.excludeTitles ?? []).filter(Boolean).slice(-160);
   const sourceByMethod = new Map((input.sources ?? []).map((source) => [source.method_id, source]));
   const cardByMethod = new Map((input.structureCards ?? []).map((card) => [card.method_id, card]));
+  const lockByMethod = new Map((input.directionLocks ?? []).map((lock) => [lock.method_id, lock]));
   const methodLines = input.methods.map((method) => {
     const source = sourceByMethod.get(method.id);
     const card = cardByMethod.get(method.id);
+    const lock = lockByMethod.get(method.id);
     return [
       `${method.order}. method_id=${method.id}；方法=${method.label}；要求=${method.instruction}`,
       card
@@ -261,8 +272,19 @@ export function buildTopicPoolUserPrompt(input: {
         : source
           ? "该方法绑定了母题，但没有锁定结构卡；不得为它生成标题"
           : "无外部母题要求",
+      lock
+        ? `【单槽标题方向锁】这是同一选题方向的标题改写，不是重新选题。必须保持以下内容不变，只能更换标题措辞：
+当前标题=${lock.current_title}
+目标用户=${lock.target_user}
+核心处境/痛点=${lock.pain}
+正文唯一承诺=${lock.title_promise}
+具体场景依据=${lock.origin_force || "沿用当前标题场景"}
+核心冲突依据=${lock.conflict_judgement || "沿用当前标题冲突"}
+title_promise 必须原样返回。title 与 alternative_titles 必须属于同一方向，不得换人物、问题、结果、资料数量或对立选项。`
+        : "",
     ].join("\n");
   });
+  const singleTitleRewrite = (input.directionLocks ?? []).length > 0;
   return `
 请以选题官 V3.1 身份，严格按给定方法列表生成标题。
 
@@ -282,7 +304,7 @@ ${methodLines.join("\n\n")}
 - 【原力要大】标题外层必须有至少 1 个具体实在、有画面的"原力词"：目标受众生活里能看见、摸到、遇到的物件、角色、场景或动作。例：工资条、合同、老板、合伙人、客户、会议室、工位、预算表、PPT、手机消息、加班、汇报、签合同、拍板、微信对话框、面试通知、离职交接、绩效面谈。禁止只用泛虚词做标题入口，如：成长、认知、觉醒、自由、焦虑、选择、结构、位置、命运、人生、体面；这些词可以进正文解释，但不能单独承担标题入口。
 - 【冲突要大】每个选题必须有反常识、反预期或强落差，让用户一眼看到"怎么会这样"的张力。冲突可以来自：想要稳定 vs 想要自由、职位很高 vs 离开平台不值钱、努力很多 vs 结果不变、想转型 vs 家庭/收入/年龄限制、以为是机会 vs 后来发现是坑。没有冲突的平铺题、纯建议题、纯清单题不进入候选池。
 - 每个候选题必须可比较、可复盘、可延展，并写清正文要兑现的唯一承诺。
-- 每种方法同时给出 3 个彼此明显不同的标题候选：title 是首选，alternative_titles 是两个备选。备选不能只是改标点、数字或语气词，三者必须使用不同的具体场景、动作或冲突表达，但仍严格属于同一个方法。
+- 每种方法同时给出 ${singleTitleRewrite ? "5" : "3"} 个彼此明显不同的标题候选：title 是首选，alternative_titles 是${singleTitleRewrite ? "四个" : "两个"}备选。备选不能只是改标点、数字或语气词，必须使用不同措辞，但仍严格属于同一个方法。${singleTitleRewrite ? "当前是单槽改写，五个候选必须保持方向锁中的目标用户、核心处境、正文承诺和数量完全不变。" : ""}
 - 来源型方法已经在上一步完成母题拆解。你只能使用“已锁定结构卡”生成，不会看到原标题，也不得自行重新解释母题。
 - 蹭流量必须能从新标题中识别出所绑定热点的事件、人物或社会冲突；相同产品迁移产品表达或选择场景；相同功效迁移解决问题或降低风险的功效；相似人群迁移人群处境；终极结果相同迁移最终利益；爆款框架迁移句式与冲突结构。
 - 绑定母题的标题不得调用与结构卡无关的通用模板。必须继承结构卡指定的元素，并完成replacement_requirement。
@@ -296,7 +318,9 @@ ${exclude.length ? `- 严禁与以下已生成选题重复或近似：${exclude.
     {
       "method_id": "必须与给定method_id完全一致",
       "title": "题目（20 字以内，含标点）",
-      "alternative_titles": ["同方法备选题目1（20字以内）", "同方法备选题目2（20字以内）"],
+      "alternative_titles": [${singleTitleRewrite
+        ? "\"同方向备选题目1\", \"同方向备选题目2\", \"同方向备选题目3\", \"同方向备选题目4\""
+        : "\"同方法备选题目1（20字以内）\", \"同方法备选题目2（20字以内）\""}],
       "title_promise": "正文必须兑现的唯一承诺"
     }
   ]

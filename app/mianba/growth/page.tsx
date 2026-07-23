@@ -789,34 +789,53 @@ export default function GrowthPage() {
   async function generateTopics(
     mode: MethodGenerationMode,
     group?: TitleMethodGroup,
-    action: "regenerate_titles" | "rotate_single_source" | "rotate_all_sources" = "regenerate_titles",
+    action: "regenerate_titles" | "regenerate_single_title" | "rotate_single_source" | "rotate_all_sources" = "regenerate_titles",
     methodId?: TitleMethodId,
+    topicId?: string,
   ) {
     if (!data?.account) return;
     const selectedIsAffected = Boolean(selectedTopic && (
       action === "regenerate_titles"
+      || (action === "regenerate_single_title" && selectedTopic.topic.method_id === methodId)
       || (action === "rotate_single_source" && selectedTopic.topic.method_id === methodId)
       || (action === "rotate_all_sources" && selectedTopic.topic.method_group === "benchmark")
     ));
+    const targetHasUnsavedEdit = Boolean(topicId && Object.prototype.hasOwnProperty.call(titleEdits, topicId));
     if (
-      (Object.keys(titleEdits).length > 0 || selectedIsAffected)
+      ((action === "regenerate_single_title" ? targetHasUnsavedEdit : Object.keys(titleEdits).length > 0) || selectedIsAffected)
       && !window.confirm(
         action === "regenerate_titles"
           ? "新批次不会删除当前批次，最近3批都可以恢复。确认换一批吗？"
+          : action === "regenerate_single_title"
+            ? selectedIsAffected
+              ? "更换标题会取消当前标题选择，并清空它对应的未发布正文草稿；已发布内容不会受影响。确认继续吗？"
+              : "当前手工修改尚未保存。继续后将保留选题方向重新生成，并放弃这个槽位的手工修改。确认继续吗？"
           : selectedIsAffected
             ? "更换母题会取消当前对标标题选择，并清空它对应的未发布正文草稿；已发布内容不会受影响。确认继续吗？"
             : "当前有未保存的标题修改。换源成功后会进入新批次，旧批次仍可恢复。确认继续吗？",
       )
     ) return;
-    const busyKey = action === "rotate_single_source"
+    const busyKey = action === "regenerate_single_title"
+      ? `title-${mode}-${methodId}`
+      : action === "rotate_single_source"
       ? `rotate-${mode}-${methodId}`
       : action === "rotate_all_sources"
         ? `rotate-all-${mode}`
         : `topics-${mode}`;
     setBusy(busyKey);
     let stageIndex = 0;
-    setTopicMessage(action === "regenerate_titles" ? TOPIC_GENERATION_STAGES[stageIndex] : "正在寻找新的近期母题…");
+    setTopicMessage(
+      action === "regenerate_titles"
+        ? TOPIC_GENERATION_STAGES[stageIndex]
+        : action === "regenerate_single_title"
+          ? "正在保留当前选题方向，只生成新的标题表达…"
+          : "正在寻找新的近期母题…",
+    );
     const stageTimer = window.setInterval(() => {
+      if (action === "regenerate_single_title") {
+        setTopicMessage("正在进行历史去重和方向一致性校验…");
+        return;
+      }
       stageIndex = Math.min(stageIndex + 1, TOPIC_GENERATION_STAGES.length - 1);
       setTopicMessage(TOPIC_GENERATION_STAGES[stageIndex]);
     }, 8_000);
@@ -850,6 +869,7 @@ export default function GrowthPage() {
             generationMode: mode,
             action,
             methodId,
+            topicId,
             baseRunId: runs[mode]?.id,
           }),
         },
@@ -870,8 +890,18 @@ export default function GrowthPage() {
         setActiveTopic(null);
         setChosen(null);
       }
-      setTitleEdits({});
-      if (action === "rotate_single_source") {
+      if (action === "regenerate_single_title" && topicId) {
+        setTitleEdits((current) => {
+          const next = { ...current };
+          delete next[topicId];
+          return next;
+        });
+      } else {
+        setTitleEdits({});
+      }
+      if (action === "regenerate_single_title") {
+        setTopicMessage(`${TITLE_METHOD_BY_ID[methodId!].label}已保留原选题方向和正文承诺，只更新标题表达；其他槽位保持不变。可在当前槽位撤回上一版。`);
+      } else if (action === "rotate_single_source") {
         setTopicMessage(`${TITLE_METHOD_BY_ID[methodId!].label}已更换新母题并生成新的迁移标题；其他槽位保持不变。旧批次仍可恢复。`);
       } else if (action === "rotate_all_sources") {
         setTopicMessage(`已为对标法更换${result.changedMethods.length}个新母题，生成${result.generatedCount}个迁移标题；${result.unavailableMethods?.length || 0}个方法本轮暂停。原生法和旧批次保持不变。`);
@@ -1627,6 +1657,13 @@ export default function GrowthPage() {
                       onRotateSource={(mode, methodId) =>
                         generateTopics(mode, TITLE_METHOD_BY_ID[methodId].group, "rotate_single_source", methodId)
                       }
+                      onRegenerateTitle={(mode, methodId, topicId) =>
+                        generateTopics(mode, "native", "regenerate_single_title", methodId, topicId)
+                      }
+                      onUndoTitle={(mode, run) => {
+                        const parent = data.runs.find((item) => item.id === run.title_mutation?.parent_run_id);
+                        if (parent) restoreTopicBatch(mode, parent);
+                      }}
                       onSelectTopic={selectTopic}
                       onTitleChange={changeTopicTitle}
                       onSaveTitle={saveTopicTitle}
@@ -1976,6 +2013,9 @@ export default function GrowthPage() {
 }
 
 function topicBatchActionLabel(run: GrowthRun) {
+  if (run.title_mutation?.mutation_type === "single_title_regeneration") {
+    return `换个标题 · ${TITLE_METHOD_BY_ID[run.title_mutation.method_id].label}`;
+  }
   const rotation = run.source_rotation;
   if (!rotation) return "历史生成";
   if (rotation.mode === "rotate_single_source") {
@@ -2041,6 +2081,8 @@ function MethodArea({
   onExplore,
   onRotateAll,
   onRotateSource,
+  onRegenerateTitle,
+  onUndoTitle,
   onSelectTopic,
   onTitleChange,
   onSaveTitle,
@@ -2069,6 +2111,8 @@ function MethodArea({
   onExplore: () => void;
   onRotateAll: () => void;
   onRotateSource: (mode: MethodGenerationMode, methodId: TitleMethodId) => void;
+  onRegenerateTitle: (mode: MethodGenerationMode, methodId: TitleMethodId, topicId: string) => void;
+  onUndoTitle: (mode: MethodGenerationMode, run: GrowthRun) => void;
   onSelectTopic: (run: GrowthRun, topic: TopicCandidate) => void;
   onTitleChange: (topic: TopicCandidate, title: string) => void;
   onSaveTitle: (run: GrowthRun, topic: TopicCandidate, title: string) => void;
@@ -2124,6 +2168,8 @@ function MethodArea({
             onSaveSource={onSaveSource}
             onRefreshSource={onRefreshSource}
             onRotateSource={onRotateSource}
+            onRegenerateTitle={onRegenerateTitle}
+            onUndoTitle={onUndoTitle}
           />
         ))}
       </div>
@@ -2162,6 +2208,8 @@ function MethodArea({
                   onSaveSource={onSaveSource}
                   onRefreshSource={onRefreshSource}
                   onRotateSource={onRotateSource}
+                  onRegenerateTitle={onRegenerateTitle}
+                  onUndoTitle={onUndoTitle}
                 />
               ))}
             </div>
@@ -2194,6 +2242,8 @@ function MethodSlot({
   onSaveSource,
   onRefreshSource,
   onRotateSource,
+  onRegenerateTitle,
+  onUndoTitle,
 }: {
   method: TitleMethodDefinition;
   mode: MethodGenerationMode;
@@ -2216,6 +2266,8 @@ function MethodSlot({
   onSaveSource: () => void;
   onRefreshSource: (sourceId: string, restricted: boolean) => void;
   onRotateSource: (mode: MethodGenerationMode, methodId: TitleMethodId) => void;
+  onRegenerateTitle: (mode: MethodGenerationMode, methodId: TitleMethodId, topicId: string) => void;
+  onUndoTitle: (mode: MethodGenerationMode, run: GrowthRun) => void;
 }) {
   const topic = run?.topic_pool.find((item) => item.method_id === method.id);
   const unavailable = run?.unavailable_methods?.find((item) => item.method_id === method.id);
@@ -2223,6 +2275,10 @@ function MethodSlot({
   const active = topic?.id === activeTopicId;
   const currentTitle = topic ? editedTitle ?? topic.title : "";
   const sourceBatchCount = sourceUsageCount(account, source);
+  const canUndoTitle = Boolean(
+    run?.title_mutation?.mutation_type === "single_title_regeneration"
+    && run.title_mutation.method_id === method.id
+  );
 
   return (
     <div data-method-slot={`${method.id}-${mode}`} className={`rounded-2xl border p-4 ${active ? "border-slate-900 bg-slate-50" : "border-slate-200 bg-white"}`}>
@@ -2266,7 +2322,9 @@ function MethodSlot({
                   className="min-h-11 rounded-xl border border-slate-300 bg-white px-3 font-semibold text-slate-800 disabled:opacity-40"
                   onClick={() => onRotateSource(mode, method.id)}
                 >
-                  {busy === `rotate-${mode}-${method.id}` ? "正在换新母题…" : "换一个母题"}
+                  {busy === `rotate-${mode}-${method.id}`
+                    ? method.id === "traffic" ? "正在换热点…" : "正在换新母题…"
+                    : method.id === "traffic" ? "换一个热点" : "换一个母题"}
                 </button>
               </div>
               {!usableSource && <div className="mt-2 text-xs text-amber-700">该来源当前不能生成标题，请补充7天内可用来源。</div>}
@@ -2326,7 +2384,27 @@ function MethodSlot({
                 <button type="button" disabled={savingTitle || Boolean(busy)} onClick={() => onSyncPromise(run, topic)} className="mt-2 min-h-11 rounded-xl border border-amber-300 bg-white px-3 text-sm font-semibold disabled:opacity-40">根据标题更新承诺</button>
               </div>
             )}
-            <div className="mt-4">
+            <div className="mt-4 flex flex-wrap gap-2">
+              {method.group === "native" && (
+                <SecondaryButton
+                  disabled={Boolean(busy)
+                    || !currentTitle.trim()
+                    || topic.title_promise_status === "stale"
+                    || topic.title_promise_status === "invalid"}
+                  onClick={() => onRegenerateTitle(mode, method.id, topic.id)}
+                >
+                  {topic.title_promise_status === "stale" || topic.title_promise_status === "invalid"
+                    ? "先同步正文承诺"
+                    : busy === `title-${mode}-${method.id}`
+                    ? "正在换标题…"
+                    : canUndoTitle ? "再换一个" : "换个标题"}
+                </SecondaryButton>
+              )}
+              {method.group === "native" && canUndoTitle && run && (
+                <SecondaryButton disabled={Boolean(busy)} onClick={() => onUndoTitle(mode, run)}>
+                  撤回上一版
+                </SecondaryButton>
+              )}
               {active ? (
                 <div className="inline-flex min-h-10 items-center rounded-xl bg-slate-900 px-4 text-sm font-semibold text-white">已选择</div>
               ) : (
