@@ -166,6 +166,41 @@ export interface GrowthTitleFingerprint {
   structure_card_id?: string;
 }
 
+export type TopicBatchRotationMode =
+  | "regenerate_titles"
+  | "rotate_single_source"
+  | "rotate_all_sources"
+  | "automatic_rotation";
+
+export interface BenchmarkSourceUsage {
+  business_line: GrowthBusinessLine;
+  persona: GrowthPersona;
+  method_id: TitleMethodId;
+  source_id: string;
+  original_url: string;
+  first_used_at: string;
+  last_used_at: string;
+  generated_batch_count: number;
+  selected_count: number;
+  rotation_status:
+    | "active"
+    | "rotation_recommended"
+    | "expired"
+    | "rejected"
+    | "replaced";
+}
+
+export interface TopicBatchRotation {
+  mode: TopicBatchRotationMode;
+  requested_method_id?: TitleMethodId;
+  changed_method_ids: TitleMethodId[];
+  retained_method_ids: TitleMethodId[];
+  paused_method_ids: TitleMethodId[];
+  previous_source_ids: string[];
+  new_source_ids: string[];
+  created_at: string;
+}
+
 export interface ValidationCheck {
   key: "source" | "identity" | "fulfillment" | "compliance" | "conversion";
   status: "passed" | "needs_edit" | "blocked";
@@ -500,6 +535,8 @@ export interface GrowthAccount {
   topic_sources?: TopicSourceSnapshot[];
   /** v3.7 对标两阶段生成缓存；只供系统内部使用，不在运营页展示。 */
   benchmark_structure_cards?: BenchmarkStructureCard[];
+  /** v3.8 每个业务×视角×方法下的母题使用次数与换源状态。 */
+  benchmark_source_usage?: BenchmarkSourceUsage[];
   method_overrides?: Partial<Record<TitleMethodId, MethodApplicability>>;
   canonical_body_tags?: CanonicalBodyTag[];
   tag_merge_suggestions?: TagMergeSuggestion[];
@@ -633,6 +670,7 @@ export interface GrowthRun {
   structure_version?: "v3_7";
   migration_status?: "passed" | "failed";
   title_fingerprints?: GrowthTitleFingerprint[];
+  source_rotation?: TopicBatchRotation;
   unavailable_methods?: Array<{
     method_id: TitleMethodId;
     method_label: string;

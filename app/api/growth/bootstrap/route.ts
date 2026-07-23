@@ -20,6 +20,7 @@ import {
 } from "@/lib/growth/businessPosition";
 import { accountForBusinessGeneration } from "@/lib/growth/businessCompatibility";
 import { mergeThreeDayReviewCycles, reviewWorkspaceAccounts } from "@/lib/growth/reviewCycleWorkspace";
+import { withHistoricalBenchmarkSourceUsage } from "@/lib/growth/sourceRotation";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -78,12 +79,15 @@ export async function GET(req: Request) {
         .then(mergeThreeDayReviewCycles),
     ])
     : [null, [], [], [], []] as const;
+  const responseAccount = workspaceAccount
+    ? withHistoricalBenchmarkSourceUsage(workspaceAccount, [...runs])
+    : null;
   // 以笔记为单元：返回每篇笔记对应的复盘（draftId -> review），供历史查看
   const reviews: Record<string, (typeof reviewList)[number]> = {};
   for (const review of reviewList) {
     if (!reviews[review.draft_id]) reviews[review.draft_id] = review;
   }
-  const storedWeeklyReview = workspaceAccount?.weekly_review ?? workspaceAccount?.stage_review;
+  const storedWeeklyReview = responseAccount?.weekly_review ?? responseAccount?.stage_review;
   // 旧版按 A/B/C 方向生成的周复盘仅保留在历史数据中，不能交给 v3.2 方法表渲染。
   const weeklyReview = isMethodWeeklyReview(storedWeeklyReview) ? storedWeeklyReview : null;
   const historicalDrafts = drafts.filter((draft) => draft.schema_version === "legacy_v1" || !draft.schema_version);
@@ -98,9 +102,9 @@ export async function GET(req: Request) {
   const validReviewDraftIds = new Set(reviewList.filter((review) => review.sample?.strategy_eligible).map((review) => review.draft_id));
   const historicalEffectiveSamples = historicalDrafts.filter((draft) => validReviewDraftIds.has(draft.id)).length;
   const newLearningSamples = currentDrafts.filter((draft) => draft.eligible_for_method_learning !== false && validReviewDraftIds.has(draft.id)).length;
-  const sourceCounts = workspaceAccount ? Object.fromEntries((["default", "explore"] as const).map((mode) => {
-    const methods = methodsForPersona(persona, mode, workspaceAccount.method_overrides);
-    const generatable = methods.filter((method) => !method.sourceRequired || (workspaceAccount.topic_sources ?? []).some((item) => item.method_id === method.id && sourceIsUsable(item))).length;
+  const sourceCounts = responseAccount ? Object.fromEntries((["default", "explore"] as const).map((mode) => {
+    const methods = methodsForPersona(persona, mode, responseAccount.method_overrides);
+    const generatable = methods.filter((method) => !method.sourceRequired || (responseAccount.topic_sources ?? []).some((item) => item.method_id === method.id && sourceIsUsable(item))).length;
     return [mode, { configured: methods.length, generatable, blockedBySource: methods.length - generatable }];
   })) : { default: { configured: 0, generatable: 0, blockedBySource: 0 }, explore: { configured: 0, generatable: 0, blockedBySource: 0 } };
   return NextResponse.json({
@@ -108,7 +112,7 @@ export async function GET(req: Request) {
     businessLine,
     businessPosition: businessPositions[businessLine],
     businessPositions,
-    account: workspaceAccount,
+    account: responseAccount,
     plan,
     runs,
     drafts,
@@ -189,6 +193,8 @@ export async function POST(req: Request) {
     account.hypotheses = existingAccount.hypotheses?.length ? existingAccount.hypotheses : account.hypotheses;
     account.persona_specific = existingAccount.persona_specific ?? account.persona_specific;
     account.topic_sources = existingAccount.topic_sources;
+    account.benchmark_structure_cards = existingAccount.benchmark_structure_cards;
+    account.benchmark_source_usage = existingAccount.benchmark_source_usage;
     account.method_overrides = existingAccount.method_overrides;
     account.canonical_body_tags = existingAccount.canonical_body_tags;
     account.tag_merge_suggestions = existingAccount.tag_merge_suggestions;

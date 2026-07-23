@@ -1,0 +1,207 @@
+import { describe, expect, it } from "vitest";
+import {
+  mergeRotatedTopicPool,
+  recordBenchmarkSourceSelection,
+  recentSourceUrls,
+  sourceMethodsDueForRotation,
+  sourceUsageCount,
+  updateBenchmarkSourceUsage,
+  withHistoricalBenchmarkSourceUsage,
+} from "./sourceRotation";
+import type {
+  GrowthAccount,
+  GrowthRun,
+  TitleMethodId,
+  TopicCandidate,
+  TopicSourceSnapshot,
+} from "./types";
+
+const source = (
+  methodId: TitleMethodId,
+  id: string,
+  url = `https://www.xiaohongshu.com/explore/${id}`,
+): TopicSourceSnapshot => ({
+  id,
+  method_id: methodId,
+  platform: "小红书",
+  author: "作者",
+  original_title: `${methodId}原题`,
+  original_url: url,
+  published_at: "2026-07-21T00:00:00.000Z",
+  heat_snapshot: "互动1000",
+  collected_at: "2026-07-23T00:00:00.000Z",
+  link_status: "accessible",
+  verified_by_operator: true,
+  freshness: "within_72h",
+});
+
+const topic = (
+  methodId: TitleMethodId,
+  title: string,
+  snapshot?: TopicSourceSnapshot,
+): TopicCandidate => ({
+  id: `${methodId}-${title}`,
+  method_group: methodId === "viral_framework" || methodId === "similar_audience"
+    ? "benchmark"
+    : "native",
+  method_id: methodId,
+  method_label: methodId,
+  generation_mode: "default",
+  title,
+  title_promise: "兑现标题",
+  target_user: "目标用户",
+  pain: "核心问题",
+  hook: title,
+  source_snapshot: snapshot,
+  follow_reason: "持续获得判断",
+  test_variable: "标题",
+  expected_signal: "有效咨询",
+  repeatable_angle: "继续测试",
+  broad_traffic_risk: 3,
+  priority: "A",
+});
+
+const account = (): GrowthAccount => ({
+  id: "account",
+  tenant_id: "mianbajun",
+  business_line: "executive",
+  persona: "buyer",
+  name: "账号",
+  target_user: "中高管",
+  core_problem: "方向",
+  account_value: "判断",
+  trust_source: "案例",
+  one_liner: "人设",
+  follow_reason: "持续判断",
+  not_doing: "不夸大",
+  compliance_redline: "不夸大",
+  hypotheses: [],
+  persona_specific: {},
+  content_directions: [],
+  created_at: "2026-07-01T00:00:00.000Z",
+  updated_at: "2026-07-23T00:00:00.000Z",
+});
+
+describe("对标法双层换批", () => {
+  it("同一母题生成满3批后进入建议换源状态", () => {
+    const item = source("viral_framework", "source-1");
+    let current = account();
+    current.topic_sources = [item];
+    for (let index = 0; index < 3; index += 1) {
+      current = {
+        ...current,
+        benchmark_source_usage: updateBenchmarkSourceUsage({
+          account: current,
+          topics: [topic("viral_framework", `标题${index}`, item)],
+          timestamp: `2026-07-23T0${index}:00:00.000Z`,
+        }),
+      };
+    }
+    expect(sourceUsageCount(current, item)).toBe(3);
+    expect(sourceMethodsDueForRotation(current)).toEqual(["viral_framework"]);
+  });
+
+  it("换一个母题只替换目标槽位", () => {
+    const previous = [
+      topic("human_pain", "原生标题"),
+      topic("viral_framework", "旧对标", source("viral_framework", "old")),
+    ];
+    const replacement = topic(
+      "viral_framework",
+      "新对标",
+      source("viral_framework", "new"),
+    );
+    expect(mergeRotatedTopicPool({
+      previous,
+      generated: [replacement],
+      mode: "rotate_single_source",
+      methodId: "viral_framework",
+    })).toEqual([previous[0], replacement]);
+  });
+
+  it("运营选用对标标题后累计来源被选次数", () => {
+    const item = source("viral_framework", "selected-source");
+    const current = account();
+    const usages = recordBenchmarkSourceSelection({
+      account: current,
+      topic: topic("viral_framework", "选中的标题", item),
+      timestamp: "2026-07-23T03:00:00.000Z",
+    });
+    expect(usages[0]).toMatchObject({
+      original_url: item.original_url,
+      selected_count: 1,
+    });
+  });
+
+  it("全部换新对标保留原生法，移除未生成成功的旧对标", () => {
+    const native = topic("human_pain", "原生标题");
+    const oldA = topic("similar_audience", "旧相似人群", source("similar_audience", "a"));
+    const oldB = topic("viral_framework", "旧爆款", source("viral_framework", "b"));
+    const nextA = topic("similar_audience", "新相似人群", source("similar_audience", "c"));
+    expect(mergeRotatedTopicPool({
+      previous: [native, oldA, oldB],
+      generated: [nextA],
+      mode: "rotate_all_sources",
+    })).toEqual([native, nextA]);
+  });
+
+  it("30天来源历史包含账号使用记录和历史批次，超过30天的不再排除", () => {
+    const current = account();
+    current.benchmark_source_usage = [{
+      business_line: "executive",
+      persona: "buyer",
+      method_id: "viral_framework",
+      source_id: "usage-source",
+      original_url: "https://www.xiaohongshu.com/explore/usage-source",
+      first_used_at: "2026-07-20T00:00:00.000Z",
+      last_used_at: "2026-07-20T00:00:00.000Z",
+      generated_batch_count: 1,
+      selected_count: 0,
+      rotation_status: "active",
+    }];
+    const run = {
+      created_at: "2026-07-10T00:00:00.000Z",
+      topic_pool: [topic(
+        "similar_audience",
+        "历史标题",
+        source("similar_audience", "run-source"),
+      )],
+    } as GrowthRun;
+    const oldRun = {
+      created_at: "2026-05-01T00:00:00.000Z",
+      topic_pool: [topic(
+        "viral_framework",
+        "过期历史",
+        source("viral_framework", "old-source"),
+      )],
+    } as GrowthRun;
+    expect(recentSourceUrls({
+      account: current,
+      runs: [run, oldRun],
+      now: new Date("2026-07-23T00:00:00.000Z"),
+    })).toEqual(expect.arrayContaining([
+      "https://www.xiaohongshu.com/explore/usage-source",
+      "https://www.xiaohongshu.com/explore/run-source",
+    ]));
+    expect(recentSourceUrls({
+      account: current,
+      runs: [run, oldRun],
+      now: new Date("2026-07-23T00:00:00.000Z"),
+    })).not.toContain("https://www.xiaohongshu.com/explore/old-source");
+  });
+
+  it("旧账号首次读取时根据历史批次补齐母题使用次数", () => {
+    const item = source("viral_framework", "legacy-source");
+    const legacy = account();
+    const run = {
+      created_at: "2026-07-20T00:00:00.000Z",
+      topic_pool: [topic("viral_framework", "历史标题", item)],
+    } as GrowthRun;
+    const hydrated = withHistoricalBenchmarkSourceUsage(legacy, [run, {
+      ...run,
+      id: "run-2",
+      created_at: "2026-07-21T00:00:00.000Z",
+    }]);
+    expect(sourceUsageCount(hydrated, item)).toBe(2);
+  });
+});

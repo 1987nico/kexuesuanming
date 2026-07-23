@@ -599,6 +599,7 @@ export async function generateTopicBatch(input: {
   recentSignals?: string;
   learningBrief?: GrowthLearningBrief;
   allowSourcePause?: boolean;
+  methodIds?: TitleMethodId[];
 }): Promise<{
   topics: TopicCandidate[];
   unavailableMethods: GrowthRun["unavailable_methods"];
@@ -607,7 +608,12 @@ export async function generateTopicBatch(input: {
   usage?: Record<string, unknown>;
 }> {
   const generationMode = input.generationMode ?? "default";
-  const expected = methodsForPersona(input.account.persona, generationMode, input.account.method_overrides);
+  const requestedMethods = input.methodIds?.length ? new Set(input.methodIds) : null;
+  const expected = methodsForPersona(
+    input.account.persona,
+    generationMode,
+    input.account.method_overrides,
+  ).filter((method) => !requestedMethods || requestedMethods.has(method.id));
   const sources = freshestSources(input.account);
   const expectedSourceMethodIds = new Set(
     expected.filter((method) => method.sourceRequired).map((method) => method.id),

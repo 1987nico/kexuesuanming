@@ -37,6 +37,7 @@ import {
   TITLE_METHOD_BY_ID,
   type TitleMethodDefinition,
 } from "@/lib/growth/methods";
+import { sourceUsageCount } from "@/lib/growth/sourceRotation";
 import {
   accountMatchesWorkspace,
   visibleBusinessText,
@@ -785,12 +786,36 @@ export default function GrowthPage() {
     }
   }
 
-  async function generateTopics(mode: MethodGenerationMode, group?: TitleMethodGroup) {
+  async function generateTopics(
+    mode: MethodGenerationMode,
+    group?: TitleMethodGroup,
+    action: "regenerate_titles" | "rotate_single_source" | "rotate_all_sources" = "regenerate_titles",
+    methodId?: TitleMethodId,
+  ) {
     if (!data?.account) return;
-    if ((Object.keys(titleEdits).length > 0 || selectedTopic) && !window.confirm("新批次不会删除当前批次，最近3批都可以恢复。确认换一批吗？")) return;
-    setBusy(`topics-${mode}`);
+    const selectedIsAffected = Boolean(selectedTopic && (
+      action === "regenerate_titles"
+      || (action === "rotate_single_source" && selectedTopic.topic.method_id === methodId)
+      || (action === "rotate_all_sources" && selectedTopic.topic.method_group === "benchmark")
+    ));
+    if (
+      (Object.keys(titleEdits).length > 0 || selectedIsAffected)
+      && !window.confirm(
+        action === "regenerate_titles"
+          ? "新批次不会删除当前批次，最近3批都可以恢复。确认换一批吗？"
+          : selectedIsAffected
+            ? "更换母题会取消当前对标标题选择，并清空它对应的未发布正文草稿；已发布内容不会受影响。确认继续吗？"
+            : "当前有未保存的标题修改。换源成功后会进入新批次，旧批次仍可恢复。确认继续吗？",
+      )
+    ) return;
+    const busyKey = action === "rotate_single_source"
+      ? `rotate-${mode}-${methodId}`
+      : action === "rotate_all_sources"
+        ? `rotate-all-${mode}`
+        : `topics-${mode}`;
+    setBusy(busyKey);
     let stageIndex = 0;
-    setTopicMessage(TOPIC_GENERATION_STAGES[stageIndex]);
+    setTopicMessage(action === "regenerate_titles" ? TOPIC_GENERATION_STAGES[stageIndex] : "正在寻找新的近期母题…");
     const stageTimer = window.setInterval(() => {
       stageIndex = Math.min(stageIndex + 1, TOPIC_GENERATION_STAGES.length - 1);
       setTopicMessage(TOPIC_GENERATION_STAGES[stageIndex]);
@@ -810,6 +835,10 @@ export default function GrowthPage() {
         structureVersion: "v3_7";
         migrationStatus: "passed";
         pausedMethods: GrowthRun["unavailable_methods"];
+        rotationMode: NonNullable<GrowthRun["source_rotation"]>["mode"];
+        changedMethods: TitleMethodId[];
+        retainedMethods: TitleMethodId[];
+        sourceUsage: NonNullable<GrowthAccount["benchmark_source_usage"]>;
       }>(
         "/api/growth/topics",
         {
@@ -819,20 +848,39 @@ export default function GrowthPage() {
             businessLine,
             persona,
             generationMode: mode,
+            action,
+            methodId,
+            baseRunId: runs[mode]?.id,
           }),
         },
       );
       setData((current) => current ? {
         ...current,
-        account: current.account ? { ...current.account, topic_sources: result.topicSources } : current.account,
+        account: current.account ? {
+          ...current.account,
+          topic_sources: result.topicSources,
+          benchmark_source_usage: result.sourceUsage,
+        } : current.account,
         runs: [result.run, ...current.runs.filter((run) => run.id !== result.run.id)],
       } : current);
       setActiveRunIds((current) => ({ ...current, [mode]: result.run.id }));
-      setVariants([]);
-      setSelectedTopic(null);
-      setActiveTopic(null);
+      if (selectedIsAffected || action === "regenerate_titles") {
+        setVariants([]);
+        setSelectedTopic(null);
+        setActiveTopic(null);
+        setChosen(null);
+      }
       setTitleEdits({});
-      setTopicMessage(`${result.sourceRefresh.message} 已生成一批全新标题，共${result.generatedCount}个，均通过锁定结构卡、独立迁移审核和全部历史去重；${result.unavailableMethods?.length || 0}个方法本轮暂停。旧批次仍可恢复。`);
+      if (action === "rotate_single_source") {
+        setTopicMessage(`${TITLE_METHOD_BY_ID[methodId!].label}已更换新母题并生成新的迁移标题；其他槽位保持不变。旧批次仍可恢复。`);
+      } else if (action === "rotate_all_sources") {
+        setTopicMessage(`已为对标法更换${result.changedMethods.length}个新母题，生成${result.generatedCount}个迁移标题；${result.unavailableMethods?.length || 0}个方法本轮暂停。原生法和旧批次保持不变。`);
+      } else {
+        const rotationText = result.rotationMode === "automatic_rotation"
+          ? ` 系统同时自动更新了${result.changedMethods.length}个已用满3批的母题。`
+          : "";
+        setTopicMessage(`${result.sourceRefresh.message} 已生成一批全新标题，共${result.generatedCount}个，均通过锁定结构卡、独立迁移审核和全部历史去重；${result.unavailableMethods?.length || 0}个方法本轮暂停。${rotationText}旧批次仍可恢复。`);
+      }
     } catch (error) {
       const errorMessage = (error as Error).message;
       if (errorMessage.includes("自动更换母题")) {
@@ -1564,6 +1612,7 @@ export default function GrowthPage() {
                       exploreMethods={exploreMethods.filter((method) => method.group === methodGroupView)}
                       defaultRun={runs.default}
                       exploreRun={runs.explore}
+                      account={data.account}
                       sources={data.account?.topic_sources || []}
                       busy={busy}
                       exploreOpen={exploreOpen[methodGroupView]}
@@ -1574,6 +1623,10 @@ export default function GrowthPage() {
                       savingTitleId={savingTitleId}
                       onExploreOpen={(open) => setExploreOpen((current) => ({ ...current, [methodGroupView]: open }))}
                       onExplore={() => generateTopics("explore", methodGroupView)}
+                      onRotateAll={() => generateTopics("default", "benchmark", "rotate_all_sources")}
+                      onRotateSource={(mode, methodId) =>
+                        generateTopics(mode, TITLE_METHOD_BY_ID[methodId].group, "rotate_single_source", methodId)
+                      }
                       onSelectTopic={selectTopic}
                       onTitleChange={changeTopicTitle}
                       onSaveTitle={saveTopicTitle}
@@ -1922,6 +1975,21 @@ export default function GrowthPage() {
   );
 }
 
+function topicBatchActionLabel(run: GrowthRun) {
+  const rotation = run.source_rotation;
+  if (!rotation) return "历史生成";
+  if (rotation.mode === "rotate_single_source") {
+    return `换一个母题 · ${rotation.changed_method_ids.length}个槽位`;
+  }
+  if (rotation.mode === "rotate_all_sources") {
+    return `全部换新对标 · 更新${rotation.changed_method_ids.length}个母题`;
+  }
+  if (rotation.mode === "automatic_rotation") {
+    return `换一批标题 · 自动更新${rotation.changed_method_ids.length}个母题`;
+  }
+  return "换一批标题 · 母题优先复用";
+}
+
 function TopicBatchHistory({
   runs,
   activeRunId,
@@ -1940,7 +2008,7 @@ function TopicBatchHistory({
           <div key={run.id} className="flex flex-col gap-2 rounded-xl bg-slate-50 p-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="text-sm">
               <div className="font-medium">{index === 0 ? "最新批次" : `历史批次 ${index}`} · {run.topic_pool.length}个标题</div>
-              <div className="mt-1 text-xs text-slate-500">生成于 {formatDateTime(run.created_at)}</div>
+              <div className="mt-1 text-xs text-slate-500">{topicBatchActionLabel(run)} · 生成于 {formatDateTime(run.created_at)}</div>
             </div>
             {run.id === activeRunId ? (
               <Badge>当前批次</Badge>
@@ -1960,6 +2028,7 @@ function MethodArea({
   exploreMethods,
   defaultRun,
   exploreRun,
+  account,
   sources,
   busy,
   exploreOpen,
@@ -1970,6 +2039,8 @@ function MethodArea({
   savingTitleId,
   onExploreOpen,
   onExplore,
+  onRotateAll,
+  onRotateSource,
   onSelectTopic,
   onTitleChange,
   onSaveTitle,
@@ -1985,6 +2056,7 @@ function MethodArea({
   exploreMethods: TitleMethodDefinition[];
   defaultRun?: GrowthRun;
   exploreRun?: GrowthRun;
+  account: GrowthAccount;
   sources: TopicSourceSnapshot[];
   busy: string | null;
   exploreOpen: boolean;
@@ -1995,6 +2067,8 @@ function MethodArea({
   savingTitleId: string | null;
   onExploreOpen: (open: boolean) => void;
   onExplore: () => void;
+  onRotateAll: () => void;
+  onRotateSource: (mode: MethodGenerationMode, methodId: TitleMethodId) => void;
   onSelectTopic: (run: GrowthRun, topic: TopicCandidate) => void;
   onTitleChange: (topic: TopicCandidate, title: string) => void;
   onSaveTitle: (run: GrowthRun, topic: TopicCandidate, title: string) => void;
@@ -2015,7 +2089,14 @@ function MethodArea({
             {isNative ? "从业务、人群和内部洞察出发；蹭流量必须绑定近期热点。" : "先找到7天内真实母题，再迁移标题逻辑。"}
           </p>
         </div>
-        <Badge>默认 {defaultMethods.length} · 探索 {exploreMethods.length}</Badge>
+        <div className="flex flex-wrap items-center gap-2">
+          {!isNative && defaultRun && (
+            <SecondaryButton disabled={Boolean(busy)} onClick={onRotateAll}>
+              {busy === "rotate-all-default" ? "正在全部换源…" : "全部换新对标"}
+            </SecondaryButton>
+          )}
+          <Badge>默认 {defaultMethods.length} · 探索 {exploreMethods.length}</Badge>
+        </div>
       </div>
 
       <div className="mt-5 grid gap-3">
@@ -2025,6 +2106,7 @@ function MethodArea({
             method={method}
             mode="default"
             run={defaultRun}
+            account={account}
             source={sourceForRunMethod(defaultRun, sources, method.id)}
             busy={busy}
             sourceEditorOpen={sourceEditorMethod === method.id}
@@ -2041,6 +2123,7 @@ function MethodArea({
             onSourceChange={onSourceChange}
             onSaveSource={onSaveSource}
             onRefreshSource={onRefreshSource}
+            onRotateSource={onRotateSource}
           />
         ))}
       </div>
@@ -2061,6 +2144,7 @@ function MethodArea({
                   method={method}
                   mode="explore"
                   run={exploreRun}
+                  account={account}
                   source={sourceForRunMethod(exploreRun, sources, method.id)}
                   busy={busy}
                   sourceEditorOpen={sourceEditorMethod === method.id}
@@ -2077,6 +2161,7 @@ function MethodArea({
                   onSourceChange={onSourceChange}
                   onSaveSource={onSaveSource}
                   onRefreshSource={onRefreshSource}
+                  onRotateSource={onRotateSource}
                 />
               ))}
             </div>
@@ -2091,6 +2176,7 @@ function MethodSlot({
   method,
   mode,
   run,
+  account,
   source,
   busy,
   sourceEditorOpen,
@@ -2107,10 +2193,12 @@ function MethodSlot({
   onSourceChange,
   onSaveSource,
   onRefreshSource,
+  onRotateSource,
 }: {
   method: TitleMethodDefinition;
   mode: MethodGenerationMode;
   run?: GrowthRun;
+  account: GrowthAccount;
   source?: TopicSourceSnapshot;
   busy: string | null;
   sourceEditorOpen: boolean;
@@ -2127,12 +2215,14 @@ function MethodSlot({
   onSourceChange: (source: SourceForm) => void;
   onSaveSource: () => void;
   onRefreshSource: (sourceId: string, restricted: boolean) => void;
+  onRotateSource: (mode: MethodGenerationMode, methodId: TitleMethodId) => void;
 }) {
   const topic = run?.topic_pool.find((item) => item.method_id === method.id);
   const unavailable = run?.unavailable_methods?.find((item) => item.method_id === method.id);
   const usableSource = sourceCanGenerate(source);
   const active = topic?.id === activeTopicId;
   const currentTitle = topic ? editedTitle ?? topic.title : "";
+  const sourceBatchCount = sourceUsageCount(account, source);
 
   return (
     <div data-method-slot={`${method.id}-${mode}`} className={`rounded-2xl border p-4 ${active ? "border-slate-900 bg-slate-50" : "border-slate-200 bg-white"}`}>
@@ -2153,6 +2243,9 @@ function MethodSlot({
                 发布于{relativeAge(source.published_at)} · {sourceAge(source)} · 数据刷新于{relativeAge(source.collected_at)}
               </div>
               <div className="mt-1 text-xs leading-5 text-slate-500">{sourceHeatSummary(source)}</div>
+              <div className={`mt-1 text-xs font-medium ${sourceBatchCount >= 3 ? "text-amber-700" : "text-slate-500"}`}>
+                本母题已生成 {sourceBatchCount}/3 批{sourceBatchCount >= 3 ? " · 建议换源" : ""}
+              </div>
               <details className="mt-2 text-xs text-slate-500">
                 <summary className="cursor-pointer py-1 font-medium text-slate-600">查看完整来源数据</summary>
                 <div className="mt-1 leading-5">
@@ -2168,12 +2261,28 @@ function MethodSlot({
                   {busy === `source-${source.id}` ? "检测中…" : "刷新校验"}
                 </button>
                 <button className="min-h-11 rounded-xl border border-slate-200 bg-white px-3 font-medium text-slate-700" onClick={() => onOpenSource(method.id)}>补充来源</button>
+                <button
+                  disabled={Boolean(busy)}
+                  className="min-h-11 rounded-xl border border-slate-300 bg-white px-3 font-semibold text-slate-800 disabled:opacity-40"
+                  onClick={() => onRotateSource(mode, method.id)}
+                >
+                  {busy === `rotate-${mode}-${method.id}` ? "正在换新母题…" : "换一个母题"}
+                </button>
               </div>
               {!usableSource && <div className="mt-2 text-xs text-amber-700">该来源当前不能生成标题，请补充7天内可用来源。</div>}
               {sourceNeedsRefresh(source) && <div className="mt-2 text-xs font-medium text-amber-700">数据或链接校验已超过24小时，请刷新后再生成。</div>}
             </>
           ) : (
-            <button className="min-h-11 rounded-xl border border-[#ead7b5] bg-white px-3 text-sm font-medium text-[#9a6b24]" onClick={() => onOpenSource(method.id)}>补充近期来源</button>
+            <div className="flex flex-wrap gap-2">
+              <button
+                disabled={Boolean(busy)}
+                className="min-h-11 rounded-xl border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-800 disabled:opacity-40"
+                onClick={() => onRotateSource(mode, method.id)}
+              >
+                {busy === `rotate-${mode}-${method.id}` ? "正在寻找…" : "自动找新母题"}
+              </button>
+              <button className="min-h-11 rounded-xl border border-[#ead7b5] bg-white px-3 text-sm font-medium text-[#9a6b24]" onClick={() => onOpenSource(method.id)}>手工补充来源</button>
+            </div>
           )}
         </div>
       )}

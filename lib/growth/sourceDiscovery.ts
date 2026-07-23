@@ -273,12 +273,19 @@ function freshness(publishedAt: string): TopicSourceSnapshot["freshness"] {
 
 export async function ensureRecentTopicSources(
   account: GrowthAccount,
-  options: { force?: boolean; excludeUrls?: string[] } = {},
+  options: {
+    force?: boolean;
+    excludeUrls?: string[];
+    methodIds?: TitleMethodId[];
+    dropExcluded?: boolean;
+  } = {},
 ): Promise<{
   account: GrowthAccount;
   summary: SourceDiscoverySummary;
 }> {
-  const methodIds = requiredSourceMethods(account);
+  const methodIds = options.methodIds?.length
+    ? [...new Set(options.methodIds)]
+    : requiredSourceMethods(account);
   const plannedRankDate = redFoxRankDate();
   const sources = account.topic_sources ?? [];
   const complete = !options.force && methodIds.every((methodId) => sources.some((source) =>
@@ -372,7 +379,7 @@ export async function ensureRecentTopicSources(
             methodIds.includes(source.method_id)
             && !sourceSnapshotFitsMethod(source, account.business_line ?? "executive").passed
           ) return false;
-          if (options.force && excluded.has(source.original_url)) return false;
+          if (options.dropExcluded && excluded.has(source.original_url)) return false;
           return true;
         }),
       ],

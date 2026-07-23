@@ -9,6 +9,7 @@ import {
   buildWeeklyReviewResult,
   isWeeklyReviewStale,
 } from "@/lib/growth/reviewLearning";
+import { recordBenchmarkSourceSelection } from "@/lib/growth/sourceRotation";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -68,6 +69,23 @@ export async function POST(req: Request, { params }: { params: { runId: string }
   result.run.owner_user_id = result.run.owner_user_id ?? guard.auth.user.id;
   await store.saveRun(result.run);
   await store.saveDraft(result.draft);
+  const sourceSelectionAlreadyRecorded = notes.some((draft) =>
+    draft.run_id === run.id
+    && draft.method_id === selectedTopic?.method_id
+    && draft.source_snapshot?.original_url === selectedTopic?.source_snapshot?.original_url
+  );
+  if (selectedTopic?.source_snapshot && !sourceSelectionAlreadyRecorded) {
+    const latestAccount = await store.getAccount(account.id) ?? account;
+    await store.saveAccount({
+      ...latestAccount,
+      benchmark_source_usage: recordBenchmarkSourceSelection({
+        account: latestAccount,
+        topic: selectedTopic,
+        timestamp: new Date().toISOString(),
+      }),
+      updated_at: new Date().toISOString(),
+    });
+  }
   if (result.usage) {
     await store.saveUsage({
       tenant_id: DEFAULT_TENANT_ID,
