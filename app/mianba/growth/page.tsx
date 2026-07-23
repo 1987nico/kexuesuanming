@@ -808,7 +808,14 @@ export default function GrowthPage() {
       setTitleEdits({});
       setTopicMessage(`${result.sourceRefresh.message} 已生成一批全新标题，共${result.generatedCount}个，均已完成来源使用校验和历史去重；${result.unavailableMethods?.length || 0}个方法因来源不足暂停。旧批次仍可恢复。`);
     } catch (error) {
-      setTopicMessage((error as Error).message);
+      const errorMessage = (error as Error).message;
+      if (errorMessage.includes("自动更换母题")) {
+        // 后端可能已经清除了与方法不匹配的旧来源，即使完整批次最终没有生成成功，
+        // 也要立即同步最新来源池，避免页面继续展示已被门禁拒绝的旧母题。
+        await load(businessLine, persona, true);
+        setMethodGroupView(methodGroupView);
+      }
+      setTopicMessage(errorMessage);
     } finally {
       setBusy(null);
     }
