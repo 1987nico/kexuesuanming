@@ -266,6 +266,15 @@ function latestSourceForMethod(sources: TopicSourceSnapshot[], methodId: TitleMe
     .sort((a, b) => b.collected_at.localeCompare(a.collected_at))[0];
 }
 
+function sourceForRunMethod(
+  run: GrowthRun | undefined,
+  sources: TopicSourceSnapshot[],
+  methodId: TitleMethodId,
+) {
+  const topicSource = run?.topic_pool.find((item) => item.method_id === methodId)?.source_snapshot;
+  return topicSource ?? latestSourceForMethod(sources, methodId);
+}
+
 const workspaceKey = (businessLine: GrowthBusinessLine, persona: GrowthPersona) =>
   `${businessLine}:${persona}`;
 
@@ -1998,7 +2007,7 @@ function MethodArea({
             method={method}
             mode="default"
             run={defaultRun}
-            source={latestSourceForMethod(sources, method.id)}
+            source={sourceForRunMethod(defaultRun, sources, method.id)}
             busy={busy}
             sourceEditorOpen={sourceEditorMethod === method.id}
             sourceForm={source}
@@ -2034,7 +2043,7 @@ function MethodArea({
                   method={method}
                   mode="explore"
                   run={exploreRun}
-                  source={latestSourceForMethod(sources, method.id)}
+                  source={sourceForRunMethod(exploreRun, sources, method.id)}
                   busy={busy}
                   sourceEditorOpen={sourceEditorMethod === method.id}
                   sourceForm={source}
