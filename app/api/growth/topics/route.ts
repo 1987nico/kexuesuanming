@@ -82,6 +82,7 @@ export async function POST(req: Request) {
 
   // 生成选题前先按需调用真实的每日职业榜；当天已校验完整则直接复用，避免重复扣费。
   const discovered = await ensureRecentTopicSources(account);
+  let sourceRefreshSummary = discovered.summary;
   if (discovered.account !== account) {
     account = discovered.account;
     await store.saveAccount(account);
@@ -120,23 +121,57 @@ export async function POST(req: Request) {
   })));
 
   let generated: Awaited<ReturnType<typeof generateTopicBatch>>;
+  const generationInput = () => ({
+    account: account!,
+    week: parsed.data.week ?? latestRun?.week ?? 1,
+    generationMode,
+    excludeTitles: historyTitles,
+    historyTitles,
+    historyTopics,
+    currentTitles,
+    learningBrief,
+  });
   try {
-    generated = await generateTopicBatch({
-      account,
-      week: parsed.data.week ?? latestRun?.week ?? 1,
-      generationMode,
-      excludeTitles: historyTitles,
-      historyTitles,
-      historyTopics,
-      currentTitles,
-      learningBrief,
-    });
+    generated = await generateTopicBatch(generationInput());
   } catch (error) {
-    console.error("[growth] atomic topic batch failed:", (error as Error).message);
-    return NextResponse.json({
-      error: "topic_batch_generation_failed",
-      message: "本轮未能生成完整的新标题，当前批次未被替换。请再次换一批。",
-    }, { status: 422 });
+    const firstMessage = (error as Error).message;
+    const sourceMethodIds = new Set((account.topic_sources ?? []).map((source) => source.method_id));
+    const sourceRelatedFailure = [...sourceMethodIds].some((methodId) =>
+      firstMessage.includes(`${methodId}:`),
+    );
+    if (!sourceRelatedFailure) {
+      console.error("[growth] atomic topic batch failed:", firstMessage);
+      return NextResponse.json({
+        error: "topic_batch_generation_failed",
+        message: "本轮未能生成完整的新标题，当前批次未被替换。请再次换一批。",
+      }, { status: 422 });
+    }
+
+    // 来源型标题连续修复仍失败时，自动换一组近期母题再完整重跑；
+    // 运营只会看到最终通过门禁的完整批次，不需要手动判断或反复点按钮。
+    const swapped = await ensureRecentTopicSources(account, {
+      force: true,
+      excludeUrls: (account.topic_sources ?? [])
+        .filter((source) => sourceMethodIds.has(source.method_id))
+        .map((source) => source.original_url),
+    });
+    if (swapped.account !== account) {
+      account = swapped.account;
+      await store.saveAccount(account);
+    }
+    sourceRefreshSummary = swapped.summary;
+    try {
+      generated = await generateTopicBatch(generationInput());
+    } catch (retryError) {
+      console.error(
+        "[growth] atomic topic batch failed after source replacement:",
+        (retryError as Error).message,
+      );
+      return NextResponse.json({
+        error: "topic_batch_generation_failed",
+        message: "系统已自动更换母题并重新迁移，但仍未形成完整合格批次；当前标题不会被替换。",
+      }, { status: 422 });
+    }
   }
   const { topics, unavailableMethods, usage, generationAttempts } = generated;
 
@@ -200,7 +235,7 @@ export async function POST(req: Request) {
     uniquenessStatus: "passed",
     unavailableMethods,
     topicSources: account.topic_sources ?? [],
-    sourceRefresh: discovered.summary,
+    sourceRefresh: sourceRefreshSummary,
   });
 }
 

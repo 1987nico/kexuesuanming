@@ -63,6 +63,12 @@ import {
   withDraftValidation,
   XHS_PUBLISH_CHAR_TARGET,
 } from "./validation";
+import {
+  SOURCE_MIGRATION_VERSION,
+  sourceSnapshotFitsMethod,
+  validateSourceMigrations,
+  type SourceMigrationCandidate,
+} from "./sourceMigration";
 
 const DEFAULT_TENANT_ID = "mianbajun";
 const now = () => new Date().toISOString();
@@ -200,7 +206,11 @@ export async function generateAccountAndPlan(input: {
 function freshestSources(account: GrowthAccount) {
   const result = new Map<TitleMethodId, TopicSourceSnapshot>();
   for (const source of [...(account.topic_sources ?? [])].sort((a, b) => b.collected_at.localeCompare(a.collected_at))) {
-    if (!result.has(source.method_id) && sourceIsUsable(source)) result.set(source.method_id, source);
+    if (
+      !result.has(source.method_id)
+      && sourceIsUsable(source)
+      && sourceSnapshotFitsMethod(source, account.business_line ?? "executive").passed
+    ) result.set(source.method_id, source);
   }
   return result;
 }
@@ -607,6 +617,13 @@ export async function generateTopicBatch(input: {
       usage = resultUsage(result);
       const rows = Array.isArray(result.data?.topics) ? result.data.topics : [];
       const attemptProblems: string[] = [];
+      const sourceCandidates: Array<{
+        method: TitleMethodDefinition;
+        topic: TopicCandidate;
+        candidateRow: any;
+        migration: SourceMigrationCandidate;
+      }> = [];
+      const candidateProblemsByMethod = new Map<TitleMethodId, string[]>();
 
       for (const method of pendingMethods) {
         const row = rows.find((item: any) => item?.method_id === method.id);
@@ -620,8 +637,9 @@ export async function generateTopicBatch(input: {
         ].map(enforceTitleLimit).filter(Boolean))).slice(0, 3);
         let acceptedTopic: TopicCandidate | undefined;
         const candidateProblems: string[] = [];
+        candidateProblemsByMethod.set(method.id, candidateProblems);
 
-        for (const candidateTitle of candidateTitles) {
+        for (const [candidateIndex, candidateTitle] of candidateTitles.entries()) {
           try {
             const candidateRow = { ...row, title: candidateTitle };
             const [topic] = normalizeTopics([candidateRow], input.account, [method], generationMode, sources);
@@ -636,20 +654,89 @@ export async function generateTopicBatch(input: {
               : sourceMigrationProblems([candidateRow], [topic], sources);
             const problems = [...duplicateProblems, ...migrationProblems];
             if (!problems.length) {
-              acceptedTopic = sources.has(topic.method_id)
-                ? { ...topic, source_usage_status: "passed" as const, source_usage_version: "v3_5" as const }
-                : topic;
-              accepted.set(method.id, acceptedTopic);
-              break;
+              const source = sources.get(topic.method_id);
+              if (source) {
+                sourceCandidates.push({
+                  method,
+                  topic,
+                  candidateRow,
+                  migration: {
+                    candidateId: `${attempt}:${method.id}:${candidateIndex}`,
+                    methodId: method.id,
+                    methodLabel: method.label,
+                    source,
+                    title: topic.title,
+                    inheritedStructure: asText(candidateRow?.source_usage?.inherited_structure),
+                    replacedContent: asText(candidateRow?.source_usage?.replaced_content),
+                  },
+                });
+              } else {
+                acceptedTopic = topic;
+                accepted.set(method.id, acceptedTopic);
+                break;
+              }
             }
-            candidateProblems.push(...problems);
-            rejectedTitles.push(candidateTitle);
+            if (problems.length) {
+              candidateProblems.push(...problems);
+              rejectedTitles.push(candidateTitle);
+            }
           } catch (error) {
             candidateProblems.push(`${method.id}:${(error as Error).message}`);
           }
         }
-        if (!acceptedTopic) {
+        if (!acceptedTopic && !sourceCandidates.some((candidate) => candidate.method.id === method.id)) {
           attemptProblems.push(candidateProblems[0] ?? `${method.id}:未返回可用的新标题候选`);
+        }
+      }
+
+      if (sourceCandidates.length) {
+        const decisions = await validateSourceMigrations({
+          businessLine: input.account.business_line ?? "executive",
+          persona: input.account.persona,
+          targetUser: input.account.target_user,
+          coreProblem: input.account.core_problem,
+          candidates: sourceCandidates.map((candidate) => candidate.migration),
+        });
+        const decisionById = new Map(decisions.map((decision) => [decision.candidateId, decision]));
+
+        for (const method of pendingMethods.filter((item) => sources.has(item.id))) {
+          const options = sourceCandidates.filter((candidate) => candidate.method.id === method.id);
+          let acceptedSourceTopic: TopicCandidate | undefined;
+          for (const option of options) {
+            const decision = decisionById.get(option.migration.candidateId);
+            if (!decision?.passed) {
+              rejectedTitles.push(option.topic.title);
+              candidateProblemsByMethod.get(method.id)?.push(
+                `${method.id}:${decision?.reason || "独立迁移门禁未通过"}`,
+              );
+              continue;
+            }
+            const duplicateProblems = topicCandidateDuplicateProblems(
+              option.topic,
+              historyTitles,
+              historyTopics,
+              [...accepted.values()],
+            );
+            if (duplicateProblems.length) {
+              rejectedTitles.push(option.topic.title);
+              candidateProblemsByMethod.get(method.id)?.push(...duplicateProblems);
+              continue;
+            }
+            acceptedSourceTopic = {
+              ...option.topic,
+              source_usage_status: "passed",
+              source_usage_version: SOURCE_MIGRATION_VERSION,
+              migration_validation_status: "passed",
+              migration_validation_version: SOURCE_MIGRATION_VERSION,
+              migration_validation_evidence: decision.evidence || decision.reason,
+            };
+            accepted.set(method.id, acceptedSourceTopic);
+            break;
+          }
+          if (!acceptedSourceTopic) {
+            const methodProblems = candidateProblemsByMethod.get(method.id) ?? [];
+            attemptProblems.push(methodProblems[0] ?? `${method.id}:没有候选标题通过独立迁移门禁`);
+          }
         }
       }
 
