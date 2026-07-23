@@ -159,6 +159,96 @@ describe("三日复盘周期", () => {
     expect(cycle.notes[0].match_scope).toBe("same_business_other_persona");
   });
 
+  it("跨业务唯一匹配时自动确认业务并标记跨业务来源", async () => {
+    const overseasDraft = { ...draft, id: "overseas-draft", account_id: "overseas-account" };
+    const buffer = await officialWorkbook([[
+      draft.title, "2026年07月14日07时34分35秒", "图文", 1000, 100, 0.1,
+      10, 1, 5, 0, 1, 20, 0,
+    ]]);
+    const parsed = await parseOfficialNoteListExcel(buffer);
+    const cycle = createThreeDayReviewCycle({
+      account: { ...account, business_line: "overseas_student" },
+      draftContexts: [{ draft: overseasDraft, account_id: "overseas-account", business_line: "executive", persona: "buyer" }],
+      rows: parsed.rows,
+      fileName: "x.xlsx",
+      fileSize: buffer.length,
+    });
+    expect(cycle.notes[0].match_status).toBe("matched");
+    expect(cycle.notes[0].assigned_business_line).toBe("executive");
+    expect(cycle.notes[0].business_assignment_status).toBe("auto_confirmed");
+    expect(cycle.notes[0].match_scope).toBe("cross_business");
+  });
+
+  it("两条业务都有强候选时不自动决定业务", async () => {
+    const executiveDraft = { ...draft, id: "executive-draft", account_id: "executive-account" };
+    const overseasDraft = { ...draft, id: "overseas-draft", account_id: "overseas-account" };
+    const buffer = await officialWorkbook([[
+      draft.title, "2026年07月14日07时34分35秒", "图文", 1000, 100, 0.1,
+      10, 1, 5, 0, 1, 20, 0,
+    ]]);
+    const parsed = await parseOfficialNoteListExcel(buffer);
+    const cycle = createThreeDayReviewCycle({
+      account,
+      draftContexts: [
+        { draft: executiveDraft, account_id: "executive-account", business_line: "executive", persona: "buyer" },
+        { draft: overseasDraft, account_id: "overseas-account", business_line: "overseas_student", persona: "buyer" },
+      ],
+      rows: parsed.rows,
+      fileName: "x.xlsx",
+      fileSize: buffer.length,
+    });
+    expect(cycle.notes[0].match_status).toBe("suggested");
+    expect(cycle.notes[0].assigned_business_line).toBeUndefined();
+    expect(cycle.notes[0].business_assignment_status).toBe("ambiguous");
+  });
+
+  it("等待期提前上传会保留开放时间和共享批次元数据", async () => {
+    const buffer = await officialWorkbook([[
+      draft.title, "2026年07月14日07时34分35秒", "图文", 1000, 100, 0.1,
+      10, 1, 5, 0, 1, 20, 0,
+    ]]);
+    const parsed = await parseOfficialNoteListExcel(buffer);
+    const previous = createThreeDayReviewCycle({ account, drafts: [draft], rows: parsed.rows, fileName: "old.xlsx", fileSize: 1 });
+    const cycle = createThreeDayReviewCycle({
+      account,
+      drafts: [draft],
+      rows: parsed.rows,
+      fileName: "x.xlsx",
+      fileSize: buffer.length,
+      importBatchId: "batch-1",
+      sourceFileHash: "hash-1",
+      batchTotalRows: 52,
+      batchBusinessCounts: { executive: 51, overseas_student: 1 },
+      batchUnassignedCount: 0,
+      previousCycles: [{ ...previous, status: "completed", completed_at: "2026-07-20T00:00:00.000Z", next_due_at: "2026-07-23T00:00:00.000Z" }],
+      at: new Date("2026-07-22T00:00:00.000Z"),
+    });
+    expect(cycle.preuploaded).toBe(true);
+    expect(cycle.due_at).toBe("2026-07-23T00:00:00.000Z");
+    expect(cycle.import_batch_id).toBe("batch-1");
+    expect(cycle.batch_total_rows).toBe(52);
+  });
+
+  it("新批次存在未确认业务归属时不能完成复盘", async () => {
+    const buffer = await officialWorkbook([[
+      "系统中不存在的历史标题", "2026年07月14日07时34分35秒", "图文", 1000, 100, 0.1,
+      10, 1, 5, 0, 1, 20, 0,
+    ]]);
+    const parsed = await parseOfficialNoteListExcel(buffer);
+    const cycle = createThreeDayReviewCycle({
+      account,
+      drafts: [],
+      rows: parsed.rows,
+      fileName: "x.xlsx",
+      fileSize: buffer.length,
+      importBatchId: "batch-unassigned",
+    });
+    expect(() => completeThreeDayReviewCycle(cycle, {
+      trafficConfirmed: false,
+      qualifiedInquiries: 0,
+    })).toThrow("还有1条笔记未确认业务归属");
+  });
+
   it("同标题但发布时间差异较大时保留为人工候选", async () => {
     const lateDraft = { ...draft, published_at: "2026-07-13T21:00:00.000Z" };
     const buffer = await officialWorkbook([[

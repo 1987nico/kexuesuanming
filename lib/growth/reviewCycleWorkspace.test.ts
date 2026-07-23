@@ -3,16 +3,22 @@ import type { GrowthStore } from "./store";
 import type { GrowthAccount, ThreeDayReviewCycle } from "./types";
 import {
   mergeThreeDayReviewCycles,
+  reviewOwnerAccounts,
   reviewWorkspaceAccounts,
   saveSharedReviewCycles,
 } from "./reviewCycleWorkspace";
 
-function account(id: string, persona: GrowthAccount["persona"], ownerUserId: string | null): GrowthAccount {
+function account(
+  id: string,
+  persona: GrowthAccount["persona"],
+  ownerUserId: string | null,
+  businessLine: GrowthAccount["business_line"] = "executive",
+): GrowthAccount {
   return {
     id,
     tenant_id: "mianbajun",
     owner_user_id: ownerUserId,
-    business_line: "executive",
+    business_line: businessLine,
     persona,
     name: id,
     target_user: "中高管",
@@ -59,6 +65,20 @@ describe("三日复盘业务工作区", () => {
     const store = { listAccounts: vi.fn().mockResolvedValue(accounts) } as unknown as GrowthStore;
     const result = await reviewWorkspaceAccounts(store, current, "user-a");
     expect(result.map((item) => item.id).sort()).toEqual(["buyer-a", "merchant-a"]);
+  });
+
+  it("账号级导入会读取同一归属下两条业务的全部人设", async () => {
+    const current = account("buyer-a", "buyer", "user-a");
+    const accounts = [
+      current,
+      account("expert-a", "expert", "user-a"),
+      account("overseas-a", "merchant", "user-a", "overseas_student"),
+      account("overseas-b", "buyer", "user-b", "overseas_student"),
+      account("legacy", "expert", null, "overseas_student"),
+    ];
+    const store = { listAccounts: vi.fn().mockResolvedValue(accounts) } as unknown as GrowthStore;
+    const result = await reviewOwnerAccounts(store, current, "user-a");
+    expect(result.map((item) => item.id).sort()).toEqual(["buyer-a", "expert-a", "overseas-a"]);
   });
 
   it("多个旧草稿周期只保留最近更新的一轮", () => {

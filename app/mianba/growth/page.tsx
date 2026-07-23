@@ -26,6 +26,7 @@ import type {
 import { DEFAULT_BUSINESS_POSITIONS } from "@/lib/growth/businessPosition";
 import {
   GROWTH_BUSINESS_DEFINITIONS,
+  GROWTH_BUSINESS_LINE_LABELS,
   GROWTH_BUSINESS_LINES,
   GROWTH_PERSONA_LABELS,
   GROWTH_PERSONAS,
@@ -1672,10 +1673,12 @@ export default function GrowthPage() {
                     onBusy={setBusy}
                     onMessage={setMessage}
                     onRefresh={async () => {
-                      // 三日复盘是业务级共享数据；任一视角修改后，其他两个
-                      // 视角的预取缓存必须失效，避免切换后暂时看到旧计数。
-                      for (const view of GROWTH_PERSONAS) {
-                        workspaceCache.current.delete(workspaceKey(businessLine, view));
+                      // Excel导入和人工归属可能同时修改两条业务的子批次；六个
+                      // 视角缓存必须一起失效，避免切换业务后仍看到导入前状态。
+                      for (const line of GROWTH_BUSINESS_LINES) {
+                        for (const view of GROWTH_PERSONAS) {
+                          workspaceCache.current.delete(workspaceKey(line, view));
+                        }
                       }
                       await load(businessLine, persona, true);
                       goToStep("5");
@@ -2591,10 +2594,21 @@ function ThreeDayReviewPanel({
       form.append("accountId", account.id);
       form.append("file", file);
       const response = await fetch("/api/growth/review-cycles/import", { method: "POST", body: form });
-      const result = await response.json().catch(() => ({})) as { message?: string; error?: string; counts?: Record<string, number> };
+      const result = await response.json().catch(() => ({})) as {
+        message?: string;
+        error?: string;
+        counts?: Record<string, number>;
+        businessCounts?: Partial<Record<GrowthBusinessLine, number>>;
+        unassignedCount?: number;
+        duplicate?: boolean;
+      };
       if (!response.ok) throw new Error(result.message || result.error || "官方Excel导入失败");
       await onRefresh();
-      onMessage(`Excel数据已识别：自动匹配${result.counts?.matched || 0}篇，待确认${result.counts?.suggested || 0}篇，系统外历史${result.counts?.external_history || 0}篇。`);
+      if (result.message) {
+        onMessage(result.message);
+      } else {
+        onMessage(`Excel已跨两条业务识别：留学生${result.businessCounts?.overseas_student || 0}篇，中高管${result.businessCounts?.executive || 0}篇，待确认归属${result.unassignedCount || 0}篇。`);
+      }
     } catch (error) {
       onMessage((error as Error).message);
     } finally {
@@ -2604,20 +2618,22 @@ function ThreeDayReviewPanel({
 
   async function resolveNote(
     sourceKey: string,
-    action: "confirm" | "external_history" | "exclude" | "restore",
+    action: "confirm" | "assign_business" | "external_history" | "exclude" | "restore",
     draftId?: string,
     useOfficialTime = false,
+    businessLine?: GrowthBusinessLine,
   ) {
     if (!active) return;
     onBusy(`three-day-note-${sourceKey}`);
     try {
       await requestJSON(`/api/growth/review-cycles/${active.id}/notes/${encodeURIComponent(sourceKey)}`, {
         method: "PATCH",
-        body: JSON.stringify({ accountId: account.id, action, draftId, useOfficialTime }),
+        body: JSON.stringify({ accountId: account.id, action, draftId, useOfficialTime, businessLine }),
       });
       await onRefresh();
       onMessage(action === "confirm"
         ? useOfficialTime ? "已绑定系统正文，并以官方Excel修正首次发布时间。" : "已确认绑定系统正文。"
+        : action === "assign_business" ? `已归入${businessLine ? GROWTH_BUSINESS_LINE_LABELS[businessLine] : "目标业务"}。`
         : action === "external_history" ? "已标记为系统外历史，只做描述统计。"
           : action === "exclude" ? "已从本轮复盘排除。" : "已恢复这条笔记的匹配状态。");
     } catch (error) {
@@ -2643,7 +2659,7 @@ function ThreeDayReviewPanel({
       setCandidateSearchResults({ ...candidateSearchResults, [sourceKey]: result.candidates });
       setCandidateSearchMessages({
         ...candidateSearchMessages,
-        [sourceKey]: result.candidates.length ? `找到${result.candidates.length}篇。` : "没有找到同标题正文，可换关键词重试。",
+        [sourceKey]: result.candidates.length ? `跨两条业务找到${result.candidates.length}篇。` : "两条业务都没有找到同标题正文，可换关键词重试。",
       });
       if (result.candidates[0]) {
         setSelectedCandidates({ ...selectedCandidates, [sourceKey]: result.candidates[0].draft_id });
@@ -2686,9 +2702,19 @@ function ThreeDayReviewPanel({
   }
 
   const matchedCount = active?.notes.filter((note) => note.match_status === "matched").length ?? 0;
-  const suggestedCount = active?.notes.filter((note) => note.match_status === "suggested").length ?? 0;
+  const pendingResolutionCount = active?.notes.filter((note) => note.match_status === "suggested"
+    || (Boolean(active.import_batch_id)
+      && !note.assigned_business_line
+      && note.business_assignment_status !== "excluded"
+      && note.match_status !== "excluded")).length ?? 0;
   const externalHistoryCount = active?.notes.filter((note) => note.match_status === "external_history" || note.match_status === "unmatched").length ?? 0;
   const excludedCount = active?.notes.filter((note) => note.match_status === "excluded").length ?? 0;
+  const activeCompletionDue = !active || Date.now() >= Date.parse(active.due_at);
+  const batchTotalRows = active?.batch_total_rows ?? active?.source_row_count ?? 0;
+  const batchOverseasCount = active?.batch_business_counts?.overseas_student ?? 0;
+  const batchExecutiveCount = active?.batch_business_counts?.executive ?? 0;
+  const batchUnassignedCount = active?.batch_unassigned_count ?? 0;
+  const mixedBusinessBatch = batchOverseasCount > 0 && batchExecutiveCount > 0;
   const attributionTotal = Object.values(attributions).reduce((sum, value) => sum + (value === "" ? 0 : Number(value)), 0);
   const eligibleHistoryCount = new Set(completed
     .flatMap((cycle) => cycle.notes)
@@ -2700,8 +2726,10 @@ function ThreeDayReviewPanel({
       <div className={`rounded-2xl border p-5 ${due || active ? "border-amber-300 bg-amber-50" : "border-slate-200 bg-slate-50"}`}>
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <div className="text-xs font-semibold text-[#9a6b24]">{active ? `第${active.cycle_number}轮 · 数据待确认` : due ? "本轮已到期" : "等待下一轮"}</div>
-            <div className="mt-1 text-lg font-semibold">{active ? "完成这一次三日复盘" : due ? "上传官方笔记列表明细表" : `下次开放：${formatDateTime(dueAt)}`}</div>
+            <div className="text-xs font-semibold text-[#9a6b24]">{active ? `第${active.cycle_number}轮 · ${activeCompletionDue ? "数据待确认" : "已提前解析"}` : due ? "本轮已到期" : "等待下一轮"}</div>
+            <div className="mt-1 text-lg font-semibold">{active
+              ? activeCompletionDue ? "完成这一次三日复盘" : `开放后完成：${formatDateTime(active.due_at)}`
+              : due ? "上传官方笔记列表明细表" : `下次开放：${formatDateTime(dueAt)}`}</div>
             <p className="mt-2 text-sm leading-6 text-slate-600">一次上传、一轮决策；不再逐篇填写24小时、7天或30天复盘。</p>
           </div>
           <div className="rounded-xl bg-white px-4 py-3 text-sm">
@@ -2723,13 +2751,27 @@ function ThreeDayReviewPanel({
             <ReviewReadiness label="官方明细表" value="待准备" warning />
             <ReviewReadiness label="下一次开放" value={formatDateTime(dueAt)} />
           </div>
+          <div className="mt-5 rounded-xl border border-dashed border-amber-300 bg-amber-50 p-4">
+            <div className="text-sm font-semibold">提前上传官方Excel</div>
+            <p className="mt-1 text-xs leading-5 text-slate-600">现在可以完成跨业务识别、正文匹配和人工分流；到开放时间后再填写商业结果并完成复盘，无需重新上传。</p>
+            <input
+              className="mt-3 block w-full text-sm"
+              type="file"
+              accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+              disabled={Boolean(busy)}
+              onChange={(event) => {
+                void importOfficialExcel(event.target.files?.[0] ?? null);
+                event.currentTarget.value = "";
+              }}
+            />
+          </div>
         </div>
       )}
 
       {!active && due && (
         <div className="rounded-2xl border border-dashed border-slate-300 p-5">
           <div className="font-semibold">1. 上传小红书官方Excel</div>
-          <p className="mt-2 text-sm leading-6 text-slate-600">只接受“笔记列表明细表.xlsx”。系统会读取官方13列，并在当前业务的商家、买家、专家三个视角中共同查找对应笔记。</p>
+          <p className="mt-2 text-sm leading-6 text-slate-600">只接受“笔记列表明细表.xlsx”。系统会读取官方13列，并同时在留学生、中高管两条业务的商家、买家、专家六个视角中查找对应笔记。</p>
           <input
             className="mt-4 block w-full text-sm"
             type="file"
@@ -2749,7 +2791,7 @@ function ThreeDayReviewPanel({
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div>
                 <div className="font-semibold">1. Excel数据已识别</div>
-                <p className="mt-1 text-sm text-slate-600">{active.source_file_name} · 已完整读取{active.source_row_count}条 · 上传于{formatDateTime(active.imported_at)}</p>
+                <p className="mt-1 text-sm text-slate-600">{active.source_file_name} · 已完整读取{batchTotalRows}条 · 当前业务子批次{active.source_row_count}条 · 上传于{formatDateTime(active.imported_at)}</p>
               </div>
               <label className="cursor-pointer rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium">
                 重新上传
@@ -2761,14 +2803,25 @@ function ThreeDayReviewPanel({
                 />
               </label>
             </div>
+            {active.import_batch_id && (
+              <div className={`mt-4 rounded-xl border p-4 text-sm ${mixedBusinessBatch ? "border-amber-300 bg-amber-50" : "border-slate-200 bg-slate-50"}`}>
+                <div className="font-semibold">{mixedBusinessBatch ? "检测到混合业务内容，已拆分两个复盘子批次" : "已完成账号级业务识别"}</div>
+                <div className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-slate-600">
+                  <span>留学生业务 {batchOverseasCount}条</span>
+                  <span>中高管业务 {batchExecutiveCount}条</span>
+                  <span>待确认归属 {batchUnassignedCount}条</span>
+                </div>
+                {mixedBusinessBatch && <div className="mt-2 text-xs text-slate-500">另一条业务的子批次已保存；从“0 业务定位”切换业务即可继续处理。</div>}
+              </div>
+            )}
             <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
               <ReviewCount label="自动匹配" value={matchedCount} />
-              <ReviewCount label="待确认" value={suggestedCount} emphasize={suggestedCount > 0} />
+              <ReviewCount label="待确认" value={pendingResolutionCount} emphasize={pendingResolutionCount > 0} />
               <ReviewCount label="系统外历史" value={externalHistoryCount} />
               <ReviewCount label="已排除" value={excludedCount} />
             </div>
             <details className="mt-4 rounded-xl border border-slate-200">
-              <summary className="cursor-pointer p-4 text-sm font-medium">数据质量收件箱 · 待确认{suggestedCount}条（含全部{active.notes.length}条证据）</summary>
+              <summary className="cursor-pointer p-4 text-sm font-medium">数据质量收件箱 · 待确认{pendingResolutionCount}条（含全部{active.notes.length}条证据）</summary>
               <div className="max-h-96 space-y-2 overflow-y-auto px-4 pb-4">
                 {[...active.notes].sort((a, b) => (a.match_status === "matched" ? 1 : 0) - (b.match_status === "matched" ? 1 : 0)).map((note) => {
                   const availableCandidates = [
@@ -2808,6 +2861,10 @@ function ThreeDayReviewPanel({
                       </div>
                       <div className="mt-2 text-xs text-slate-600">曝光 {note.metrics.impressions.toLocaleString()} · 观看 {note.metrics.views.toLocaleString()} · 封面点击率 {formatPercent(note.metrics.cover_ctr)}</div>
                       <div className="mt-2 text-xs leading-5 text-slate-500">{note.match_reason}</div>
+                      <div className="mt-2 text-xs leading-5 text-slate-500">
+                        业务归属：{note.assigned_business_line ? GROWTH_BUSINESS_LINE_LABELS[note.assigned_business_line] : "待确认"}
+                        {note.business_assignment_reason ? ` · ${note.business_assignment_reason}` : ""}
+                      </div>
                       {note.match_status === "matched" && note.matched_persona && (
                         <div className="mt-3 rounded-lg bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
                           已绑定{GROWTH_PERSONA_LABELS[note.matched_persona]}视角 · {note.system_title || note.source_title}
@@ -2817,7 +2874,7 @@ function ThreeDayReviewPanel({
                         <div className={`mt-3 space-y-3 rounded-xl border p-3 ${note.match_status === "suggested" ? "border-amber-200 bg-amber-50" : "border-slate-200 bg-white"}`}>
                           <div className="grid gap-2 sm:grid-cols-[1fr_auto] sm:items-end">
                             <TextInput
-                              label="搜索同业务全部正文"
+                              label="搜索两条业务全部正文"
                               value={candidateQueries[note.source_key] || ""}
                               onChange={(value) => setCandidateQueries({ ...candidateQueries, [note.source_key]: value })}
                             />
@@ -2832,7 +2889,7 @@ function ThreeDayReviewPanel({
                             onChange={(value) => setSelectedCandidates({ ...selectedCandidates, [note.source_key]: value })}
                             options={availableCandidates.map((item) => ({
                               value: item.draft_id,
-                              label: `${GROWTH_PERSONA_LABELS[item.persona]} · ${item.title} · ${STATUS_LABEL[item.status] || item.status}`,
+                              label: `${GROWTH_BUSINESS_LINE_LABELS[item.business_line]} · ${GROWTH_PERSONA_LABELS[item.persona]} · ${item.title} · ${STATUS_LABEL[item.status] || item.status}`,
                             }))}
                           />
                           {candidate && (
@@ -2869,6 +2926,12 @@ function ThreeDayReviewPanel({
                         <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-lg bg-white px-3 py-2 text-xs text-slate-600">
                           <span>保留平台指标，只做描述统计，不进入13种方法学习。</span>
                           <div className="flex flex-wrap gap-2">
+                            {!note.assigned_business_line && (
+                              <>
+                                <SecondaryButton disabled={Boolean(busy)} onClick={() => void resolveNote(note.source_key, "assign_business", undefined, false, "overseas_student")}>归入留学生业务</SecondaryButton>
+                                <SecondaryButton disabled={Boolean(busy)} onClick={() => void resolveNote(note.source_key, "assign_business", undefined, false, "executive")}>归入中高管业务</SecondaryButton>
+                              </>
+                            )}
                             {note.match_candidates?.length && !showCandidatePicker ? (
                               <SecondaryButton disabled={Boolean(busy)} onClick={() => setManualBindingOpen({ ...manualBindingOpen, [note.source_key]: true })}>
                                 手动绑定系统正文
@@ -2947,8 +3010,14 @@ function ThreeDayReviewPanel({
               </details>
             )}
             <div className="mt-5">
-              <PrimaryButton disabled={Boolean(busy) || qualifiedInquiries === "" || attributionTotal > Number(qualifiedInquiries)} onClick={completeCycle}>
-                {busy === "three-day-complete" ? "正在生成…" : "确认并生成本轮复盘"}
+              {!activeCompletionDue && (
+                <div className="mb-3 rounded-xl bg-amber-50 px-4 py-3 text-sm text-amber-900">数据已经可以整理，但需到 {formatDateTime(active.due_at)} 后才能完成本轮复盘。</div>
+              )}
+              {activeCompletionDue && pendingResolutionCount > 0 && (
+                <div className="mb-3 rounded-xl bg-amber-50 px-4 py-3 text-sm text-amber-900">还有{pendingResolutionCount}条笔记未完成业务归属或正文匹配；请先确认、归入业务或本轮排除。</div>
+              )}
+              <PrimaryButton disabled={Boolean(busy) || !activeCompletionDue || pendingResolutionCount > 0 || qualifiedInquiries === "" || attributionTotal > Number(qualifiedInquiries)} onClick={completeCycle}>
+                {busy === "three-day-complete" ? "正在生成…" : activeCompletionDue ? "确认并生成本轮复盘" : "等待开放后完成"}
               </PrimaryButton>
             </div>
           </div>

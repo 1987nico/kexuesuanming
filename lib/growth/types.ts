@@ -271,6 +271,14 @@ export type ThreeDayMatchScope =
   | "cross_business"
   | "external";
 
+export type ReviewBusinessAssignmentStatus =
+  | "auto_confirmed"
+  | "suggested"
+  | "ambiguous"
+  | "manual_confirmed"
+  | "external_history"
+  | "excluded";
+
 export interface ThreeDayMatchCandidate {
   draft_id: string;
   account_id: string;
@@ -315,6 +323,11 @@ export interface ThreeDayNoteSnapshot {
   draft_id?: string;
   matched_account_id?: string;
   matched_business_line?: GrowthBusinessLine;
+  /** Excel笔记最终归入的业务；未确定时保持为空。 */
+  assigned_business_line?: GrowthBusinessLine;
+  business_assignment_status?: ReviewBusinessAssignmentStatus;
+  business_assignment_confidence?: number;
+  business_assignment_reason?: string;
   matched_persona?: GrowthPersona;
   system_title?: string;
   system_published_at?: string;
@@ -361,6 +374,15 @@ export interface ThreeDayReviewCycle {
   next_due_at?: string;
   source_file_name?: string;
   source_file_size?: number;
+  /** 同一Excel拆出的两条业务子周期共享该批次ID。 */
+  import_batch_id?: string;
+  source_file_hash?: string;
+  batch_total_rows?: number;
+  batch_business_counts?: Partial<Record<GrowthBusinessLine, number>>;
+  batch_unassigned_count?: number;
+  sibling_cycle_ids?: Partial<Record<GrowthBusinessLine, string>>;
+  /** 等待期提前上传的数据只能整理，开放时间前不能完成复盘。 */
+  preuploaded?: boolean;
   source_row_count: number;
   source_date_from?: string;
   source_date_to?: string;

@@ -46,6 +46,23 @@ export async function POST(req: Request, { params }: { params: { cycleId: string
   if (cycle.status !== "draft") {
     return NextResponse.json({ error: "cycle_locked", message: "已完成周期不能覆盖，请创建修订版本。" }, { status: 409 });
   }
+  if (Date.now() < Date.parse(cycle.due_at)) {
+    return NextResponse.json({
+      error: "cycle_not_due",
+      message: `Excel已提前解析，需到${new Date(cycle.due_at).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai" })}后才能完成本轮复盘。`,
+    }, { status: 409 });
+  }
+  const unresolvedBusinessAssignments = cycle.import_batch_id
+    ? cycle.notes.filter((note) => !note.assigned_business_line
+      && note.business_assignment_status !== "excluded"
+      && note.match_status !== "excluded")
+    : [];
+  if (unresolvedBusinessAssignments.length) {
+    return NextResponse.json({
+      error: "business_assignment_pending",
+      message: `还有${unresolvedBusinessAssignments.length}条笔记未确认业务归属，请先归入留学生或中高管业务，或本轮排除。`,
+    }, { status: 409 });
+  }
 
   try {
     const previousLearningSourceKeys = cycles

@@ -1,20 +1,40 @@
 import type { GrowthStore } from "./store";
-import type { GrowthAccount, ThreeDayReviewCycle } from "./types";
+import type { GrowthAccount, GrowthBusinessLine, ThreeDayReviewCycle } from "./types";
 import { resolveAccountBusinessLine } from "./businessCompatibility";
 
 export async function reviewWorkspaceAccounts(
   store: GrowthStore,
   current: GrowthAccount,
-  _ownerUserId?: string,
+  ownerUserId?: string,
 ) {
   const businessLine = resolveAccountBusinessLine(current);
+  return (await reviewOwnerAccounts(store, current, ownerUserId))
+    .filter((account) => resolveAccountBusinessLine(account) === businessLine);
+}
+
+/**
+ * Excel导入属于账号操作者，而不是某一条业务。这里在同一租户、同一真实
+ * 归属下读取两条业务的全部人设，供跨业务、六视角匹配使用。
+ */
+export async function reviewOwnerAccounts(
+  store: GrowthStore,
+  current: GrowthAccount,
+  _ownerUserId?: string,
+) {
   // 复盘工作区只能在同一真实归属下聚合。历史未归属账号只与其他
   // 未归属账号聚合，不能因为 store 的旧版“共享可见”规则混入任意用户。
-  const accounts = (await store.listAccounts(current.tenant_id, current.owner_user_id ?? undefined, businessLine))
+  const accounts = (await store.listAccounts(current.tenant_id, current.owner_user_id ?? undefined))
     .filter((account) => current.owner_user_id == null
       ? account.owner_user_id == null
       : account.owner_user_id === current.owner_user_id);
   return accounts.some((account) => account.id === current.id) ? accounts : [current, ...accounts];
+}
+
+export function reviewAccountsForBusiness(
+  accounts: GrowthAccount[],
+  businessLine: GrowthBusinessLine,
+) {
+  return accounts.filter((account) => resolveAccountBusinessLine(account) === businessLine);
 }
 
 export function mergeThreeDayReviewCycles(accounts: GrowthAccount[]) {

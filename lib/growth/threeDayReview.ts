@@ -232,7 +232,18 @@ function candidateReason(input: {
   return `可人工绑定${personaLabel}视角正文；标题和时间未达到自动匹配阈值`;
 }
 
-function attachDraft(
+function candidateScope(
+  candidate: { account_id: string; business_line: GrowthBusinessLine },
+  currentAccount: GrowthAccount,
+) {
+  const currentBusiness = currentAccount.business_line ?? "executive";
+  if (candidate.business_line !== currentBusiness) return "cross_business" as const;
+  return candidate.account_id === currentAccount.id
+    ? "current_persona" as const
+    : "same_business_other_persona" as const;
+}
+
+export function attachDraftToOfficialRow(
   row: OfficialNoteListRow,
   contexts: ReviewDraftContext[],
   currentAccount: GrowthAccount,
@@ -270,7 +281,7 @@ function attachDraft(
     candidate.title_similarity === 1
     || (candidate.title_similarity >= 0.88 && (candidate.time_delta_seconds ?? Infinity) <= 24 * 60 * 60)
     || (candidate.time_delta_seconds ?? Infinity) <= 5 * 60);
-  // 前端保留强候选，同时提供有限的同业务正文供人工兜底绑定。
+  // 前端保留强候选，同时提供有限的同归属正文供人工兜底绑定。
   // 低相关候选不会改变“系统外历史”的自动判断。
   const candidates = rankedCandidates.slice(0, 30);
   const automatic = strongCandidates.filter((candidate) =>
@@ -279,21 +290,41 @@ function attachDraft(
     && (candidate.status === "published" || candidate.status === "reviewed"));
   const selected = automatic.length === 1 ? automatic[0] : undefined;
   const suggested = selected ? undefined : strongCandidates[0];
+  const suggestedBusinessLines = new Set(strongCandidates.map((candidate) => candidate.business_line));
+  const assignmentAmbiguous = !selected && suggestedBusinessLines.size > 1;
+  const assignedBusinessLine = selected?.business_line
+    ?? (!assignmentAmbiguous ? suggested?.business_line : undefined);
   const matchStatus = selected ? "matched" : suggested ? "suggested" : "external_history";
   const matchScope = selected || suggested
-    ? (selected || suggested)!.account_id === currentAccount.id
-      ? "current_persona" as const
-      : "same_business_other_persona" as const
+    ? candidateScope((selected || suggested)!, currentAccount)
     : "external" as const;
-  const matchReason = selected?.match_reason
-    ?? suggested?.match_reason
-    ?? "Excel数据已识别，但当前业务的三个视角中没有对应系统正文";
+  const matchReason = assignmentAmbiguous
+    ? "两条业务都找到可匹配正文，需要人工确认业务归属"
+    : selected?.match_reason
+      ?? suggested?.match_reason
+      ?? "Excel数据已识别，但两条业务的六个视角中没有对应系统正文";
+  const assignmentStatus = selected
+    ? "auto_confirmed" as const
+    : assignmentAmbiguous
+      ? "ambiguous" as const
+      : suggested
+        ? "suggested" as const
+        : "external_history" as const;
+  const confidence = selected
+    ? 1
+    : suggested
+      ? Math.max(suggested.title_similarity, (suggested.time_delta_seconds ?? Infinity) <= 5 * 60 ? 0.7 : 0)
+      : 0;
   return {
     ...row,
     official_published_at: row.published_at,
     draft_id: selected?.draft_id,
     matched_account_id: selected?.account_id,
     matched_business_line: selected?.business_line,
+    assigned_business_line: assignedBusinessLine,
+    business_assignment_status: assignmentStatus,
+    business_assignment_confidence: confidence,
+    business_assignment_reason: matchReason,
     matched_persona: selected?.persona,
     system_title: selected?.title,
     system_published_at: selected?.published_at,
@@ -304,7 +335,7 @@ function attachDraft(
     generation_mode: selected ? contexts.find((item) => item.draft.id === selected.draft_id)?.draft.generation_mode : undefined,
     match_status: matchStatus,
     match_scope: matchScope,
-    match_confidence: selected ? 1 : suggested?.title_similarity ?? 0,
+    match_confidence: confidence,
     match_reason: matchReason,
     match_candidates: candidates,
     resolution_type: selected ? "automatic" : matchStatus === "external_history" ? "external_history" : undefined,
@@ -316,13 +347,57 @@ function attachDraft(
   };
 }
 
+export function buildThreeDayReviewNotes(
+  rows: OfficialNoteListRow[],
+  contexts: ReviewDraftContext[],
+  currentAccount: GrowthAccount,
+) {
+  return rows.map((row) => attachDraftToOfficialRow(row, contexts, currentAccount));
+}
+
+function preserveResolvedImportNote(fresh: ThreeDayNoteSnapshot, previous?: ThreeDayNoteSnapshot) {
+  if (!previous?.resolution_type || previous.resolution_type === "automatic") return fresh;
+  return {
+    ...fresh,
+    draft_id: previous.draft_id,
+    matched_account_id: previous.matched_account_id,
+    matched_business_line: previous.matched_business_line,
+    assigned_business_line: previous.assigned_business_line,
+    business_assignment_status: previous.business_assignment_status,
+    business_assignment_confidence: previous.business_assignment_confidence,
+    business_assignment_reason: previous.business_assignment_reason,
+    matched_persona: previous.matched_persona,
+    system_title: previous.system_title,
+    system_published_at: previous.system_published_at,
+    published_at_delta_seconds: previous.published_at_delta_seconds,
+    method_id: previous.method_id,
+    method_label: previous.method_label,
+    method_group: previous.method_group,
+    generation_mode: previous.generation_mode,
+    match_status: previous.match_status,
+    match_scope: previous.match_scope,
+    match_confidence: previous.match_confidence,
+    match_reason: previous.match_reason,
+    resolution_type: previous.resolution_type,
+    resolved_at: previous.resolved_at,
+  } satisfies ThreeDayNoteSnapshot;
+}
+
 export function createThreeDayReviewCycle(input: {
   account: GrowthAccount;
   drafts?: ContentDraft[];
   draftContexts?: ReviewDraftContext[];
   rows: OfficialNoteListRow[];
+  preparedNotes?: ThreeDayNoteSnapshot[];
   fileName: string;
   fileSize: number;
+  importBatchId?: string;
+  sourceFileHash?: string;
+  batchTotalRows?: number;
+  batchBusinessCounts?: Partial<Record<GrowthBusinessLine, number>>;
+  batchUnassignedCount?: number;
+  siblingCycleIds?: Partial<Record<GrowthBusinessLine, string>>;
+  cycleId?: string;
   previousCycles?: ThreeDayReviewCycle[];
   at?: Date;
   existingDraftCycle?: ThreeDayReviewCycle;
@@ -338,9 +413,14 @@ export function createThreeDayReviewCycle(input: {
   }));
   const completed = (input.previousCycles ?? []).filter((cycle) => cycle.status === "completed");
   const previous = [...completed].sort((a, b) => (b.completed_at || "").localeCompare(a.completed_at || ""))[0];
-  const sortedDates = input.rows.map((row) => row.published_at).sort();
+  const freshNotes = input.preparedNotes
+    ?? buildThreeDayReviewNotes(input.rows, draftContexts, input.account);
+  const previousNotes = new Map(input.existingDraftCycle?.notes.map((note) => [note.source_key, note]) ?? []);
+  const notes = freshNotes.map((note) => preserveResolvedImportNote(note, previousNotes.get(note.source_key)));
+  const sortedDates = notes.map((row) => row.published_at).sort();
+  const dueAt = input.existingDraftCycle?.due_at ?? previous?.next_due_at ?? nowIso;
   return {
-    id: input.existingDraftCycle?.id ?? crypto.randomUUID(),
+    id: input.existingDraftCycle?.id ?? input.cycleId ?? crypto.randomUUID(),
     account_id: input.account.id,
     business_line: businessLine,
     persona: input.account.persona,
@@ -348,15 +428,22 @@ export function createThreeDayReviewCycle(input: {
       ?? Math.max(0, ...(input.previousCycles ?? []).map((cycle) => cycle.cycle_number)) + 1,
     status: "draft" as const,
     started_at: input.existingDraftCycle?.started_at ?? previous?.completed_at ?? nowIso,
-    due_at: input.existingDraftCycle?.due_at ?? previous?.next_due_at ?? nowIso,
+    due_at: dueAt,
     source_file_name: input.fileName,
     source_file_size: input.fileSize,
-    source_row_count: input.rows.length,
+    import_batch_id: input.importBatchId ?? input.existingDraftCycle?.import_batch_id,
+    source_file_hash: input.sourceFileHash ?? input.existingDraftCycle?.source_file_hash,
+    batch_total_rows: input.batchTotalRows ?? input.existingDraftCycle?.batch_total_rows ?? input.rows.length,
+    batch_business_counts: input.batchBusinessCounts ?? input.existingDraftCycle?.batch_business_counts,
+    batch_unassigned_count: input.batchUnassignedCount ?? input.existingDraftCycle?.batch_unassigned_count,
+    sibling_cycle_ids: input.siblingCycleIds ?? input.existingDraftCycle?.sibling_cycle_ids,
+    preuploaded: Date.parse(dueAt) > now.getTime(),
+    source_row_count: notes.length,
     source_date_from: sortedDates[0],
     source_date_to: sortedDates.at(-1),
     imported_at: nowIso,
     traffic_confirmed: false,
-    notes: input.rows.map((row) => attachDraft(row, draftContexts, input.account)),
+    notes,
     created_at: input.existingDraftCycle?.created_at ?? nowIso,
     updated_at: nowIso,
   } satisfies ThreeDayReviewCycle;
@@ -416,6 +503,14 @@ function decide(notes: ThreeDayNoteSnapshot[], qualifiedInquiries: number) {
 }
 
 export function completeThreeDayReviewCycle(cycle: ThreeDayReviewCycle, input: CompleteCycleInput) {
+  const unresolvedBusinessAssignments = cycle.import_batch_id
+    ? cycle.notes.filter((note) => !note.assigned_business_line
+      && note.business_assignment_status !== "excluded"
+      && note.match_status !== "excluded")
+    : [];
+  if (unresolvedBusinessAssignments.length) {
+    throw new Error(`还有${unresolvedBusinessAssignments.length}条笔记未确认业务归属，请先归入留学生或中高管业务，或本轮排除。`);
+  }
   if (!Number.isInteger(input.qualifiedInquiries) || input.qualifiedInquiries < 0) {
     throw new Error("有效咨询必须是大于等于0的整数。");
   }
@@ -440,6 +535,9 @@ export function completeThreeDayReviewCycle(cycle: ThreeDayReviewCycle, input: C
       ?? (input.trafficConfirmed ? "organic_normal" : "unknown");
     const reasons: string[] = [];
     if (matchStatus !== "matched") reasons.push(matchStatus === "excluded" ? "运营本轮排除" : "未完成系统笔记匹配");
+    const assignedBusinessLine = note.assigned_business_line ?? note.matched_business_line;
+    if (assignedBusinessLine && assignedBusinessLine !== cycle.business_line) reasons.push("笔记归属其他业务");
+    if (note.business_assignment_status === "ambiguous") reasons.push("业务归属待确认");
     if (!note.method_id) reasons.push("标题方法未确认");
     if (previousLearningSourceKeys.has(note.source_key) || (note.draft_id && previousLearningDraftIds.has(note.draft_id))) {
       reasons.push("已在历史周期计入学习");
