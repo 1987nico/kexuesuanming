@@ -366,7 +366,15 @@ export async function ensureRecentTopicSources(
       ...account,
       topic_sources: [
         ...checked,
-        ...sources.filter((source) => !checkedMethods.has(source.method_id)),
+        ...sources.filter((source) => {
+          if (checkedMethods.has(source.method_id)) return false;
+          if (
+            methodIds.includes(source.method_id)
+            && !sourceSnapshotFitsMethod(source, account.business_line ?? "executive").passed
+          ) return false;
+          if (options.force && excluded.has(source.original_url)) return false;
+          return true;
+        }),
       ],
       updated_at: new Date().toISOString(),
     };
