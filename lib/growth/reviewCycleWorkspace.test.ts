@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { GrowthStore } from "./store";
 import type { GrowthAccount, ThreeDayReviewCycle } from "./types";
 import {
+  createReviewSiblingCycle,
   mergeThreeDayReviewCycles,
   reviewOwnerAccounts,
   reviewWorkspaceAccounts,
@@ -111,5 +112,39 @@ describe("三日复盘业务工作区", () => {
     await saveSharedReviewCycles(store, accounts, [cycle("active", "draft", "2026-07-21T00:00:00.000Z", 1)]);
     expect(saveAccount).toHaveBeenCalledTimes(1);
     expect(saveAccount.mock.calls[0][0].id).toBe("merchant");
+  });
+
+  it("旧批次缺少另一业务子周期时可现场补建，不要求重新上传", () => {
+    const source = {
+      ...cycle("overseas-cycle", "draft", "2026-07-22T12:00:00.000Z", 1),
+      account_id: "overseas-buyer",
+      business_line: "overseas_student" as const,
+      persona: "buyer" as const,
+      import_batch_id: "batch-48",
+      batch_total_rows: 48,
+      batch_business_counts: { executive: 0, overseas_student: 0 },
+      batch_unassigned_count: 48,
+      sibling_cycle_ids: { overseas_student: "overseas-cycle" },
+    };
+    const target = account("executive-buyer", "buyer", "user-a", "executive");
+    const result = createReviewSiblingCycle(source, target, {
+      cycleId: "executive-cycle",
+      now: "2026-07-23T00:00:00.000Z",
+    });
+
+    expect(result).toMatchObject({
+      id: "executive-cycle",
+      account_id: "executive-buyer",
+      business_line: "executive",
+      persona: "buyer",
+      import_batch_id: "batch-48",
+      source_row_count: 0,
+      notes: [],
+      sibling_cycle_ids: {
+        overseas_student: "overseas-cycle",
+        executive: "executive-cycle",
+      },
+    });
+    expect(result.batch_unassigned_count).toBe(48);
   });
 });

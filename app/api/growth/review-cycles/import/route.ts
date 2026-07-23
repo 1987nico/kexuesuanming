@@ -133,11 +133,11 @@ export async function POST(req: Request) {
     }
 
     const importBatchId = crypto.randomUUID();
-    const businessesToCreate = GROWTH_BUSINESS_LINES.filter((businessLine) =>
-      businessLine === currentBusinessLine
-      || businessCounts[businessLine] > 0
-      || preparedNotes.some((note) => note.business_assignment_status === "ambiguous"
-        && note.match_candidates?.some((candidate) => candidate.business_line === businessLine)));
+    // Excel 属于同一操作者，而不是单一业务。只要该操作者在目标业务下
+    // 已有人设，就预先创建空子周期，保证后续人工归属可以直接移动笔记。
+    const businessesToCreate = GROWTH_BUSINESS_LINES.filter(
+      (businessLine) => reviewAccountsForBusiness(ownerAccounts, businessLine).length > 0,
+    );
     const cycleIds = Object.fromEntries(businessesToCreate.map((businessLine) => {
       const existing = activeThreeDayCycle(cyclesByBusiness.get(businessLine));
       return [businessLine, existing?.id ?? crypto.randomUUID()];

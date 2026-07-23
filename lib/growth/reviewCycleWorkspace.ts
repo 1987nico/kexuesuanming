@@ -37,6 +37,38 @@ export function reviewAccountsForBusiness(
   return accounts.filter((account) => resolveAccountBusinessLine(account) === businessLine);
 }
 
+/**
+ * 旧批次可能只创建了上传时所在业务的子周期。人工把笔记归到另一条业务时，
+ * 现场补建同批次的空子周期，避免要求用户重新上传 Excel。
+ */
+export function createReviewSiblingCycle(
+  source: ThreeDayReviewCycle,
+  targetAccount: GrowthAccount,
+  options?: { cycleId?: string; now?: string },
+): ThreeDayReviewCycle {
+  const targetBusiness = resolveAccountBusinessLine(targetAccount);
+  const now = options?.now ?? new Date().toISOString();
+  const cycleId = options?.cycleId
+    ?? source.sibling_cycle_ids?.[targetBusiness]
+    ?? crypto.randomUUID();
+  return {
+    ...source,
+    id: cycleId,
+    account_id: targetAccount.id,
+    business_line: targetBusiness,
+    persona: targetAccount.persona,
+    source_row_count: 0,
+    notes: [],
+    sibling_cycle_ids: {
+      ...(source.sibling_cycle_ids ?? {}),
+      [source.business_line]: source.id,
+      [targetBusiness]: cycleId,
+    },
+    created_at: now,
+    updated_at: now,
+  };
+}
+
 export function mergeThreeDayReviewCycles(accounts: GrowthAccount[]) {
   const byId = new Map<string, ThreeDayReviewCycle>();
   for (const cycle of accounts.flatMap((account) => account.three_day_review_cycles ?? [])) {

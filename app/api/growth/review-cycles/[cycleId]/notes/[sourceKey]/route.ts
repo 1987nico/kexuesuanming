@@ -3,6 +3,7 @@ import { z } from "zod";
 import { requireMianbaApiAuth } from "@/lib/auth/mianba";
 import { resolveAccountBusinessLine } from "@/lib/growth/businessCompatibility";
 import {
+  createReviewSiblingCycle,
   mergeThreeDayReviewCycles,
   reviewAccountsForBusiness,
   reviewOwnerAccounts,
@@ -278,12 +279,25 @@ export async function PATCH(
   if (!targetWorkspace?.accounts.length) {
     return NextResponse.json({ error: "target_business_missing", message: "目标业务还没有可保存复盘的人设。" }, { status: 409 });
   }
-  const targetCycle = targetBusiness === cycle.business_line
+  let targetCycle = targetBusiness === cycle.business_line
     ? cycle
     : targetWorkspace.cycles.find((item) => item.status === "draft" && item.import_batch_id === cycle.import_batch_id);
-  if (!targetCycle) {
-    return NextResponse.json({ error: "target_cycle_missing", message: "目标业务的复盘子批次不存在，请重新上传Excel。" }, { status: 409 });
+  if (!targetCycle && targetBusiness !== cycle.business_line && cycle.import_batch_id) {
+    const targetAccount = targetWorkspace.accounts.find((item) => item.persona === cycle.persona)
+      ?? targetWorkspace.accounts[0];
+    targetCycle = createReviewSiblingCycle(cycle, targetAccount, { now });
+    targetWorkspace.cycles = [...targetWorkspace.cycles, targetCycle];
   }
+  if (!targetCycle) {
+    return NextResponse.json({ error: "target_cycle_missing", message: "目标业务的复盘子批次创建失败，请稍后重试。" }, { status: 409 });
+  }
+  const siblingCycleIds = cycle.import_batch_id
+    ? {
+        ...(cycle.sibling_cycle_ids ?? {}),
+        [cycle.business_line]: cycle.id,
+        [targetBusiness]: targetCycle.id,
+      }
+    : cycle.sibling_cycle_ids;
 
   const updatedById = new Map<string, ThreeDayReviewCycle>();
   if (targetCycle.id === cycle.id) {
@@ -315,6 +329,10 @@ export async function PATCH(
     let changed = false;
     const nextCycles = workspace.cycles.map((item) => {
       let next = updatedById.get(item.id) ?? item;
+      if (cycle.import_batch_id && item.import_batch_id === cycle.import_batch_id) {
+        next = { ...next, sibling_cycle_ids: siblingCycleIds };
+        changed = true;
+      }
       if (cycle.import_batch_id && item.import_batch_id === cycle.import_batch_id && previousBusiness !== nextBusiness) {
         next = adjustBatchCounters(next, previousBusiness, nextBusiness);
         changed = true;
