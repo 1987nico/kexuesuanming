@@ -1,7 +1,10 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireMianbaApiAuth } from "@/lib/auth/mianba";
-import { generateTopicBatch } from "@/lib/growth/runner";
+import {
+  buildGrowthTitleFingerprint,
+  generateTopicBatch,
+} from "@/lib/growth/runner";
 import { growthStore } from "@/lib/growth/store";
 import type { GrowthRun } from "@/lib/growth/types";
 import {
@@ -121,7 +124,7 @@ export async function POST(req: Request) {
   })));
 
   let generated: Awaited<ReturnType<typeof generateTopicBatch>>;
-  const generationInput = () => ({
+  const generationInput = (allowSourcePause = false) => ({
     account: account!,
     week: parsed.data.week ?? latestRun?.week ?? 1,
     generationMode,
@@ -130,6 +133,7 @@ export async function POST(req: Request) {
     historyTopics,
     currentTitles,
     learningBrief,
+    allowSourcePause,
   });
   try {
     generated = await generateTopicBatch(generationInput());
@@ -161,7 +165,7 @@ export async function POST(req: Request) {
     }
     sourceRefreshSummary = swapped.summary;
     try {
-      generated = await generateTopicBatch(generationInput());
+      generated = await generateTopicBatch(generationInput(true));
     } catch (retryError) {
       console.error(
         "[growth] atomic topic batch failed after source replacement:",
@@ -173,7 +177,31 @@ export async function POST(req: Request) {
       }, { status: 422 });
     }
   }
-  const { topics, unavailableMethods, usage, generationAttempts } = generated;
+  const {
+    topics,
+    unavailableMethods,
+    usage,
+    generationAttempts,
+    structureCards,
+  } = generated;
+
+  if (structureCards.length) {
+    const replacementKeys = new Set(structureCards.map((card) =>
+      `${card.business_line}:${card.persona}:${card.method_id}:${card.source_id}`
+    ));
+    account = {
+      ...account,
+      benchmark_structure_cards: [
+        ...structureCards,
+        ...(account.benchmark_structure_cards ?? []).filter((card) =>
+          !replacementKeys.has(`${card.business_line}:${card.persona}:${card.method_id}:${card.source_id}`)
+          && Date.parse(card.expires_at) > Date.now()
+        ),
+      ].slice(0, 120),
+      updated_at: now(),
+    };
+    await store.saveAccount(account);
+  }
 
   const timestamp = now();
   const nextSeen = Array.from(new Set(topics.map((topic) => topic.title)));
@@ -191,9 +219,14 @@ export async function POST(req: Request) {
     generation_status: "completed",
     uniqueness_status: "passed",
     generation_attempts: generationAttempts,
+    structure_version: "v3_7",
+    migration_status: "passed",
     topic_pool: topics,
     unavailable_methods: unavailableMethods,
     seen_titles: nextSeen,
+    title_fingerprints: topics.map((topic) =>
+      buildGrowthTitleFingerprint({ account: account!, topic, generationMode })
+    ),
     learning_trace: learningBrief.trace,
     created_at: timestamp,
     updated_at: timestamp,
@@ -233,6 +266,9 @@ export async function POST(req: Request) {
     generatedCount: topics.length,
     sourceUsageStatus: "passed",
     uniquenessStatus: "passed",
+    migrationStatus: "passed",
+    structureVersion: "v3_7",
+    pausedMethods: unavailableMethods,
     unavailableMethods,
     topicSources: account.topic_sources ?? [],
     sourceRefresh: sourceRefreshSummary,

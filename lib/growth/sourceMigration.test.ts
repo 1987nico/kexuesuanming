@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   deterministicMigrationFit,
+  SOURCE_MIGRATION_VERSION,
   sourceMethodFit,
   sourceSnapshotFitsMethod,
 } from "./sourceMigration";
@@ -26,7 +27,11 @@ function source(
   };
 }
 
-describe("对标母题与迁移门禁 v3.6", () => {
+describe("对标母题与迁移门禁 v3.7", () => {
+  it("使用锁定结构卡版本，避免回退到生成器自述迁移", () => {
+    expect(SOURCE_MIGRATION_VERSION).toBe("v3_7");
+  });
+
   it("拒绝把心理访谈当作中高管职业决策的相同产品", () => {
     const item = source(
       "same_product",

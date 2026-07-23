@@ -175,6 +175,15 @@ const STATUS_LABEL: Record<string, string> = {
   reviewed: "已复盘",
 };
 
+const TOPIC_GENERATION_STAGES = [
+  "正在获取近期母题…",
+  "正在检查母题适配…",
+  "正在拆解并锁定标题结构…",
+  "正在迁移到当前业务与视角…",
+  "正在检查全部历史重复…",
+  "正在完成独立迁移审核…",
+];
+
 async function requestJSON<T>(url: string, options?: RequestInit): Promise<T> {
   const response = await fetch(url, {
     ...options,
@@ -780,7 +789,12 @@ export default function GrowthPage() {
     if (!data?.account) return;
     if ((Object.keys(titleEdits).length > 0 || selectedTopic) && !window.confirm("新批次不会删除当前批次，最近3批都可以恢复。确认换一批吗？")) return;
     setBusy(`topics-${mode}`);
-    setTopicMessage("正在读取业务事实与近期来源…");
+    let stageIndex = 0;
+    setTopicMessage(TOPIC_GENERATION_STAGES[stageIndex]);
+    const stageTimer = window.setInterval(() => {
+      stageIndex = Math.min(stageIndex + 1, TOPIC_GENERATION_STAGES.length - 1);
+      setTopicMessage(TOPIC_GENERATION_STAGES[stageIndex]);
+    }, 8_000);
     if (group) setExploreOpen((current) => ({ ...current, [group]: true }));
     try {
       const result = await requestJSON<{
@@ -793,6 +807,9 @@ export default function GrowthPage() {
           status: "cached" | "refreshed" | "unavailable" | "failed";
           message: string;
         };
+        structureVersion: "v3_7";
+        migrationStatus: "passed";
+        pausedMethods: GrowthRun["unavailable_methods"];
       }>(
         "/api/growth/topics",
         {
@@ -815,7 +832,7 @@ export default function GrowthPage() {
       setSelectedTopic(null);
       setActiveTopic(null);
       setTitleEdits({});
-      setTopicMessage(`${result.sourceRefresh.message} 已生成一批全新标题，共${result.generatedCount}个，均已完成来源使用校验和历史去重；${result.unavailableMethods?.length || 0}个方法因来源不足暂停。旧批次仍可恢复。`);
+      setTopicMessage(`${result.sourceRefresh.message} 已生成一批全新标题，共${result.generatedCount}个，均通过锁定结构卡、独立迁移审核和全部历史去重；${result.unavailableMethods?.length || 0}个方法本轮暂停。旧批次仍可恢复。`);
     } catch (error) {
       const errorMessage = (error as Error).message;
       if (errorMessage.includes("自动更换母题")) {
@@ -826,6 +843,7 @@ export default function GrowthPage() {
       }
       setTopicMessage(errorMessage);
     } finally {
+      window.clearInterval(stageTimer);
       setBusy(null);
     }
   }

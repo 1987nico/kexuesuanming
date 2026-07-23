@@ -124,8 +124,46 @@ export interface TopicSourceSnapshot {
   rank_position?: number;
   /** v3.6：来源是否真的适合当前标题方法。旧来源读取时会重新计算，不要求数据库迁移。 */
   source_method_fit_status?: "passed" | "failed" | "uncertain";
-  source_method_fit_version?: "v3_6";
+  source_method_fit_version?: "v3_6" | "v3_7";
   source_method_fit_evidence?: string;
+}
+
+export interface BenchmarkStructureCard {
+  id: string;
+  account_id: string;
+  business_line: GrowthBusinessLine;
+  persona: GrowthPersona;
+  method_id: TitleMethodId;
+  source_id: string;
+  source_url: string;
+  source_title: string;
+  source_author: string;
+  sentence_structure: string;
+  conflict_structure: string;
+  audience_situation: string;
+  emotional_hook: string;
+  promised_result: string;
+  inheritable_element: string;
+  replacement_requirement: string;
+  forbidden_copy_elements: string[];
+  source_fit_status: "passed" | "failed";
+  source_fit_reason: string;
+  status: "locked" | "expired" | "rejected";
+  structure_version: "v3_7";
+  generated_at: string;
+  expires_at: string;
+}
+
+export interface GrowthTitleFingerprint {
+  title: string;
+  normalized_fingerprint: string;
+  semantic_fingerprint: string;
+  business_line: GrowthBusinessLine;
+  persona: GrowthPersona;
+  method_id: TitleMethodId;
+  generation_mode: MethodGenerationMode;
+  source_id?: string;
+  structure_card_id?: string;
 }
 
 export interface ValidationCheck {
@@ -460,6 +498,8 @@ export interface GrowthAccount {
   // 视角专属字段：key -> value
   persona_specific?: Record<string, string>;
   topic_sources?: TopicSourceSnapshot[];
+  /** v3.7 对标两阶段生成缓存；只供系统内部使用，不在运营页展示。 */
+  benchmark_structure_cards?: BenchmarkStructureCard[];
   method_overrides?: Partial<Record<TitleMethodId, MethodApplicability>>;
   canonical_body_tags?: CanonicalBodyTag[];
   tag_merge_suggestions?: TagMergeSuggestion[];
@@ -541,11 +581,13 @@ export interface TopicCandidate {
   source_snapshot?: TopicSourceSnapshot;
   /** 来源型标题已通过“确实使用母题逻辑”的内部二元门禁；不保存具体迁移推理。 */
   source_usage_status?: "passed" | "failed";
-  source_usage_version?: "v3_5" | "v3_6";
-  /** v3.6：独立模型完成的来源适配与迁移二元门禁；只存审计证据，不在运营页展示推理。 */
+  source_usage_version?: "v3_5" | "v3_6" | "v3_7";
+  /** 独立模型完成的来源适配与迁移二元门禁；只存审计证据，不在运营页展示推理。 */
   migration_validation_status?: "passed" | "failed";
-  migration_validation_version?: "v3_6";
+  migration_validation_version?: "v3_6" | "v3_7";
   migration_validation_evidence?: string;
+  structure_card_id?: string;
+  structure_version?: "v3_7";
   internal_insight_source?: string;
   validation_checks?: ValidationCheck[];
   // 旧字段只用于打开历史数据；新流程不再写入或依赖。
@@ -588,6 +630,9 @@ export interface GrowthRun {
   generation_status?: "generating" | "completed" | "failed";
   uniqueness_status?: "passed" | "failed";
   generation_attempts?: number;
+  structure_version?: "v3_7";
+  migration_status?: "passed" | "failed";
+  title_fingerprints?: GrowthTitleFingerprint[];
   unavailable_methods?: Array<{
     method_id: TitleMethodId;
     method_label: string;

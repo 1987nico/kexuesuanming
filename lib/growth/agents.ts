@@ -1,4 +1,5 @@
 import type {
+  BenchmarkStructureCard,
   DraftConversionContract,
   DraftFulfillmentContract,
   DraftIdentityContract,
@@ -232,17 +233,34 @@ export function buildTopicPoolUserPrompt(input: {
   methods: TitleMethodDefinition[];
   generationMode: MethodGenerationMode;
   sources?: TopicSourceSnapshot[];
+  structureCards?: BenchmarkStructureCard[];
   excludeTitles?: string[];
   context?: AccountContext;
 }) {
   // 历史全集由服务端做确定性去重；提示词只带最近一段，避免长期使用后挤爆上下文。
   const exclude = (input.excludeTitles ?? []).filter(Boolean).slice(-160);
   const sourceByMethod = new Map((input.sources ?? []).map((source) => [source.method_id, source]));
+  const cardByMethod = new Map((input.structureCards ?? []).map((card) => [card.method_id, card]));
   const methodLines = input.methods.map((method) => {
     const source = sourceByMethod.get(method.id);
+    const card = cardByMethod.get(method.id);
     return [
       `${method.order}. method_id=${method.id}；方法=${method.label}；要求=${method.instruction}`,
-      source ? `绑定母题=${JSON.stringify(source)}` : "无外部母题要求",
+      card
+        ? `已锁定结构卡=${JSON.stringify({
+          id: card.id,
+          sentence_structure: card.sentence_structure,
+          conflict_structure: card.conflict_structure,
+          audience_situation: card.audience_situation,
+          emotional_hook: card.emotional_hook,
+          promised_result: card.promised_result,
+          inheritable_element: card.inheritable_element,
+          replacement_requirement: card.replacement_requirement,
+          forbidden_copy_elements: card.forbidden_copy_elements,
+        })}`
+        : source
+          ? "该方法绑定了母题，但没有锁定结构卡；不得为它生成标题"
+          : "无外部母题要求",
     ].join("\n");
   });
   return `
@@ -265,9 +283,9 @@ ${methodLines.join("\n\n")}
 - 【冲突要大】每个选题必须有反常识、反预期或强落差，让用户一眼看到"怎么会这样"的张力。冲突可以来自：想要稳定 vs 想要自由、职位很高 vs 离开平台不值钱、努力很多 vs 结果不变、想转型 vs 家庭/收入/年龄限制、以为是机会 vs 后来发现是坑。没有冲突的平铺题、纯建议题、纯清单题不进入候选池。
 - 每个候选题必须可比较、可复盘、可延展，并写清正文要兑现的唯一承诺。
 - 每种方法同时给出 3 个彼此明显不同的标题候选：title 是首选，alternative_titles 是两个备选。备选不能只是改标点、数字或语气词，三者必须使用不同的具体场景、动作或冲突表达，但仍严格属于同一个方法。
-- 凡是出现“绑定母题”的方法，必须先在内部拆解母题的句式骨架、冲突关系、人物处境、情绪钩子和结果承诺，再严格按当前method_id迁移；不能只把母题当作来源附件，然后另写一个普通原创标题。
+- 来源型方法已经在上一步完成母题拆解。你只能使用“已锁定结构卡”生成，不会看到原标题，也不得自行重新解释母题。
 - 蹭流量必须能从新标题中识别出所绑定热点的事件、人物或社会冲突；相同产品迁移产品表达或选择场景；相同功效迁移解决问题或降低风险的功效；相似人群迁移人群处境；终极结果相同迁移最终利益；爆款框架迁移句式与冲突结构。
-- 绑定母题的标题不得调用与母题无关的通用模板。只能继承结构和逻辑，必须替换业务内容，不得照抄原标题。
+- 绑定母题的标题不得调用与结构卡无关的通用模板。必须继承结构卡指定的元素，并完成replacement_requirement。
 ${exclude.length ? `- 严禁与以下已生成选题重复或近似：${exclude.join(" / ")}` : ""}
 
 输出 JSON：
@@ -279,11 +297,7 @@ ${exclude.length ? `- 严禁与以下已生成选题重复或近似：${exclude.
       "method_id": "必须与给定method_id完全一致",
       "title": "题目（20 字以内，含标点）",
       "alternative_titles": ["同方法备选题目1（20字以内）", "同方法备选题目2（20字以内）"],
-      "title_promise": "正文必须兑现的唯一承诺",
-      "source_usage": {
-        "inherited_structure": "仅供本次内部校验：从绑定母题继承了什么句式或冲突结构",
-        "replaced_content": "仅供本次内部校验：替换成了当前业务的哪些内容"
-      }
+      "title_promise": "正文必须兑现的唯一承诺"
     }
   ]
 }

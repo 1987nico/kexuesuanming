@@ -25,6 +25,7 @@ import {
   resolvePublishedAt,
 } from "./reviewLearning";
 import type {
+  BenchmarkStructureCard,
   ContentDraft,
   DraftConversionContract,
   DraftFulfillmentContract,
@@ -39,6 +40,7 @@ import type {
   GrowthReview,
   GrowthReviewMetrics,
   GrowthRun,
+  GrowthTitleFingerprint,
   MethodGenerationMode,
   RawBodyTag,
   TagMergeSuggestion,
@@ -64,6 +66,7 @@ import {
   XHS_PUBLISH_CHAR_TARGET,
 } from "./validation";
 import {
+  ensureBenchmarkStructureCards,
   SOURCE_MIGRATION_VERSION,
   sourceSnapshotFitsMethod,
   validateSourceMigrations,
@@ -373,6 +376,25 @@ export function findDuplicateTitle(title: string, history: string[]) {
   return history.find((item) => titlesAreNearDuplicate(title, item));
 }
 
+export function buildGrowthTitleFingerprint(input: {
+  account: GrowthAccount;
+  topic: TopicCandidate;
+  generationMode: MethodGenerationMode;
+}): GrowthTitleFingerprint {
+  const normalized = normalizeTitleHistoryFingerprint(input.topic.title);
+  return {
+    title: input.topic.title,
+    normalized_fingerprint: normalized,
+    semantic_fingerprint: [...ngrams(normalized, 2)].sort().join("|"),
+    business_line: input.account.business_line ?? "executive",
+    persona: input.account.persona,
+    method_id: input.topic.method_id,
+    generation_mode: input.generationMode,
+    source_id: input.topic.source_snapshot?.id,
+    structure_card_id: input.topic.structure_card_id,
+  };
+}
+
 export interface TopicTitleHistoryEntry {
   method_id?: TitleMethodId;
   title: string;
@@ -535,20 +557,18 @@ function hasBigramOverlap(left: string, right: string) {
 }
 
 function sourceMigrationProblems(
-  raw: unknown,
   topics: TopicCandidate[],
   sources: Map<TitleMethodId, TopicSourceSnapshot>,
+  structureCards: Map<TitleMethodId, BenchmarkStructureCard>,
 ) {
-  const rows = Array.isArray(raw) ? raw : [];
-  const sourceTopics = topics.filter((topic) => sources.has(topic.method_id));
-  return sourceTopics.flatMap((topic): string[] => {
-    const source = sources.get(topic.method_id)!;
-    const row = rows.find((item: any) => item?.method_id === topic.method_id);
-    const inherited = asText(row?.source_usage?.inherited_structure);
-    const replaced = asText(row?.source_usage?.replaced_content);
+  return topics.flatMap((topic): string[] => {
+    const source = sources.get(topic.method_id);
+    if (!source) return [];
+    const card = structureCards.get(topic.method_id);
     const problems: string[] = [];
-    if (inherited.length < 6 || replaced.length < 6) {
-      problems.push(`${topic.method_id}:缺少可核验的母题结构拆解或业务替换说明`);
+    if (!card || card.status !== "locked" || card.structure_version !== SOURCE_MIGRATION_VERSION) {
+      problems.push(`${topic.method_id}:缺少已锁定的v3.7母题结构卡`);
+      return problems;
     }
     if (titlesAreNearDuplicate(topic.title, source.original_title)) {
       problems.push(`${topic.method_id}:标题与原题过于接近，未完成原创迁移`);
@@ -578,15 +598,69 @@ export async function generateTopicBatch(input: {
   historyTopics?: TopicTitleHistoryEntry[];
   recentSignals?: string;
   learningBrief?: GrowthLearningBrief;
-}): Promise<{ topics: TopicCandidate[]; unavailableMethods: GrowthRun["unavailable_methods"]; generationAttempts: number; usage?: Record<string, unknown> }> {
+  allowSourcePause?: boolean;
+}): Promise<{
+  topics: TopicCandidate[];
+  unavailableMethods: GrowthRun["unavailable_methods"];
+  generationAttempts: number;
+  structureCards: BenchmarkStructureCard[];
+  usage?: Record<string, unknown>;
+}> {
   const generationMode = input.generationMode ?? "default";
   const expected = methodsForPersona(input.account.persona, generationMode, input.account.method_overrides);
   const sources = freshestSources(input.account);
-  const methods = expected.filter((method) => !method.sourceRequired || sources.has(method.id));
-  const unavailableMethods = expected
-    .filter((method) => method.sourceRequired && !sources.has(method.id))
-    .map((method) => ({ method_id: method.id, method_label: method.label, reason: "暂无7天内母题，或热度快照/链接核验已超过24小时" }));
-  if (!methods.length) return { topics: [], unavailableMethods, generationAttempts: 0 };
+  const expectedSourceMethodIds = new Set(
+    expected.filter((method) => method.sourceRequired).map((method) => method.id),
+  );
+  let prepared: Awaited<ReturnType<typeof ensureBenchmarkStructureCards>>;
+  try {
+    prepared = await ensureBenchmarkStructureCards({
+      account: input.account,
+      sources: [...sources.values()].filter((source) =>
+        expectedSourceMethodIds.has(source.method_id)
+      ),
+    });
+  } catch (error) {
+    throw new Error(`topic_batch_generation_failed:${[...expectedSourceMethodIds]
+      .map((methodId) => `${methodId}:结构卡生成失败`)
+      .join(" | ")}:${(error as Error).message}`);
+  }
+  if (prepared.rejected.length && !input.allowSourcePause) {
+    throw new Error(`topic_batch_generation_failed:${prepared.rejected
+      .map((item) => `${item.method_id}:${item.reason}`)
+      .join(" | ")}`);
+  }
+  const structureCards = new Map(prepared.cards.map((card) => [card.method_id, card]));
+  const methods = expected.filter((method) =>
+    !method.sourceRequired || (sources.has(method.id) && structureCards.has(method.id))
+  );
+  const unavailableMethods = expected.flatMap((method) => {
+    if (!method.sourceRequired) return [];
+    if (!sources.has(method.id)) {
+      return [{
+        method_id: method.id,
+        method_label: method.label,
+        reason: "暂无7天内合格母题，或热度快照/链接核验已超过24小时",
+      }];
+    }
+    if (!structureCards.has(method.id)) {
+      return [{
+        method_id: method.id,
+        method_label: method.label,
+        reason: prepared.rejected.find((item) => item.method_id === method.id)?.reason
+          || "母题未形成完整的锁定结构卡",
+      }];
+    }
+    return [];
+  });
+  if (!methods.length) {
+    return {
+      topics: [],
+      unavailableMethods,
+      generationAttempts: 0,
+      structureCards: prepared.cards,
+    };
+  }
   const historyTitles = Array.from(new Set([
     ...(input.historyTitles ?? []),
     ...(input.excludeTitles ?? []),
@@ -609,6 +683,7 @@ export async function generateTopicBatch(input: {
           recentSignals: input.learningBrief ? formatLearningBrief(input.learningBrief) : input.recentSignals,
           methods: pendingMethods, generationMode,
           sources: pendingMethods.map((method) => sources.get(method.id)).filter(Boolean) as TopicSourceSnapshot[],
+          structureCards: pendingMethods.map((method) => structureCards.get(method.id)).filter(Boolean) as BenchmarkStructureCard[],
           excludeTitles: [...historyTitles, ...rejectedTitles, ...[...accepted.values()].map((topic) => topic.title)],
           context: accountContext(input.account),
         }), maxTokens: 2200, temperature: Math.min(0.78, 0.58 + attempt * 0.07),
@@ -651,11 +726,17 @@ export async function generateTopicBatch(input: {
             );
             const migrationProblems = duplicateProblems.length
               ? []
-              : sourceMigrationProblems([candidateRow], [topic], sources);
+              : sourceMigrationProblems([topic], sources, structureCards);
             const problems = [...duplicateProblems, ...migrationProblems];
             if (!problems.length) {
               const source = sources.get(topic.method_id);
               if (source) {
+                const structureCard = structureCards.get(topic.method_id);
+                if (!structureCard) {
+                  candidateProblems.push(`${topic.method_id}:缺少已锁定结构卡`);
+                  rejectedTitles.push(candidateTitle);
+                  continue;
+                }
                 sourceCandidates.push({
                   method,
                   topic,
@@ -665,9 +746,10 @@ export async function generateTopicBatch(input: {
                     methodId: method.id,
                     methodLabel: method.label,
                     source,
+                    structureCard,
                     title: topic.title,
-                    inheritedStructure: asText(candidateRow?.source_usage?.inherited_structure),
-                    replacedContent: asText(candidateRow?.source_usage?.replaced_content),
+                    inheritedStructure: structureCard.inheritable_element,
+                    replacedContent: structureCard.replacement_requirement,
                   },
                 });
               } else {
@@ -729,6 +811,8 @@ export async function generateTopicBatch(input: {
               migration_validation_status: "passed",
               migration_validation_version: SOURCE_MIGRATION_VERSION,
               migration_validation_evidence: decision.evidence || decision.reason,
+              structure_card_id: option.migration.structureCard.id,
+              structure_version: SOURCE_MIGRATION_VERSION,
             };
             accepted.set(method.id, acceptedSourceTopic);
             break;
@@ -746,6 +830,7 @@ export async function generateTopicBatch(input: {
           topics: methods.map((method) => accepted.get(method.id)!),
           unavailableMethods,
           generationAttempts: attempt,
+          structureCards: prepared.cards,
           usage,
         };
       }
@@ -757,6 +842,31 @@ export async function generateTopicBatch(input: {
       lastProblems = [(error as Error).message || "标题批次生成失败"];
       console.warn(`[growth] topic batch attempt ${attempt} failed:`, lastProblems[0]);
     }
+  }
+
+  const missingMethods = methods.filter((method) => !accepted.has(method.id));
+  if (
+    input.allowSourcePause
+    && accepted.size > 0
+    && missingMethods.every((method) => method.sourceRequired)
+  ) {
+    return {
+      topics: methods.flatMap((method) => {
+        const topic = accepted.get(method.id);
+        return topic ? [topic] : [];
+      }),
+      unavailableMethods: [
+        ...(unavailableMethods ?? []),
+        ...missingMethods.map((method) => ({
+          method_id: method.id,
+          method_label: method.label,
+          reason: "更换母题后仍未形成合格迁移，本轮暂停",
+        })),
+      ],
+      generationAttempts: 3,
+      structureCards: prepared.cards,
+      usage,
+    };
   }
 
   throw new Error(`topic_batch_generation_failed:${lastProblems.join(" | ")}`);
@@ -775,7 +885,17 @@ export async function generateTopicPool(input: {
     experiment_hypothesis: "不同标题方法带来的有效咨询率存在差异。",
     generation_mode: input.generationMode ?? "default",
     generation_status: "completed", uniqueness_status: "passed",
-    generation_attempts: generated.generationAttempts, topic_pool: generated.topics,
+    generation_attempts: generated.generationAttempts,
+    structure_version: SOURCE_MIGRATION_VERSION,
+    migration_status: "passed",
+    topic_pool: generated.topics,
+    title_fingerprints: generated.topics.map((topic) =>
+      buildGrowthTitleFingerprint({
+        account: input.account,
+        topic,
+        generationMode: input.generationMode ?? "default",
+      })
+    ),
     unavailable_methods: generated.unavailableMethods, learning_trace: input.learningBrief?.trace,
     created_at: timestamp, updated_at: timestamp,
   };
