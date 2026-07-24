@@ -702,11 +702,28 @@ export interface GrowthRun {
   }>;
   // 已生成过的选题标题历史（用于换一批时不与历史重复）
   seen_titles?: string[];
+  /**
+   * 未选用正文也必须进入历史去重。保存在运行 payload 中，避免为了专项修复增加
+   * 一张生产表；每个运行只保留最近48个版本，生成端只读取90天窗口。
+   */
+  body_generation_history?: BodyGenerationHistoryEntry[];
   draft?: ContentDraft;
   review?: GrowthReview;
   learning_trace?: GrowthLearningTrace;
   created_at: string;
   updated_at: string;
+}
+
+export interface BodyGenerationHistoryEntry {
+  draft_id: string;
+  topic_id?: string;
+  method_id: TitleMethodId;
+  title: string;
+  title_promise: string;
+  body_version: "short" | "long";
+  body: string;
+  body_fingerprint: string;
+  created_at: string;
 }
 
 export interface ContentDraft {

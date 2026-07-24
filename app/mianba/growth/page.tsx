@@ -2347,8 +2347,8 @@ function MethodSlot({
                     : method.id === "traffic" ? "换一个热点" : "换一个母题"}
                 </button>
               </div>
-              {!usableSource && <div className="mt-2 text-xs text-amber-700">该来源当前不能生成标题，请补充7天内可用来源。</div>}
-              {sourceNeedsRefresh(source) && <div className="mt-2 text-xs font-medium text-amber-700">数据或链接校验已超过24小时，请刷新后再生成。</div>}
+              {!usableSource && <div className="mt-2 text-xs text-amber-700">该来源当前不能生成新标题；下次生成或换母题时，系统会自动寻找7天内可用来源。</div>}
+              {sourceNeedsRefresh(source) && <div className="mt-2 text-xs font-medium text-amber-700">数据或链接校验已超过24小时；下次生成或换母题时系统会自动刷新，无需手动处理。</div>}
             </>
           ) : (
             <div className="flex flex-wrap gap-2">

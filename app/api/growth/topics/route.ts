@@ -37,6 +37,7 @@ import { sourceIsUsable } from "@/lib/growth/validation";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const maxDuration = 300;
 
 const DEFAULT_TENANT_ID = "mianbajun";
 
@@ -376,8 +377,56 @@ export async function POST(req: Request) {
       ? { [requestedTopic.method_id]: requestedTopic }
       : undefined,
   });
+  const rotateSourcesAndRetry = async (
+    methodIds: TitleMethodId[],
+    maximumAdditionalSources: number,
+  ) => {
+    let retryError = "";
+    const attemptedUrls = new Set([
+      ...recentSourceUrls({ account: account!, runs, methodIds }),
+      ...(account!.topic_sources ?? [])
+        .filter((source) => methodIds.includes(source.method_id))
+        .map((source) => source.original_url),
+    ]);
+    for (let attempt = 1; attempt <= maximumAdditionalSources; attempt += 1) {
+      const currentAccount = account!;
+      const discovered = await ensureRecentTopicSources(currentAccount, {
+        force: true,
+        methodIds,
+        excludeUrls: [...attemptedUrls],
+      });
+      sourceRefreshSummary = discovered.summary;
+      const sourceChanges = changedSources(currentAccount, discovered.account, methodIds);
+      if (!sourceChanges.length) {
+        retryError = "近期候选母题已经尝试完毕";
+        break;
+      }
+      for (const source of discovered.account.topic_sources ?? []) {
+        if (methodIds.includes(source.method_id)) attemptedUrls.add(source.original_url);
+      }
+      account = accountWithRotatedSources({
+        before: currentAccount,
+        discovered: discovered.account,
+        methodIds,
+        changedMethodIds: sourceChanges,
+        dropMissing: false,
+      });
+      changedMethodIds = [...new Set([...changedMethodIds, ...sourceChanges])];
+      try {
+        const retry = await generateTopicBatch(generationInput(false));
+        return { generated: retry, error: "" };
+      } catch (error) {
+        retryError = (error as Error).message;
+        console.warn(
+          `[growth] benchmark source recovery ${attempt}/${maximumAdditionalSources} failed:`,
+          retryError,
+        );
+      }
+    }
+    return { generated: null, error: retryError };
+  };
   try {
-    generated = await generateTopicBatch(generationInput(action === "rotate_all_sources"));
+    generated = await generateTopicBatch(generationInput(false));
   } catch (error) {
     const firstMessage = (error as Error).message;
     if (action === "regenerate_single_title") {
@@ -388,57 +437,50 @@ export async function POST(req: Request) {
       }, { status: 422 });
     }
     if (action !== "regenerate_titles") {
-      console.error("[growth] manual source rotation failed:", firstMessage);
-      return NextResponse.json({
-        error: "benchmark_rotation_failed",
-        message: "新母题没有形成通过审核的迁移标题；当前批次和原来源保持不变。",
-      }, { status: 422 });
-    }
-    const sourceMethodIds = new Set((account.topic_sources ?? []).map((source) => source.method_id));
-    const sourceRelatedFailure = [...sourceMethodIds].some((methodId) =>
-      firstMessage.includes(`${methodId}:`),
-    );
-    if (!sourceRelatedFailure) {
-      console.error("[growth] atomic topic batch failed:", firstMessage);
-      return NextResponse.json({
-        error: "topic_batch_generation_failed",
-        message: "本轮未能生成完整的新标题，当前批次未被替换。请再次换一批。",
-      }, { status: 422 });
-    }
-
-    // 来源型标题连续修复仍失败时，自动换一组近期母题再完整重跑；
-    // 运营只会看到最终通过门禁的完整批次，不需要手动判断或反复点按钮。
-    const swapMethods = applicableMethods
-      .filter((method) => method.sourceRequired)
-      .map((method) => method.id);
-    const swapped = await ensureRecentTopicSources(account, {
-      force: true,
-      methodIds: swapMethods,
-      excludeUrls: recentSourceUrls({ account, runs, methodIds: swapMethods }),
-    });
-    const swappedMethods = changedSources(account, swapped.account, swapMethods);
-    if (swappedMethods.length) {
-      account = accountWithRotatedSources({
-        before: account,
-        discovered: swapped.account,
-        methodIds: swapMethods,
-        changedMethodIds: swappedMethods,
-        dropMissing: false,
-      });
-      changedMethodIds = [...new Set([...changedMethodIds, ...swappedMethods])];
-    }
-    sourceRefreshSummary = swapped.summary;
-    try {
-      generated = await generateTopicBatch(generationInput(true));
-    } catch (retryError) {
-      console.error(
-        "[growth] atomic topic batch failed after source replacement:",
-        (retryError as Error).message,
+      const recovered = await rotateSourcesAndRetry(rotationMethodIds, 2);
+      if (recovered.generated) {
+        generated = recovered.generated;
+      } else {
+        console.error(
+          "[growth] manual source rotation failed after automatic recovery:",
+          recovered.error || firstMessage,
+        );
+        return NextResponse.json({
+          error: "benchmark_rotation_failed",
+          message: "今日该方法暂无可用的近期对标，当前标题和原来源已保留。",
+        }, { status: 422 });
+      }
+    } else {
+      const sourceMethodIds = new Set((account.topic_sources ?? []).map((source) => source.method_id));
+      const sourceRelatedFailure = [...sourceMethodIds].some((methodId) =>
+        firstMessage.includes(`${methodId}:`),
       );
-      return NextResponse.json({
-        error: "topic_batch_generation_failed",
-        message: "系统已自动更换母题并重新迁移，但仍未形成完整合格批次；当前标题不会被替换。",
-      }, { status: 422 });
+      if (!sourceRelatedFailure) {
+        console.error("[growth] atomic topic batch failed:", firstMessage);
+        return NextResponse.json({
+          error: "topic_batch_generation_failed",
+          message: "本轮未能生成完整的新标题，当前批次未被替换。请稍后再试。",
+        }, { status: 422 });
+      }
+
+      // 每个来源型槽位最多连续尝试3个真实母题（当前母题 + 2个新母题）。
+      // 只有完整批次全部通过才提交，任何失败都保留操作者现有标题。
+      const swapMethods = applicableMethods
+        .filter((method) => method.sourceRequired)
+        .map((method) => method.id);
+      const recovered = await rotateSourcesAndRetry(swapMethods, 2);
+      if (recovered.generated) {
+        generated = recovered.generated;
+      } else {
+        console.error(
+          "[growth] atomic topic batch failed after source recovery:",
+          recovered.error || firstMessage,
+        );
+        return NextResponse.json({
+          error: "topic_batch_generation_failed",
+          message: "系统已自动刷新并尝试多个近期母题，但仍未形成完整合格批次；当前标题没有被替换。",
+        }, { status: 422 });
+      }
     }
   }
   const {

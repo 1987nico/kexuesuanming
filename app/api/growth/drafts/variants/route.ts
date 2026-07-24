@@ -14,9 +14,14 @@ import {
   buildWeeklyReviewResult,
   isWeeklyReviewStale,
 } from "@/lib/growth/reviewLearning";
+import {
+  appendBodyGenerationHistory,
+  bodyHistoryReferences,
+} from "@/lib/growth/bodyUniqueness";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const maxDuration = 300;
 
 const DEFAULT_TENANT_ID = "mianbajun";
 
@@ -69,6 +74,11 @@ export async function POST(req: Request) {
   const generationAccount = accountForBusinessGeneration(account);
 
   const notes = await store.listDrafts(account.id);
+  const runs = await store.listRuns(account.id);
+  const historicalBodies = [
+    ...bodyHistoryReferences({ drafts: notes, runs }),
+    ...(parsed.data.excludeBodies ?? []).map((body) => ({ body })),
+  ];
   const reviews = await store.listReviewsByAccount(account.id);
   let weeklyReview = account.weekly_review ?? account.stage_review;
   if (!weeklyReview || isWeeklyReviewStale(weeklyReview, reviews)) {
@@ -98,10 +108,12 @@ export async function POST(req: Request) {
       count: parsed.data.count ?? 2,
       bodyVersion: parsed.data.bodyVersion,
       excludeBodies: parsed.data.excludeBodies,
+      historicalBodies,
       learningBrief,
     });
   } catch (error) {
     const incidentId = crypto.randomUUID();
+    const reason = error instanceof Error ? error.message : "unknown";
     console.error("[growth] certified draft incident", JSON.stringify({
       incidentId,
       runId: run.id,
@@ -109,8 +121,19 @@ export async function POST(req: Request) {
       businessLine: resolveAccountBusinessLine(account),
       persona: account.persona,
       methodId: topic.method_id,
-      error: error instanceof Error ? error.message : "unknown",
+      error: reason,
     }));
+    if (
+      reason.startsWith("draft_unique_")
+      || reason.startsWith("draft_history_")
+      || reason.startsWith("draft_variant_similarity")
+    ) {
+      return NextResponse.json({
+        error: "draft_uniqueness_failed",
+        message: "本次未形成可交付的新正文，原有内容没有被替换。请稍后再试。",
+        incidentId,
+      }, { status: 422 });
+    }
     return NextResponse.json({
       error: "draft_certification_incident",
       message: "本次正文认证出现异常，系统已记录处理，无需重复点击。",
@@ -162,6 +185,9 @@ export async function POST(req: Request) {
       metadata: { action: "draft_variants", runId: run.id, topicId: topic.id },
     });
   }
+
+  // 生成过但尚未选用的正文也进入账号历史，防止用户反复点击后再次拿到同一篇。
+  await store.saveRun(appendBodyGenerationHistory(run, drafts));
 
   return NextResponse.json({ drafts, topic, learningTrace: learningBrief.trace });
 }

@@ -55,6 +55,7 @@ import {
   PERSONA_SPECIFIC_FIELDS,
 } from "./types";
 import {
+  bodyHasConversionEvidence,
   bodyOpeningMeetsTitle,
   countPublishChars,
   enforceDraftCompliance,
@@ -65,6 +66,11 @@ import {
   withDraftValidation,
   XHS_PUBLISH_CHAR_TARGET,
 } from "./validation";
+import { isBusinessCompatibleText } from "./businessCompatibility";
+import {
+  bodyUniquenessProblem,
+  type BodyUniquenessReference,
+} from "./bodyUniqueness";
 import {
   ensureBenchmarkStructureCards,
   SOURCE_MIGRATION_VERSION,
@@ -1414,6 +1420,63 @@ export function composeBlueprintBody(
     .join("\n\n");
 }
 
+function draftSpecificBlueprint(
+  raw: unknown,
+  base: DraftBlueprintContext,
+  spec: PromiseDeliverySpec,
+  businessLine: GrowthBusinessLine,
+) {
+  const structure = asRecord(raw);
+  const opening = asText(structure.opening);
+  const identityEvidence = asText(structure.identity_evidence);
+  const coreJudgement = asText(structure.core_judgement);
+  const deliverySections = normalizeBlueprintSections(structure.delivery_sections);
+  const serviceBridge = asText(structure.service_bridge);
+  const closing = asText(structure.closing);
+  const expectedSections = spec.exactSections ?? spec.minimumSections;
+  const sectionCountValid = spec.exactSections
+    ? deliverySections.length === spec.exactSections
+    : deliverySections.length >= expectedSections;
+  const allText = [
+    opening,
+    identityEvidence,
+    coreJudgement,
+    ...deliverySections,
+    serviceBridge,
+    closing,
+  ].join("\n");
+  if (
+    !bodyOpeningMeetsTitle(base.opening_intent || "", opening)
+    || Array.from(identityEvidence).length < 18
+    || Array.from(coreJudgement).length < 12
+    || !sectionCountValid
+    || !bodyHasConversionEvidence(serviceBridge)
+    || Array.from(closing).length < 10
+    || !isBusinessCompatibleText(allText, businessLine)
+  ) {
+    return null;
+  }
+  const selectedSections = spec.exactSections
+    ? deliverySections.slice(0, spec.exactSections)
+    : deliverySections.slice(0, Math.max(expectedSections, Math.min(5, deliverySections.length)));
+  return {
+    ...base,
+    opening,
+    identity_contract: {
+      ...base.identity_contract,
+      evidence: identityEvidence,
+    },
+    core_judgement: coreJudgement,
+    delivery_sections: selectedSections,
+    conversion_contract: {
+      ...base.conversion_contract,
+      bridge_paragraph: serviceBridge,
+    },
+    service_bridge: serviceBridge,
+    closing,
+  } satisfies DraftBlueprintContext;
+}
+
 function serviceBridgeSentence(persona: GrowthPersona, businessLine: GrowthBusinessLine) {
   if (businessLine === "overseas_student") {
     if (persona === "buyer") return "我们自己折腾了几轮还是没理顺，后来才找了一位求职老师一起梳理现有材料。她没有先改文案，而是先把岗位和招聘节奏对齐；至少孩子不再拿一份简历乱投，下一步该验证什么也有了顺序。";
@@ -1663,41 +1726,86 @@ async function generateSingleDraft(input: {
   tenantId?: string; account: GrowthAccount; run: GrowthRun; topic: TopicCandidate;
   bodyVersion: "short" | "long"; excludeBodies?: string[]; learningBrief?: GrowthLearningBrief;
   blueprint: DraftBlueprintContext; fallbackBlueprint: DraftBlueprintContext; spec: PromiseDeliverySpec;
+  historicalBodies?: BodyUniquenessReference[];
+  currentPairBodies?: string[];
 }) {
   let payload: any;
   let usage: Record<string, unknown> | undefined;
   const cta = ctaType(input.account.persona);
-  try {
-    const result = await llmJSON<any>({
-      system: GROWTH_SYSTEM_PROMPT,
-      user: buildDraftUserPrompt({
-        persona: input.account.persona, context: accountContext(input.account),
-        targetUser: input.topic.target_user, trustSource: input.account.trust_source,
-        methodId: input.topic.method_id, methodLabel: input.topic.method_label,
-        generationMode: input.topic.generation_mode, title: input.topic.title,
-        titlePromise: input.topic.title_promise, testVariable: input.topic.test_variable,
-        expectedSignal: input.topic.expected_signal, followReason: input.topic.follow_reason,
-        variantHint: input.bodyVersion === "short"
-          ? "当前只写短版：150—300字，用更少的段落直接交付结论和必要动作，不展开背景解释。"
-          : "当前只写长版：600—900字。在同一核心判断下补充现场、判断依据、执行细节和避坑说明；不得复用短版原句或只做同义改写。",
-        learningGuidance: input.learningBrief ? formatLearningBrief(input.learningBrief) : undefined,
-        excludeBodies: input.excludeBodies, blueprint: input.blueprint,
-        deliveryRule: input.spec.rule, ctaType: cta,
-      }), maxTokens: input.bodyVersion === "long" ? 3500 : 1800, temperature: 0.65,
-    });
-    payload = result.data;
-    usage = resultUsage(result);
-  } catch (error) {
-    console.warn("[growth] draft fallback:", (error as Error).message);
-  }
-  const title = enforceTitleLimit(payload?.title || input.topic.title);
   const businessLine = input.account.business_line ?? "executive";
-  // 短长版必须从同一份已认证蓝图装配。模型返回的独立 body_structure
-  // 容易让短版扩写、长版压缩，甚至造成两个版本的业务上下文漂移。
-  const body = composeBlueprintBody(input.blueprint, input.spec, undefined, {
-    bodyVersion: input.bodyVersion,
-    businessLine,
-  });
+  const attemptedBodies: BodyUniquenessReference[] = [];
+  let body = "";
+  let selectedBlueprint: DraftBlueprintContext | null = null;
+  let lastProblem = "模型未返回完整正文结构";
+
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      const promptExclusions = [
+        ...(input.excludeBodies ?? []),
+        ...(input.historicalBodies ?? []).slice(0, 8).map((reference) => reference.body),
+        ...(input.currentPairBodies ?? []),
+        ...attemptedBodies.map((reference) => reference.body),
+      ].filter(Boolean).slice(-10);
+      const result = await llmJSON<any>({
+        system: GROWTH_SYSTEM_PROMPT,
+        user: buildDraftUserPrompt({
+          persona: input.account.persona, context: accountContext(input.account),
+          targetUser: input.topic.target_user, trustSource: input.account.trust_source,
+          methodId: input.topic.method_id, methodLabel: input.topic.method_label,
+          generationMode: input.topic.generation_mode, title: input.topic.title,
+          titlePromise: input.topic.title_promise, testVariable: input.topic.test_variable,
+          expectedSignal: input.topic.expected_signal, followReason: input.topic.follow_reason,
+          variantHint: input.bodyVersion === "short"
+            ? `当前只写短版：150—300字，用更少的段落直接交付结论和必要动作，不展开背景解释。这是第${attempt}次内部尝试，必须更换开头场景、叙事顺序和表达。`
+            : `当前只写长版：600—900字。在同一核心判断下补充现场、判断依据、执行细节和避坑说明；不得复用短版原句或只做同义改写。这是第${attempt}次内部尝试，必须使用不同的现场和论证顺序。`,
+          learningGuidance: input.learningBrief ? formatLearningBrief(input.learningBrief) : undefined,
+          excludeBodies: promptExclusions, blueprint: input.blueprint,
+          deliveryRule: input.spec.rule, ctaType: cta,
+        }), maxTokens: input.bodyVersion === "long" ? 3500 : 1800, temperature: Math.min(0.82, 0.62 + attempt * 0.06),
+      });
+      payload = result.data;
+      usage = resultUsage(result);
+      const candidateBlueprint = draftSpecificBlueprint(
+        payload?.body_structure,
+        input.blueprint,
+        input.spec,
+        businessLine,
+      );
+      if (!candidateBlueprint) {
+        lastProblem = "正文结构缺少当前标题专属的身份、兑现或转化段";
+        continue;
+      }
+      const candidateBody = composeBlueprintBody(candidateBlueprint, input.spec, undefined, {
+        bodyVersion: input.bodyVersion,
+        businessLine,
+      });
+      const duplicate = bodyUniquenessProblem(candidateBody, [
+        ...(input.historicalBodies ?? []),
+        ...attemptedBodies,
+      ]);
+      const pairDuplicate = (input.currentPairBodies ?? []).some((previous) =>
+        draftBodiesAreTooSimilar(candidateBody, previous)
+      );
+      if (duplicate || pairDuplicate) {
+        lastProblem = duplicate?.reason ?? "short_long_too_similar";
+        attemptedBodies.unshift({ body: candidateBody, topic_id: input.topic.id });
+        continue;
+      }
+      body = candidateBody;
+      selectedBlueprint = candidateBlueprint;
+      break;
+    } catch (error) {
+      lastProblem = (error as Error).message;
+      console.warn(`[growth] draft generation attempt ${attempt} failed:`, lastProblem);
+    }
+  }
+
+  if (!body || !selectedBlueprint) {
+    throw new Error(`draft_unique_generation_failed:${lastProblem}`);
+  }
+
+  // 标题已在选题阶段由运营确认；正文模型不得暗中改题。
+  const title = enforceTitleLimit(input.topic.title);
   const hashtags = normalizeTags(Array.isArray(payload?.hashtags) ? payload.hashtags : businessLine === "overseas_student" ? ["#留学生求职", "#海归求职", "#职业规划"] : ["#中高管", "#职业转型", "#职业决策"]);
   const timestamp = now();
   const raw: ContentDraft = {
@@ -1707,7 +1815,7 @@ async function generateSingleDraft(input: {
     generation_mode: input.topic.generation_mode, title_promise: input.topic.title_promise,
     source_snapshot: input.topic.source_snapshot, selected_body_version: input.bodyVersion,
     raw_body_tags: [], tagging_status: "pending", canonical_tag_ids: [], cta_type: cta, validation_checks: [],
-    delivery_contract: deliveryContractFromBlueprint(input.blueprint), certification_status: "generating",
+    delivery_contract: deliveryContractFromBlueprint(selectedBlueprint), certification_status: "generating",
     repair_history: [], fallback_used: false,
     schema_version: "method_v3_2", method_attribution_status: "confirmed", eligible_for_method_learning: true,
     test_variable: input.topic.test_variable, expected_signal: input.topic.expected_signal, title,
@@ -1729,8 +1837,8 @@ async function generateSingleDraft(input: {
     businessLine,
     topic: input.topic,
     cta,
-    blueprint: input.blueprint,
-    fallbackBlueprint: input.fallbackBlueprint,
+    blueprint: selectedBlueprint,
+    fallbackBlueprint: selectedBlueprint,
     spec: input.spec,
   });
   draft = await fitDraftWithinPublishTarget(draft, {
@@ -1738,25 +1846,34 @@ async function generateSingleDraft(input: {
     persona: input.account.persona,
     businessLine,
     topic: input.topic,
-    blueprint: input.blueprint,
-    fallbackBlueprint: input.fallbackBlueprint,
+    blueprint: selectedBlueprint,
+    fallbackBlueprint: selectedBlueprint,
     spec: input.spec,
   });
   draft = certifyDraftForOperator(draft);
-  return { draft, usage };
+  const finalDuplicate = bodyUniquenessProblem(draft.body, input.historicalBodies ?? []);
+  const finalPairDuplicate = (input.currentPairBodies ?? []).some((previous) =>
+    draftBodiesAreTooSimilar(draft.body, previous)
+  );
+  if (finalDuplicate || finalPairDuplicate) {
+    throw new Error(`draft_unique_certification_failed:${finalDuplicate?.reason ?? "short_long_too_similar"}`);
+  }
+  return { draft, usage, blueprint: selectedBlueprint };
 }
 
 export async function generateDraftVariants(input: {
   tenantId?: string; account: GrowthAccount; run: GrowthRun; topic: TopicCandidate;
   count?: number; excludeBodies?: string[]; learningBrief?: GrowthLearningBrief;
   bodyVersion?: "short" | "long";
+  historicalBodies?: BodyUniquenessReference[];
 }) {
   const cta = ctaType(input.account.persona);
   const planned = await generateDraftBlueprint({ account: input.account, topic: input.topic, cta });
   const shared = {
     ...input,
     blueprint: planned.blueprint,
-    fallbackBlueprint: planned.fallback,
+    // 通用业务模板只用于生成蓝图时的字段校准，不得再作为整篇正文交付。
+    fallbackBlueprint: planned.blueprint,
     spec: planned.spec,
   };
   if (input.bodyVersion) {
@@ -1767,42 +1884,22 @@ export async function generateDraftVariants(input: {
     });
     return { drafts: [generated.draft], usage: generated.usage || planned.usage };
   }
-  const short = await generateSingleDraft({ ...shared, bodyVersion: "short" });
-  const long = await generateSingleDraft({ ...shared, bodyVersion: "long", excludeBodies: [...(input.excludeBodies ?? []), short.draft.body] });
+  const short = await generateSingleDraft({
+    ...shared,
+    bodyVersion: "short",
+    historicalBodies: input.historicalBodies,
+  });
+  const long = await generateSingleDraft({
+    ...shared,
+    bodyVersion: "long",
+    historicalBodies: input.historicalBodies,
+    currentPairBodies: [short.draft.body],
+    excludeBodies: [...(input.excludeBodies ?? []), short.draft.body],
+  });
   let shortDraft = short.draft;
   let longDraft = long.draft;
   if (draftBodiesAreTooSimilar(short.draft.body, longDraft.body)) {
-    const businessLine = input.account.business_line ?? "executive";
-    const distinctBody = composeBlueprintBody(planned.blueprint, planned.spec, undefined, {
-      bodyVersion: "long",
-      businessLine,
-    });
-    longDraft = withDraftValidation(enforceDraftCompliance({
-      ...longDraft,
-      body: distinctBody,
-      word_count: countPublishChars(longDraft.title, distinctBody, longDraft.hashtags),
-      updated_at: now(),
-    }, input.topic.title), input.account.persona, longDraft.validation_report?.attempts ?? 0);
-    longDraft = await passDraftValidationGate(longDraft, {
-      account: input.account,
-      persona: input.account.persona,
-      businessLine,
-      topic: input.topic,
-      cta,
-      blueprint: planned.blueprint,
-      fallbackBlueprint: planned.fallback,
-      spec: planned.spec,
-    });
-    longDraft = await fitDraftWithinPublishTarget(longDraft, {
-      account: input.account,
-      persona: input.account.persona,
-      businessLine,
-      topic: input.topic,
-      blueprint: planned.blueprint,
-      fallbackBlueprint: planned.fallback,
-      spec: planned.spec,
-    });
-    longDraft = certifyDraftForOperator(longDraft);
+    throw new Error("draft_variant_similarity_failed");
   }
   if (!draftVariantOrderIsValid(shortDraft, longDraft)) {
     const businessLine = input.account.business_line ?? "executive";
@@ -1810,7 +1907,7 @@ export async function generateDraftVariants(input: {
       draft: shortDraft,
       account: input.account,
       topic: input.topic,
-      blueprint: planned.fallback,
+      blueprint: short.blueprint,
       spec: planned.spec,
       businessLine,
       compact: true,
@@ -1820,7 +1917,7 @@ export async function generateDraftVariants(input: {
       draft: longDraft,
       account: input.account,
       topic: input.topic,
-      blueprint: planned.fallback,
+      blueprint: long.blueprint,
       spec: planned.spec,
       businessLine,
       compact: true,
@@ -1829,6 +1926,13 @@ export async function generateDraftVariants(input: {
   }
   if (!draftVariantOrderIsValid(shortDraft, longDraft)) {
     throw new Error("draft_variant_length_order_failed");
+  }
+  if (draftBodiesAreTooSimilar(shortDraft.body, longDraft.body)) {
+    throw new Error("draft_variant_similarity_failed_after_length_fit");
+  }
+  for (const draft of [shortDraft, longDraft]) {
+    const duplicate = bodyUniquenessProblem(draft.body, input.historicalBodies ?? []);
+    if (duplicate) throw new Error(`draft_history_similarity_failed:${duplicate.reason}`);
   }
   return { drafts: [shortDraft, longDraft], usage: long.usage || short.usage || planned.usage };
 }
