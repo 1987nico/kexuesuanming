@@ -130,6 +130,37 @@ describe("draft variants", () => {
     expect(longBody).toContain("秋招真正难的不是同时准备两边");
   });
 
+  it("does not mistake required shared contract paragraphs for duplicate variants", () => {
+    const ordinaryBlueprint: DraftBlueprintContext = {
+      ...blueprint,
+      fulfillment_contract: {
+        promise_type: "ordinary",
+        required_sections: blueprint.fulfillment_contract.required_sections.slice(0, 2),
+      },
+      delivery_format: "paragraphs",
+      delivery_sections: [
+        "先把平台资源和个人能力分开，确认离开当前职位后哪些成果还能被外部验证。",
+        "再用真实访谈和小范围面试验证市场反馈，不急着把辞职当成唯一动作。",
+      ],
+    };
+    const ordinarySpec = {
+      format: "paragraphs" as const,
+      minimumSections: 2,
+      rule: "至少用2个具体段落完成标题承诺。",
+    };
+    const shortBody = composeBlueprintBody(ordinaryBlueprint, ordinarySpec, undefined, {
+      bodyVersion: "short",
+      businessLine: "executive",
+    });
+    const longBody = composeBlueprintBody(ordinaryBlueprint, ordinarySpec, undefined, {
+      bodyVersion: "long",
+      businessLine: "executive",
+    });
+
+    expect(Array.from(longBody).length - Array.from(shortBody).length).toBeGreaterThanOrEqual(80);
+    expect(draftBodiesAreTooSimilar(shortBody, longBody)).toBe(false);
+  });
+
   it("detects duplicate or near-duplicate bodies", () => {
     const body = "先把岗位和材料放在同一张表里，再根据真实反馈收窄方向。";
     expect(draftBodiesAreTooSimilar(body, body)).toBe(true);

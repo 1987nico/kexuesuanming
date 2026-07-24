@@ -1881,12 +1881,9 @@ async function generateSingleDraft(input: {
         ...(input.historicalBodies ?? []),
         ...attemptedBodies,
       ]);
-      const pairDuplicate = (input.currentPairBodies ?? []).some((previous) =>
-        draftBodiesAreTooSimilar(candidateBody, previous)
-      );
-      if (duplicate || pairDuplicate) {
-        lastProblem = duplicate?.reason ?? "short_long_too_similar";
-        lastFailureCode = pairDuplicate ? "variant_too_similar" : "history_duplicate";
+      if (duplicate) {
+        lastProblem = duplicate.reason;
+        lastFailureCode = "history_duplicate";
         attemptedBodies.unshift({ body: candidateBody, topic_id: input.topic.id });
         continue;
       }
@@ -1967,14 +1964,8 @@ async function generateSingleDraft(input: {
   }
   draft = certifyDraftForOperator(draft);
   const finalDuplicate = bodyUniquenessProblem(draft.body, input.historicalBodies ?? []);
-  const finalPairDuplicate = (input.currentPairBodies ?? []).some((previous) =>
-    draftBodiesAreTooSimilar(draft.body, previous)
-  );
-  if (finalDuplicate || finalPairDuplicate) {
-    throw pipelineFailure(
-      finalPairDuplicate ? "variant_too_similar" : "history_duplicate",
-      finalDuplicate?.reason ?? "short_long_too_similar",
-    );
+  if (finalDuplicate) {
+    throw pipelineFailure("history_duplicate", finalDuplicate.reason);
   }
   draft = {
     ...draft,
@@ -2025,10 +2016,11 @@ export async function generateDraftVariants(input: {
   });
   let shortDraft = short.draft;
   let longDraft = long.draft;
-  if (draftBodiesAreTooSimilar(short.draft.body, longDraft.body)) {
-    throw pipelineFailure("variant_too_similar", "短版和长版结构过于相似");
-  }
-  if (!draftVariantOrderIsValid(shortDraft, longDraft)) {
+  // 共享身份、核心判断和转化合同是正确行为；先自动拉开篇幅与展开层次，再做最终差异判断。
+  if (
+    draftBodiesAreTooSimilar(shortDraft.body, longDraft.body)
+    || !draftVariantOrderIsValid(shortDraft, longDraft)
+  ) {
     const businessLine = input.account.business_line ?? "executive";
     shortDraft = await rebuildVariantForLengthOrder({
       draft: shortDraft,
@@ -2047,7 +2039,7 @@ export async function generateDraftVariants(input: {
       blueprint: long.blueprint,
       spec: planned.spec,
       businessLine,
-      compact: true,
+      compact: false,
       aggressive: false,
     });
   }
@@ -2143,9 +2135,12 @@ export function draftBodiesAreTooSimilar(shortBody: string, longBody: string) {
   if (!shortPairs.size || !longPairs.size) return false;
   let overlap = 0;
   for (const pair of shortPairs) if (longPairs.has(pair)) overlap += 1;
-  const lengthRatio = Math.max(shortNormalized.length, longNormalized.length)
-    / Math.min(shortNormalized.length, longNormalized.length);
-  return overlap / Math.min(shortPairs.size, longPairs.size) >= 0.9 && lengthRatio < 1.35;
+  const shorterLength = Math.min(shortNormalized.length, longNormalized.length);
+  const lengthDelta = Math.abs(shortNormalized.length - longNormalized.length);
+  // 长版只要新增了足够的现场、依据或执行细节，就不应因共享合同段而被误判为同一篇。
+  const meaningfulExpansion = lengthDelta >= Math.max(80, Math.ceil(shorterLength * 0.18));
+  if (meaningfulExpansion) return false;
+  return overlap / Math.min(shortPairs.size, longPairs.size) >= 0.92;
 }
 
 export type DraftRepairType = "opening" | "fulfillment" | "identity" | "conversion" | "outcome";
