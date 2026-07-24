@@ -114,6 +114,7 @@ export async function POST(req: Request) {
   } catch (error) {
     const incidentId = crypto.randomUUID();
     const reason = error instanceof Error ? error.message : "unknown";
+    const failureCode = reason.split(":", 1)[0];
     console.error("[growth] certified draft incident", JSON.stringify({
       incidentId,
       runId: run.id,
@@ -121,22 +122,46 @@ export async function POST(req: Request) {
       businessLine: resolveAccountBusinessLine(account),
       persona: account.persona,
       methodId: topic.method_id,
+      failureCode,
       error: reason,
     }));
-    if (
-      reason.startsWith("draft_unique_")
-      || reason.startsWith("draft_history_")
-      || reason.startsWith("draft_variant_similarity")
-    ) {
+    if (failureCode === "history_duplicate") {
       return NextResponse.json({
-        error: "draft_uniqueness_failed",
-        message: "本次未形成可交付的新正文，原有内容没有被替换。请稍后再试。",
+        error: failureCode,
+        message: "系统检测到新正文与近90天内容过于相似，原有内容没有被替换。请返回选题换一个角度后再试。",
+        incidentId,
+      }, { status: 422 });
+    }
+    if (failureCode === "variant_too_similar") {
+      return NextResponse.json({
+        error: failureCode,
+        message: "短版和长版还没有拉开足够差异，系统已保留原有内容。请重新生成一次。",
+        incidentId,
+      }, { status: 422 });
+    }
+    if (failureCode === "provider_timeout" || failureCode === "model_unavailable") {
+      return NextResponse.json({
+        error: failureCode,
+        message: "正文生成服务暂时繁忙，原有内容没有被替换。请稍后再试。",
+        incidentId,
+      }, { status: 503 });
+    }
+    if ([
+      "structure_repair_failed",
+      "identity_repair_failed",
+      "fulfillment_repair_failed",
+      "conversion_repair_failed",
+      "business_mismatch",
+    ].includes(failureCode)) {
+      return NextResponse.json({
+        error: failureCode,
+        message: "系统已自动完善正文，但本次仍未达到交付标准，原有内容没有被替换。问题已记录，请换一个标题后再试。",
         incidentId,
       }, { status: 422 });
     }
     return NextResponse.json({
       error: "draft_certification_incident",
-      message: "本次正文认证出现异常，系统已记录处理，无需重复点击。",
+      message: "正文生成出现异常，系统已记录处理，原有内容没有被替换。",
       incidentId,
     }, { status: 503 });
   }

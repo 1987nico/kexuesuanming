@@ -7,6 +7,7 @@ import {
   draftBodiesAreTooSimilar,
   draftMeetsPublishTarget,
   draftVariantOrderIsValid,
+  normalizeDraftSpecificBlueprint,
 } from "./runner";
 import { countPublishChars } from "./validation";
 
@@ -57,6 +58,62 @@ const spec = {
 };
 
 describe("draft variants", () => {
+  it("repairs the production human-pain incident before the final delivery gate", () => {
+    const normalized = normalizeDraftSpecificBlueprint({
+      opening: "我最近越想越乱。",
+      core_judgement: "平台光环会影响职业判断。",
+      delivery_sections: ["先把自己的能力证据列出来。"],
+    }, blueprint, spec, "overseas_student");
+
+    expect(normalized.blueprint.identity_contract.evidence).toBe(blueprint.identity_contract.evidence);
+    expect(normalized.blueprint.conversion_contract.bridge_paragraph).toBe(blueprint.conversion_contract.bridge_paragraph);
+    expect(normalized.blueprint.delivery_sections).toHaveLength(3);
+    expect(normalized.initialMissingFields).toEqual(expect.arrayContaining([
+      "opening",
+      "identity_evidence",
+      "delivery_sections",
+      "service_bridge",
+      "closing",
+    ]));
+  });
+
+  it("merges an over-produced tug-of-war structure into exactly two promised paths", () => {
+    const tugBlueprint: DraftBlueprintContext = {
+      ...blueprint,
+      fulfillment_contract: {
+        ...blueprint.fulfillment_contract,
+        promise_type: "comparison",
+        required_sections: blueprint.fulfillment_contract.required_sections.slice(0, 2),
+      },
+      delivery_sections: [
+        "留在当前岗位：先核对平台资源与个人能力。",
+        "直接跳槽：先验证市场报价和岗位要求。",
+      ],
+    };
+    const normalized = normalizeDraftSpecificBlueprint({
+      opening: tugBlueprint.opening,
+      identity_evidence: tugBlueprint.identity_contract.evidence,
+      core_judgement: tugBlueprint.core_judgement,
+      delivery_sections: [
+        "路径一先看适用条件。",
+        "路径一再看失败代价。",
+        "路径二用小范围面试验证市场报价。",
+      ],
+      service_bridge: tugBlueprint.conversion_contract.bridge_paragraph,
+      closing: tugBlueprint.closing,
+    }, tugBlueprint, {
+      format: "numbered",
+      minimumSections: 2,
+      exactSections: 2,
+      rule: "必须正好比较两条路径。",
+    }, "overseas_student");
+
+    expect(normalized.blueprint.delivery_sections).toHaveLength(2);
+    expect(normalized.blueprint.delivery_sections.join("\n")).toContain("路径一先看适用条件");
+    expect(normalized.blueprint.delivery_sections.join("\n")).toContain("路径二用小范围面试");
+    expect(normalized.normalizationActions).toContain("delivery_sections:merged");
+  });
+
   it("builds materially different short and long bodies from one judgement", () => {
     const shortBody = composeBlueprintBody(blueprint, spec, undefined, {
       bodyVersion: "short",

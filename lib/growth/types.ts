@@ -755,6 +755,14 @@ export interface ContentDraft {
   repair_history?: DraftRepairRecord[];
   fallback_used?: boolean;
   incident_id?: string;
+  /** v3.5 正文生成管线诊断，仅供系统排障，不进入复制或发布内容。 */
+  generation_pipeline_version?: "v3_5";
+  generation_diagnostics?: {
+    initial_missing_fields: string[];
+    normalization_actions: string[];
+    final_status: "certified" | "failed";
+    total_duration_ms: number;
+  };
   /** v3.2兼容元数据：旧记录只做读取适配，不自动回写。 */
   schema_version?: GrowthSchemaVersion;
   method_attribution_status?: MethodAttributionStatus;

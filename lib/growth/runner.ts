@@ -958,7 +958,7 @@ export async function generateTopicPool(input: {
 const ctaType = (persona: GrowthPersona): ContentDraft["cta_type"] =>
   persona === "buyer" ? "soft_bridge" : persona === "expert" ? "on_platform_consult" : "service_entry";
 
-interface PromiseDeliverySpec {
+export interface PromiseDeliverySpec {
   format: DraftBlueprintContext["delivery_format"];
   minimumSections: number;
   exactSections?: number;
@@ -1420,61 +1420,129 @@ export function composeBlueprintBody(
     .join("\n\n");
 }
 
-function draftSpecificBlueprint(
+export interface DraftStructureNormalization {
+  blueprint: DraftBlueprintContext;
+  initialMissingFields: string[];
+  normalizationActions: string[];
+}
+
+function mergeSectionsToExactCount(sections: string[], exactCount: number) {
+  if (sections.length <= exactCount) return sections;
+  const buckets = Array.from({ length: exactCount }, () => [] as string[]);
+  sections.forEach((section, index) => {
+    const bucketIndex = Math.min(exactCount - 1, Math.floor(index * exactCount / sections.length));
+    buckets[bucketIndex].push(section);
+  });
+  return buckets.map((bucket) => bucket.join(" ").trim()).filter(Boolean);
+}
+
+function appendUniqueSections(sections: string[], fallbacks: string[], targetCount: number) {
+  const result = [...sections];
+  for (const fallback of fallbacks) {
+    if (result.length >= targetCount) break;
+    const normalized = cleanDeliverySection(fallback).replace(/\s+/g, "");
+    if (!result.some((section) => cleanDeliverySection(section).replace(/\s+/g, "") === normalized)) {
+      result.push(fallback);
+    }
+  }
+  return result.slice(0, targetCount);
+}
+
+/**
+ * v3.5：模型结构先按当前标题合同逐字段标准化，再进入校验。
+ * 模型漏字段属于可修复输入，不应在最终交付门禁之前整篇拒绝。
+ */
+export function normalizeDraftSpecificBlueprint(
   raw: unknown,
   base: DraftBlueprintContext,
   spec: PromiseDeliverySpec,
   businessLine: GrowthBusinessLine,
-) {
+): DraftStructureNormalization {
   const structure = asRecord(raw);
-  const opening = asText(structure.opening);
-  const identityEvidence = asText(structure.identity_evidence);
-  const coreJudgement = asText(structure.core_judgement);
-  const deliverySections = normalizeBlueprintSections(structure.delivery_sections);
-  const serviceBridge = asText(structure.service_bridge);
-  const closing = asText(structure.closing);
+  const initialMissingFields: string[] = [];
+  const normalizationActions: string[] = [];
+
+  const chooseField = (
+    field: string,
+    candidate: string,
+    fallback: string,
+    valid: (value: string) => boolean,
+  ) => {
+    if (candidate && valid(candidate) && isBusinessCompatibleText(candidate, businessLine)) return candidate;
+    initialMissingFields.push(field);
+    normalizationActions.push(`${field}:fallback`);
+    return fallback;
+  };
+
+  const opening = chooseField(
+    "opening",
+    asText(structure.opening),
+    base.opening,
+    (value) => bodyOpeningMeetsTitle(base.opening_intent || base.core_judgement, value),
+  );
+  const identityEvidence = chooseField(
+    "identity_evidence",
+    asText(structure.identity_evidence),
+    base.identity_contract.evidence,
+    (value) => Array.from(value).length >= 18,
+  );
+  const coreJudgement = chooseField(
+    "core_judgement",
+    asText(structure.core_judgement),
+    base.core_judgement,
+    (value) => Array.from(value).length >= 12,
+  );
+  let deliverySections = normalizeBlueprintSections(structure.delivery_sections)
+    .filter((section) => isBusinessCompatibleText(section, businessLine));
   const expectedSections = spec.exactSections ?? spec.minimumSections;
-  const sectionCountValid = spec.exactSections
-    ? deliverySections.length === spec.exactSections
-    : deliverySections.length >= expectedSections;
-  const allText = [
-    opening,
-    identityEvidence,
-    coreJudgement,
-    ...deliverySections,
-    serviceBridge,
-    closing,
-  ].join("\n");
-  if (
-    !bodyOpeningMeetsTitle(base.opening_intent || "", opening)
-    || Array.from(identityEvidence).length < 18
-    || Array.from(coreJudgement).length < 12
-    || !sectionCountValid
-    || !bodyHasConversionEvidence(serviceBridge)
-    || Array.from(closing).length < 10
-    || !isBusinessCompatibleText(allText, businessLine)
-  ) {
-    return null;
+  if (spec.exactSections && deliverySections.length > spec.exactSections) {
+    deliverySections = mergeSectionsToExactCount(deliverySections, spec.exactSections);
+    normalizationActions.push("delivery_sections:merged");
   }
-  const selectedSections = spec.exactSections
-    ? deliverySections.slice(0, spec.exactSections)
-    : deliverySections.slice(0, Math.max(expectedSections, Math.min(5, deliverySections.length)));
+  if (deliverySections.length < expectedSections) {
+    initialMissingFields.push("delivery_sections");
+    deliverySections = appendUniqueSections(deliverySections, base.delivery_sections, expectedSections);
+    normalizationActions.push("delivery_sections:filled");
+  }
+  if (!spec.exactSections && deliverySections.length > 5) {
+    deliverySections = deliverySections.slice(0, 5);
+    normalizationActions.push("delivery_sections:trimmed");
+  }
+  const serviceBridge = chooseField(
+    "service_bridge",
+    asText(structure.service_bridge),
+    base.conversion_contract.bridge_paragraph,
+    bodyHasConversionEvidence,
+  );
+  const closing = chooseField(
+    "closing",
+    asText(structure.closing),
+    base.closing,
+    (value) => Array.from(value).length >= 10,
+  );
+
+  const conversionContract = {
+    ...base.conversion_contract,
+    bridge_paragraph: serviceBridge,
+  };
   return {
-    ...base,
-    opening,
-    identity_contract: {
-      ...base.identity_contract,
-      evidence: identityEvidence,
+    blueprint: {
+      ...base,
+      opening,
+      identity_contract: {
+        ...base.identity_contract,
+        evidence: identityEvidence,
+      },
+      core_judgement: coreJudgement,
+      delivery_sections: deliverySections,
+      conversion_contract: conversionContract,
+      service_bridge: serviceBridge,
+      stage_result: conversionContract.stage_result,
+      closing,
     },
-    core_judgement: coreJudgement,
-    delivery_sections: selectedSections,
-    conversion_contract: {
-      ...base.conversion_contract,
-      bridge_paragraph: serviceBridge,
-    },
-    service_bridge: serviceBridge,
-    closing,
-  } satisfies DraftBlueprintContext;
+    initialMissingFields: [...new Set(initialMissingFields)],
+    normalizationActions,
+  };
 }
 
 function serviceBridgeSentence(persona: GrowthPersona, businessLine: GrowthBusinessLine) {
@@ -1590,25 +1658,25 @@ async function passDraftValidationGate(
   },
 ) {
   let draft = withDraftValidation(initial, input.persona, 0);
-  if (draft.validation_report?.status !== "passed") {
+  let currentBlueprint = input.blueprint;
+  for (let repairAttempt = 1; repairAttempt <= 3 && draft.validation_report?.status !== "passed"; repairAttempt += 1) {
     const failed = [...failedContractKeys(draft)].join(",") || "unknown";
-    const repairedBlueprint = targetedRepairBlueprint(input.blueprint, input.fallbackBlueprint, draft);
-    const checked = rebuildDraftFromBlueprint(draft, repairedBlueprint, input.spec, input.businessLine, input.topic.title, {
+    const useFullFallback = repairAttempt === 3;
+    currentBlueprint = useFullFallback
+      ? input.fallbackBlueprint
+      : targetedRepairBlueprint(currentBlueprint, input.fallbackBlueprint, draft);
+    const checked = rebuildDraftFromBlueprint(draft, currentBlueprint, input.spec, input.businessLine, input.topic.title, {
       field: "fallback",
-      reason_code: `targeted_${failed}`,
-      action: "只替换失败的合同字段并重新组装正文",
+      reason_code: useFullFallback ? "deterministic_contract_fallback" : `targeted_${failed}`,
+      action: useFullFallback
+        ? "使用当前标题的确定性合同完成最终兜底"
+        : "只替换失败的合同字段并重新组装正文",
       repaired_at: now(),
     });
-    draft = withDraftValidation(checked, input.persona, 1);
-  }
-  if (draft.validation_report?.status !== "passed") {
-    const fallback = rebuildDraftFromBlueprint(draft, input.fallbackBlueprint, input.spec, input.businessLine, input.topic.title, {
-      field: "fallback",
-      reason_code: "deterministic_contract_fallback",
-      action: "使用确定性合同骨架完成最终兜底",
-      repaired_at: now(),
-    });
-    draft = withDraftValidation({ ...fallback, fallback_used: true }, input.persona, 2);
+    draft = withDraftValidation({
+      ...checked,
+      fallback_used: draft.fallback_used || useFullFallback,
+    }, input.persona, repairAttempt);
   }
   return draft;
 }
@@ -1722,6 +1790,35 @@ async function fitDraftWithinPublishTarget(
   return fallback;
 }
 
+export type DraftPipelineFailureCode =
+  | "structure_repair_failed"
+  | "identity_repair_failed"
+  | "fulfillment_repair_failed"
+  | "conversion_repair_failed"
+  | "history_duplicate"
+  | "variant_too_similar"
+  | "business_mismatch"
+  | "model_unavailable"
+  | "provider_timeout";
+
+function pipelineFailure(code: DraftPipelineFailureCode, detail?: string) {
+  return new Error(`${code}:${detail || code}`);
+}
+
+function providerFailureCode(reason: string): DraftPipelineFailureCode {
+  return /timeout|timed out|abort|504|gateway time/i.test(reason)
+    ? "provider_timeout"
+    : "model_unavailable";
+}
+
+function validationFailureCode(draft: ContentDraft): DraftPipelineFailureCode {
+  const failed = failedContractKeys(draft);
+  if (failed.has("identity")) return "identity_repair_failed";
+  if (failed.has("fulfillment")) return "fulfillment_repair_failed";
+  if (failed.has("conversion")) return "conversion_repair_failed";
+  return "structure_repair_failed";
+}
+
 async function generateSingleDraft(input: {
   tenantId?: string; account: GrowthAccount; run: GrowthRun; topic: TopicCandidate;
   bodyVersion: "short" | "long"; excludeBodies?: string[]; learningBrief?: GrowthLearningBrief;
@@ -1729,6 +1826,7 @@ async function generateSingleDraft(input: {
   historicalBodies?: BodyUniquenessReference[];
   currentPairBodies?: string[];
 }) {
+  const generationStartedAt = Date.now();
   let payload: any;
   let usage: Record<string, unknown> | undefined;
   const cta = ctaType(input.account.persona);
@@ -1736,7 +1834,10 @@ async function generateSingleDraft(input: {
   const attemptedBodies: BodyUniquenessReference[] = [];
   let body = "";
   let selectedBlueprint: DraftBlueprintContext | null = null;
+  let selectedMissingFields: string[] = [];
+  let selectedNormalizationActions: string[] = [];
   let lastProblem = "模型未返回完整正文结构";
+  let lastFailureCode: DraftPipelineFailureCode = "model_unavailable";
 
   for (let attempt = 1; attempt <= 3; attempt += 1) {
     try {
@@ -1765,16 +1866,13 @@ async function generateSingleDraft(input: {
       });
       payload = result.data;
       usage = resultUsage(result);
-      const candidateBlueprint = draftSpecificBlueprint(
+      const normalized = normalizeDraftSpecificBlueprint(
         payload?.body_structure,
         input.blueprint,
         input.spec,
         businessLine,
       );
-      if (!candidateBlueprint) {
-        lastProblem = "正文结构缺少当前标题专属的身份、兑现或转化段";
-        continue;
-      }
+      const candidateBlueprint = normalized.blueprint;
       const candidateBody = composeBlueprintBody(candidateBlueprint, input.spec, undefined, {
         bodyVersion: input.bodyVersion,
         businessLine,
@@ -1788,20 +1886,24 @@ async function generateSingleDraft(input: {
       );
       if (duplicate || pairDuplicate) {
         lastProblem = duplicate?.reason ?? "short_long_too_similar";
+        lastFailureCode = pairDuplicate ? "variant_too_similar" : "history_duplicate";
         attemptedBodies.unshift({ body: candidateBody, topic_id: input.topic.id });
         continue;
       }
       body = candidateBody;
       selectedBlueprint = candidateBlueprint;
+      selectedMissingFields = normalized.initialMissingFields;
+      selectedNormalizationActions = normalized.normalizationActions;
       break;
     } catch (error) {
       lastProblem = (error as Error).message;
+      lastFailureCode = providerFailureCode(lastProblem);
       console.warn(`[growth] draft generation attempt ${attempt} failed:`, lastProblem);
     }
   }
 
   if (!body || !selectedBlueprint) {
-    throw new Error(`draft_unique_generation_failed:${lastProblem}`);
+    throw pipelineFailure(lastFailureCode, lastProblem);
   }
 
   // 标题已在选题阶段由运营确认；正文模型不得暗中改题。
@@ -1817,6 +1919,13 @@ async function generateSingleDraft(input: {
     raw_body_tags: [], tagging_status: "pending", canonical_tag_ids: [], cta_type: cta, validation_checks: [],
     delivery_contract: deliveryContractFromBlueprint(selectedBlueprint), certification_status: "generating",
     repair_history: [], fallback_used: false,
+    generation_pipeline_version: "v3_5",
+    generation_diagnostics: {
+      initial_missing_fields: selectedMissingFields,
+      normalization_actions: selectedNormalizationActions,
+      final_status: "failed",
+      total_duration_ms: Date.now() - generationStartedAt,
+    },
     schema_version: "method_v3_2", method_attribution_status: "confirmed", eligible_for_method_learning: true,
     test_variable: input.topic.test_variable, expected_signal: input.topic.expected_signal, title,
     alternative_titles: (Array.isArray(payload?.alternative_titles) ? payload.alternative_titles : [input.topic.title]).slice(0, 3).map(enforceTitleLimit),
@@ -1838,7 +1947,7 @@ async function generateSingleDraft(input: {
     topic: input.topic,
     cta,
     blueprint: selectedBlueprint,
-    fallbackBlueprint: selectedBlueprint,
+    fallbackBlueprint: input.fallbackBlueprint,
     spec: input.spec,
   });
   draft = await fitDraftWithinPublishTarget(draft, {
@@ -1847,17 +1956,35 @@ async function generateSingleDraft(input: {
     businessLine,
     topic: input.topic,
     blueprint: selectedBlueprint,
-    fallbackBlueprint: selectedBlueprint,
+    fallbackBlueprint: input.fallbackBlueprint,
     spec: input.spec,
   });
+  if (draft.validation_report?.status !== "passed") {
+    throw pipelineFailure(validationFailureCode(draft), "三轮字段级修复后仍未通过正文合同");
+  }
+  if (draft.word_count.total > XHS_PUBLISH_CHAR_TARGET || draft.compliance?.status === "blocked") {
+    throw pipelineFailure("structure_repair_failed", "正文长度或合规结构在自动修复后仍未达标");
+  }
   draft = certifyDraftForOperator(draft);
   const finalDuplicate = bodyUniquenessProblem(draft.body, input.historicalBodies ?? []);
   const finalPairDuplicate = (input.currentPairBodies ?? []).some((previous) =>
     draftBodiesAreTooSimilar(draft.body, previous)
   );
   if (finalDuplicate || finalPairDuplicate) {
-    throw new Error(`draft_unique_certification_failed:${finalDuplicate?.reason ?? "short_long_too_similar"}`);
+    throw pipelineFailure(
+      finalPairDuplicate ? "variant_too_similar" : "history_duplicate",
+      finalDuplicate?.reason ?? "short_long_too_similar",
+    );
   }
+  draft = {
+    ...draft,
+    generation_diagnostics: {
+      initial_missing_fields: selectedMissingFields,
+      normalization_actions: selectedNormalizationActions,
+      final_status: "certified",
+      total_duration_ms: Date.now() - generationStartedAt,
+    },
+  };
   return { draft, usage, blueprint: selectedBlueprint };
 }
 
@@ -1899,7 +2026,7 @@ export async function generateDraftVariants(input: {
   let shortDraft = short.draft;
   let longDraft = long.draft;
   if (draftBodiesAreTooSimilar(short.draft.body, longDraft.body)) {
-    throw new Error("draft_variant_similarity_failed");
+    throw pipelineFailure("variant_too_similar", "短版和长版结构过于相似");
   }
   if (!draftVariantOrderIsValid(shortDraft, longDraft)) {
     const businessLine = input.account.business_line ?? "executive";
@@ -1925,14 +2052,14 @@ export async function generateDraftVariants(input: {
     });
   }
   if (!draftVariantOrderIsValid(shortDraft, longDraft)) {
-    throw new Error("draft_variant_length_order_failed");
+    throw pipelineFailure("structure_repair_failed", "短版和长版长度关系不符合要求");
   }
   if (draftBodiesAreTooSimilar(shortDraft.body, longDraft.body)) {
-    throw new Error("draft_variant_similarity_failed_after_length_fit");
+    throw pipelineFailure("variant_too_similar", "长度修复后短版和长版仍过于相似");
   }
   for (const draft of [shortDraft, longDraft]) {
     const duplicate = bodyUniquenessProblem(draft.body, input.historicalBodies ?? []);
-    if (duplicate) throw new Error(`draft_history_similarity_failed:${duplicate.reason}`);
+    if (duplicate) throw pipelineFailure("history_duplicate", duplicate.reason);
   }
   return { drafts: [shortDraft, longDraft], usage: long.usage || short.usage || planned.usage };
 }
