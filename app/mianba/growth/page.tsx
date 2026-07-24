@@ -48,6 +48,7 @@ import {
   resolveReviewProgress,
   type ReviewTaskState,
 } from "@/lib/growth/reviewCenter";
+import { personaGenerationStrategy } from "@/lib/growth/personaCreation";
 
 interface BootstrapData {
   businessLine: GrowthBusinessLine;
@@ -624,6 +625,7 @@ export default function GrowthPage() {
   }
 
   async function createPersona() {
+    const generationStrategy = personaGenerationStrategy(data?.account);
     setBusy("persona");
     setMessage("");
     try {
@@ -636,10 +638,24 @@ export default function GrowthPage() {
           targetUser: form.target_user || undefined,
           coreProblem: form.core_problem || undefined,
           trustSource: form.trust_source || undefined,
-          regenerateAccountId: data?.account?.id,
-          previewOnly: true,
+          regenerateAccountId: generationStrategy.regenerateAccountId,
+          previewOnly: generationStrategy.previewOnly,
         }),
       });
+      if (generationStrategy.savesImmediately) {
+        setData((current) => current ? {
+          ...current,
+          account: result.account,
+          plan: result.plan || current.plan,
+        } : current);
+        setForm(accountForm(result.account));
+        setPersonaSuggestion(null);
+        setAcceptedPersonaSuggestions({});
+        setPersonaOpen(true);
+        setPersonaEditing(false);
+        setMessage("人设已生成并保存，可以继续编辑或进入选题。");
+        return;
+      }
       const suggested = accountForm(result.account);
       const changed = Object.keys(suggested).filter((key) => JSON.stringify(suggested[key as keyof AccountForm]) !== JSON.stringify(form[key as keyof AccountForm]));
       setPersonaSuggestion(result.account);
@@ -1507,7 +1523,11 @@ export default function GrowthPage() {
                     {personaOpen ? "收起人设" : "展开人设"}
                   </SecondaryButton>
                   <SecondaryButton onClick={() => { setPersonaOpen(true); setPersonaEditing(true); }}>编辑人设</SecondaryButton>
-                  <PrimaryButton disabled={Boolean(busy)} onClick={createPersona}>系统生成人设</PrimaryButton>
+                  <PrimaryButton disabled={Boolean(busy)} onClick={createPersona}>
+                    {busy === "persona"
+                      ? data?.account ? "正在生成建议…" : "正在生成并保存…"
+                      : "系统生成人设"}
+                  </PrimaryButton>
                 </div>
               </div>
 
@@ -1854,8 +1874,8 @@ export default function GrowthPage() {
             })}
           </div>
           <div className="mt-5 flex flex-wrap gap-2">
-            <PrimaryButton onClick={applyPersonaSuggestions}>采用所选建议</PrimaryButton>
-            <SecondaryButton onClick={() => setAcceptedPersonaSuggestions((current) => Object.fromEntries(Object.keys(current).map((key) => [key, true])))}>接受全部</SecondaryButton>
+            <PrimaryButton onClick={applyPersonaSuggestions}>应用到编辑表单</PrimaryButton>
+            <SecondaryButton onClick={() => setAcceptedPersonaSuggestions((current) => Object.fromEntries(Object.keys(current).map((key) => [key, true])))}>全选建议</SecondaryButton>
             <SecondaryButton onClick={() => setPersonaSuggestion(null)}>保留当前人设</SecondaryButton>
           </div>
         </Modal>

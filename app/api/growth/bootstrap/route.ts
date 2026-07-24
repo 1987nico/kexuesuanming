@@ -152,9 +152,20 @@ export async function POST(req: Request) {
   let createdAt: string | undefined;
   let existingOwner: string | null = null;
   let existingAccount: Awaited<ReturnType<ReturnType<typeof growthStore>["getAccount"]>> = null;
-  if (parsed.data.regenerateAccountId) {
-    const existing = await store.getAccount(parsed.data.regenerateAccountId);
-    if (existing) {
+  const existing = parsed.data.regenerateAccountId
+    ? await store.getAccount(parsed.data.regenerateAccountId)
+    : !parsed.data.previewOnly
+      ? await store.getLatestAccountByPersona(
+        DEFAULT_TENANT_ID,
+        parsed.data.persona,
+        guard.auth.user.id,
+        parsed.data.businessLine,
+      )
+      : null;
+  if (existing) {
+    // 首次创建请求如果因断网被重试，按“用户 × 业务 × 视角”复用刚创建的
+    // 人设，避免同一个工作空间产生两条账号记录。
+    if (parsed.data.regenerateAccountId) {
       if (guard.auth.role !== "admin" && existing.owner_user_id !== guard.auth.user.id) {
         return NextResponse.json({ error: "forbidden", message: "不能修改其他用户或未归属的历史人设。" }, { status: 403 });
       }
@@ -163,24 +174,32 @@ export async function POST(req: Request) {
         || accountForBusinessGeneration(existing).business_line !== parsed.data.businessLine) {
         return NextResponse.json({ error: "account_context_mismatch", message: "待更新人设与当前业务或视角不一致。" }, { status: 409 });
       }
-      existingAccount = existing;
-      createdAt = existing.created_at;
-      existingOwner = existing.owner_user_id ?? null;
     }
+    existingAccount = existing;
+    createdAt = existing.created_at;
+    existingOwner = existing.owner_user_id ?? null;
   }
+  const effectiveRegenerateAccountId = existingAccount?.id ?? parsed.data.regenerateAccountId;
+  const storedPlanForRetry = existingAccount
+    && !parsed.data.regenerateAccountId
+    && !parsed.data.previewOnly
+    ? await store.getLatestPlan(existingAccount.id)
+    : null;
 
   const settings = await store.getBusinessSettings(DEFAULT_TENANT_ID);
   const businessPosition = resolveBusinessPosition(settings, parsed.data.businessLine);
-  const { account, plan, usage } = await generateAccountAndPlan({
+  const { account, plan: generatedPlan, usage } = await generateAccountAndPlan({
     tenantId: DEFAULT_TENANT_ID,
     ...parsed.data,
     targetUser: parsed.data.targetUser || businessPosition.target_user,
     coreProblem: parsed.data.coreProblem || businessPosition.core_problem,
     trustSource: parsed.data.trustSource || businessPosition.trust_source,
     businessPosition,
+    regenerateAccountId: effectiveRegenerateAccountId,
     createdAt,
     reportPrices: { lite: settings.report_lite_price, deep: settings.report_deep_price },
   });
+  const plan = storedPlanForRetry ?? generatedPlan;
 
   // 数据归属：新账号归创建者；重生成保留原归属
   account.owner_user_id = existingAccount ? existingOwner : guard.auth.user.id;
@@ -207,7 +226,9 @@ export async function POST(req: Request) {
 
   if (!parsed.data.previewOnly) {
     await store.saveAccount(account);
-    if (!parsed.data.regenerateAccountId) await store.savePlan(plan);
+    if (!parsed.data.regenerateAccountId && !storedPlanForRetry) {
+      await store.savePlan(generatedPlan);
+    }
   }
   if (usage) {
     await store.saveUsage({
