@@ -49,6 +49,11 @@ import {
   type ReviewTaskState,
 } from "@/lib/growth/reviewCenter";
 import { personaGenerationStrategy } from "@/lib/growth/personaCreation";
+import {
+  MANUAL_TITLE_MAX_LENGTH,
+  manualTitleLength,
+  manualTitleValidationError,
+} from "@/lib/growth/titleEditing";
 
 interface BootstrapData {
   businessLine: GrowthBusinessLine;
@@ -360,6 +365,10 @@ export default function GrowthPage() {
   const workspaceCache = useRef(new Map<string, BootstrapData>());
   const workspaceTransients = useRef(new Map<string, WorkspaceTransient>());
   const workspaceRequests = useRef(new Map<string, Promise<BootstrapData>>());
+  const titleSaveRequests = useRef(new Map<string, {
+    title: string;
+    promise: Promise<{ run: GrowthRun; topic: TopicCandidate }>;
+  }>());
   const activeWorkspace = useRef(workspaceKey("overseas_student", "buyer"));
   const prefetchStarted = useRef(false);
 
@@ -951,26 +960,48 @@ export default function GrowthPage() {
     setTopicMessage(`已恢复${formatDateTime(run.created_at)}生成的批次；更新的批次仍然保留。`);
   }
 
-  function changeTopicTitle(topic: TopicCandidate, title: string) {
-    const limitedTitle = Array.from(title).slice(0, 20).join("");
-    setTitleEdits((current) => ({ ...current, [topic.id]: limitedTitle }));
+  function changeTopicTitle(topic: TopicCandidate, title: string, composing = false) {
+    setTitleEdits((current) => ({ ...current, [topic.id]: title }));
+    if (composing) return;
     if (activeTopic?.topic.id === topic.id) setActiveTopic(null);
     setVariants([]);
     setChosen(null);
   }
 
-  function selectTopic(run: GrowthRun, topic: TopicCandidate) {
-    setSelectedTopic({ run, topic });
-    setActiveTopic(null);
-    setVariants([]);
-    setChosen(null);
+  async function selectTopic(run: GrowthRun, topic: TopicCandidate) {
+    const editedTitle = titleEdits[topic.id] ?? topic.title;
+    const validationError = manualTitleValidationError(editedTitle);
+    if (validationError) {
+      setMessage(validationError);
+      return;
+    }
+    setSavingTitleId(topic.id);
+    try {
+      const saved = await persistTopicTitle(run, topic, editedTitle);
+      setSelectedTopic(saved);
+      setActiveTopic(null);
+      setVariants([]);
+      setChosen(null);
+      setMessage(saved.topic.title === topic.title ? "标题已选择。" : "标题修改已保存并选择。");
+    } catch (error) {
+      setMessage((error as Error).message);
+    } finally {
+      setSavingTitleId(null);
+    }
   }
 
   async function persistTopicTitle(run: GrowthRun, topic: TopicCandidate, title: string) {
     const nextTitle = title.trim();
-    if (!nextTitle) throw new Error("标题不能为空");
+    const validationError = manualTitleValidationError(nextTitle);
+    if (validationError) throw new Error(validationError);
     if (nextTitle === topic.title) return { run, topic };
-    const result = await requestJSON<{ run: GrowthRun; topic: TopicCandidate }>("/api/growth/topics", {
+    const pending = titleSaveRequests.current.get(topic.id);
+    if (pending?.title === nextTitle) return pending.promise;
+    if (pending) {
+      await pending.promise.catch(() => undefined);
+      return persistTopicTitle(run, topic, nextTitle);
+    }
+    const promise = requestJSON<{ run: GrowthRun; topic: TopicCandidate }>("/api/growth/topics", {
       method: "PATCH",
       body: JSON.stringify({
         runId: run.id,
@@ -980,22 +1011,37 @@ export default function GrowthPage() {
         persona,
         title: nextTitle,
       }),
+    }).then((result) => {
+      setData((current) => current ? {
+        ...current,
+        runs: current.runs.map((item) => item.id === result.run.id ? result.run : item),
+      } : current);
+      if (selectedTopic?.topic.id === topic.id) setSelectedTopic({ run: result.run, topic: result.topic });
+      setTitleEdits((current) => {
+        if (current[topic.id] !== nextTitle) return current;
+        const next = { ...current };
+        delete next[topic.id];
+        return next;
+      });
+      return result;
     });
-    setData((current) => current ? {
-      ...current,
-      runs: current.runs.map((item) => item.id === result.run.id ? result.run : item),
-    } : current);
-    if (selectedTopic?.topic.id === topic.id) setSelectedTopic({ run: result.run, topic: result.topic });
-    setTitleEdits((current) => {
-      const next = { ...current };
-      delete next[topic.id];
-      return next;
-    });
-    return result;
+    titleSaveRequests.current.set(topic.id, { title: nextTitle, promise });
+    try {
+      return await promise;
+    } finally {
+      if (titleSaveRequests.current.get(topic.id)?.promise === promise) {
+        titleSaveRequests.current.delete(topic.id);
+      }
+    }
   }
 
   async function saveTopicTitle(run: GrowthRun, topic: TopicCandidate, title: string) {
-    if (!title.trim() || title.trim() === topic.title) return;
+    const validationError = manualTitleValidationError(title);
+    if (validationError) {
+      setMessage(validationError);
+      return;
+    }
+    if (title.trim() === topic.title) return;
     setSavingTitleId(topic.id);
     try {
       await persistTopicTitle(run, topic, title);
@@ -2133,8 +2179,8 @@ function MethodArea({
   onRotateSource: (mode: MethodGenerationMode, methodId: TitleMethodId) => void;
   onRegenerateTitle: (mode: MethodGenerationMode, methodId: TitleMethodId, topicId: string) => void;
   onUndoTitle: (mode: MethodGenerationMode, run: GrowthRun) => void;
-  onSelectTopic: (run: GrowthRun, topic: TopicCandidate) => void;
-  onTitleChange: (topic: TopicCandidate, title: string) => void;
+  onSelectTopic: (run: GrowthRun, topic: TopicCandidate) => Promise<void>;
+  onTitleChange: (topic: TopicCandidate, title: string, composing?: boolean) => void;
   onSaveTitle: (run: GrowthRun, topic: TopicCandidate, title: string) => void;
   onSyncPromise: (run: GrowthRun, topic: TopicCandidate) => void;
   onOpenSource: (methodId: TitleMethodId) => void;
@@ -2276,8 +2322,8 @@ function MethodSlot({
   activeTopicId?: string;
   editedTitle?: string;
   savingTitle: boolean;
-  onSelectTopic: (run: GrowthRun, topic: TopicCandidate) => void;
-  onTitleChange: (topic: TopicCandidate, title: string) => void;
+  onSelectTopic: (run: GrowthRun, topic: TopicCandidate) => Promise<void>;
+  onTitleChange: (topic: TopicCandidate, title: string, composing?: boolean) => void;
   onSaveTitle: (run: GrowthRun, topic: TopicCandidate, title: string) => void;
   onSyncPromise: (run: GrowthRun, topic: TopicCandidate) => void;
   onOpenSource: (methodId: TitleMethodId) => void;
@@ -2294,6 +2340,9 @@ function MethodSlot({
   const usableSource = sourceCanGenerate(source);
   const active = topic?.id === activeTopicId;
   const currentTitle = topic ? editedTitle ?? topic.title : "";
+  const currentTitleLength = manualTitleLength(currentTitle);
+  const currentTitleError = topic ? manualTitleValidationError(currentTitle) : null;
+  const composingTitle = useRef(false);
   const sourceBatchCount = sourceUsageCount(account, source);
   const canUndoTitle = Boolean(
     run?.title_mutation?.mutation_type === "single_title_regeneration"
@@ -2382,16 +2431,37 @@ function MethodSlot({
             <label className="block">
               <span className="flex items-center justify-between gap-3 text-xs font-medium text-slate-500">
                 <span>标题（可编辑）</span>
-                <span>{Array.from(currentTitle).length}字 / 建议不超过20字{savingTitle ? " · 保存中…" : currentTitle !== topic.title ? " · 已修改" : ""}</span>
+                <span className={currentTitleError ? "text-red-600" : ""}>
+                  {currentTitleLength}/{MANUAL_TITLE_MAX_LENGTH}字
+                  {currentTitleError ? ` · ${currentTitleError}` : savingTitle ? " · 保存中…" : currentTitle !== topic.title ? " · 已修改" : ""}
+                </span>
               </span>
               <input
                 aria-label={`编辑${method.label}标题`}
+                aria-invalid={Boolean(currentTitleError)}
+                aria-describedby={`title-help-${topic.id}`}
                 type="text"
                 value={currentTitle}
-                onChange={(event) => onTitleChange(topic, event.target.value)}
-                onBlur={() => onSaveTitle(run, topic, currentTitle)}
-                className={`mt-2 min-h-11 w-full rounded-xl border bg-white px-3 py-2.5 text-base font-semibold leading-6 outline-none focus:border-amber-500 focus-visible:ring-2 focus-visible:ring-amber-400 ${currentTitle.trim() ? "border-slate-200" : "border-red-400"}`}
+                onCompositionStart={() => {
+                  composingTitle.current = true;
+                }}
+                onCompositionEnd={(event) => {
+                  composingTitle.current = false;
+                  onTitleChange(topic, event.currentTarget.value, false);
+                }}
+                onChange={(event) => onTitleChange(
+                  topic,
+                  event.target.value,
+                  composingTitle.current || Boolean((event.nativeEvent as InputEvent).isComposing),
+                )}
+                onBlur={(event) => {
+                  if (!composingTitle.current) onSaveTitle(run, topic, event.currentTarget.value);
+                }}
+                className={`mt-2 min-h-11 w-full rounded-xl border bg-white px-3 py-2.5 text-base font-semibold leading-6 outline-none focus-visible:ring-2 ${currentTitleError ? "border-red-400 focus:border-red-500 focus-visible:ring-red-300" : "border-slate-200 focus:border-amber-500 focus-visible:ring-amber-400"}`}
               />
+              <span id={`title-help-${topic.id}`} className={`mt-1 block text-xs ${currentTitleError ? "text-red-600" : "text-slate-400"}`}>
+                {currentTitleError || "最多20字；中文输入完成后再校验，不会自动删字。"}
+              </span>
             </label>
             <details className="mt-2 rounded-xl bg-slate-50 px-3 py-2 text-sm leading-6 text-slate-600">
               <summary className="cursor-pointer font-medium">查看正文承诺</summary>
@@ -2401,14 +2471,14 @@ function MethodSlot({
               <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
                 <div className="font-semibold">承诺未跟随标题</div>
                 <p className="mt-1 text-xs leading-5">{topic.title_promise_validation || "标题已经修改，需要先同步正文承诺。"}</p>
-                <button type="button" disabled={savingTitle || Boolean(busy)} onClick={() => onSyncPromise(run, topic)} className="mt-2 min-h-11 rounded-xl border border-amber-300 bg-white px-3 text-sm font-semibold disabled:opacity-40">根据标题更新承诺</button>
+                <button type="button" disabled={savingTitle || Boolean(busy) || Boolean(currentTitleError)} onClick={() => onSyncPromise(run, topic)} className="mt-2 min-h-11 rounded-xl border border-amber-300 bg-white px-3 text-sm font-semibold disabled:opacity-40">根据标题更新承诺</button>
               </div>
             )}
             <div className="mt-4 flex flex-wrap gap-2">
               {method.group === "native" && (
                 <SecondaryButton
                   disabled={Boolean(busy)
-                    || !currentTitle.trim()
+                    || Boolean(currentTitleError)
                     || topic.title_promise_status === "stale"
                     || topic.title_promise_status === "invalid"}
                   onClick={() => onRegenerateTitle(mode, method.id, topic.id)}
@@ -2428,7 +2498,7 @@ function MethodSlot({
               {active ? (
                 <div className="inline-flex min-h-10 items-center rounded-xl bg-slate-900 px-4 text-sm font-semibold text-white">已选择</div>
               ) : (
-                <SecondaryButton disabled={Boolean(busy) || !currentTitle.trim()} onClick={() => onSelectTopic(run, topic)}>选择此标题</SecondaryButton>
+                <SecondaryButton disabled={Boolean(busy) || Boolean(currentTitleError)} onClick={() => onSelectTopic(run, topic)}>选择此标题</SecondaryButton>
               )}
             </div>
           </>
