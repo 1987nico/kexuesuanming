@@ -125,6 +125,15 @@ describe("标题语义去重", () => {
     expect(result.reasons).toContain("父母压力下的求职困境母题相同");
   });
 
+  it("把待业后害怕接爸妈电话的表达也判为父母压力母题", () => {
+    const result = evaluateTitleSemanticDuplicate(
+      "花百万留学，不敢跟爸妈说秋招没方向",
+      "海归待业，怕接爸妈的视频电话",
+    );
+    expect(result.duplicate).toBe(true);
+    expect(result.reasons).toContain("父母压力下的求职困境母题相同");
+  });
+
   it("把岗没选对归为方向错位，避免反认知题换词重复", () => {
     const result = evaluateTitleSemanticDuplicate(
       "以为海归吃香，投了才知道岗没选对",

@@ -132,6 +132,12 @@ describe("标题完整历史语义去重", () => {
     expect(titlesAreNearDuplicate(candidate, history)).toBe(true);
   });
 
+  it("待业后害怕接爸妈电话也不能伪装成新母题", () => {
+    const history = "花百万留学，不敢跟爸妈说秋招没方向";
+    const candidate = "海归待业，怕接爸妈的视频电话";
+    expect(titlesAreNearDuplicate(candidate, history)).toBe(true);
+  });
+
   it("父母压力母题换成另一种坏消息后仍必须拦截", () => {
     const history = "花爸妈钱留学，不敢说面试全挂";
     const candidate = {
