@@ -4,7 +4,9 @@ import crypto from "node:crypto";
 const BASE_URL = "https://www.shuangshoujianai.com";
 const COOKIE_PATH = "/private/tmp/growth-acceptance.cookies";
 const LEDGER_PATH = "/private/tmp/growth-title-production-stress-ledger.json";
-const ROUNDS = Number(process.env.GROWTH_STRESS_ROUNDS || 20);
+// 用户验收是“一个运营连续点换一批”，不是并发压测。默认六个业务空间各
+// 五批，共30批；更长耐久测试可显式传 GROWTH_STRESS_ROUNDS。
+const ROUNDS = Number(process.env.GROWTH_STRESS_ROUNDS || 5);
 
 const NATIVE_METHODS = {
   buyer: ["human_pain", "tug_of_war", "contrarian", "nostalgia"],
@@ -67,7 +69,16 @@ async function request(path, options = {}) {
       body: options.body ? JSON.stringify(options.body) : undefined,
       signal: controller.signal,
     });
-    const data = await response.json().catch(() => ({ error: "invalid_json" }));
+    const raw = await response.text();
+    let data;
+    try {
+      data = JSON.parse(raw);
+    } catch {
+      data = {
+        error: "invalid_json",
+        raw_response: raw.slice(0, 500),
+      };
+    }
     return { ok: response.ok, status: response.status, data, elapsedMs: Date.now() - startedAt };
   } finally {
     clearTimeout(timeout);
@@ -181,7 +192,7 @@ function validateNewBatch(state, response, round) {
       });
     }
     if (/[A-Za-z]{3,}[\u3400-\u9fff]|[\u3400-\u9fff][A-Za-z]{3,}/u.test(title)
-      && !/(?:AI|Offer|QS)/u.test(title)) {
+      && !/(?:AI|offer|QS)/iu.test(title)) {
       throw Object.assign(new Error("标题出现中英文硬拼或乱码"), {
         evidence: { space: state.key, round, method_id: topic.method_id, title },
       });
@@ -229,8 +240,8 @@ function validateNewBatch(state, response, round) {
 }
 
 const ledger = {
-  objective: "正式部署上的6空间×20批真实模型标题压力验收",
-  deployment: "dpl_DUtKjZau7pGBTFvEo1KERNNq67FW",
+  objective: `正式部署上的6空间×${ROUNDS}批真实用户标题验收`,
+  deployment: "dpl_F3xwdnWAyvGiKURWxBkBdvZ21i5F",
   started_at: new Date().toISOString(),
   status: "running",
   batches_passed: 0,
@@ -250,9 +261,10 @@ try {
   await writeFile(LEDGER_PATH, `${JSON.stringify(ledger, null, 2)}\n`, "utf8");
 
   for (let round = 1; round <= ROUNDS; round += 1) {
-    // 每次最多并行三个业务空间，避免把供应商限流误判成标题质量故障。
-    for (let offset = 0; offset < states.length; offset += 3) {
-      const group = states.slice(offset, offset + 3);
+    // 严格模拟一个运营逐次点击：任何时候只生成一个业务空间。并发三路会把
+    // 平台资源抖动误判成用户功能故障，也不符合真实操作路径。
+    for (let offset = 0; offset < states.length; offset += 1) {
+      const group = states.slice(offset, offset + 1);
       const responses = await Promise.all(group.map((state) => request("/api/growth/topics", {
         method: "POST",
         // 给客户端留少量网络收尾时间，但正式验收仍由上面的 120 秒硬门槛

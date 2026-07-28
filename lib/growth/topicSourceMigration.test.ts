@@ -373,6 +373,32 @@ describe("来源型标题生成合同", () => {
     expect(prompt).toContain("最容易拖延入职的认证材料");
   });
 
+  it("行业痛点会把同一现场的自然改写视为已经使用", () => {
+    const prompt = buildTopicPoolUserPrompt({
+      week: 1,
+      targetUser: "准备秋招的留学生与家长",
+      coreProblem: "求职方向与招聘节奏不清晰",
+      persona: "expert",
+      methods: [TITLE_METHOD_BY_ID.human_pain],
+      generationMode: "default",
+      diversityHistory: [
+        { method_id: "human_pain", title: "申请页卡着不动，不敢刷新怕白等", batch_index: 0 },
+        { method_id: "human_pain", title: "拒信躺邮箱，指尖悬着不敢点", batch_index: 1 },
+        { method_id: "human_pain", title: "室友聊Offer，我假装忙低头", batch_index: 2 },
+        { method_id: "human_pain", title: "毕业快到了，反而更焦虑", batch_index: 3 },
+      ],
+      context: { businessLine: "overseas_student" },
+    });
+
+    expect(prompt).not.toContain("申请系统状态一直不更新");
+    expect(prompt).not.toContain("拒信到邮箱却不敢点开");
+    expect(prompt).not.toContain("室友讨论Offer时选择沉默");
+    expect(prompt).not.toContain("毕业典礼临近仍说不清去向");
+    expect(prompt).toContain("租约到期却不知道搬去哪座城");
+    expect(prompt).toContain("父母问回程票却不敢确定日期");
+    expect(prompt).toContain("导师问毕业计划只能含糊回答");
+  });
+
   it("来源存在但没有锁定结构卡时，明确禁止生成该方法标题", () => {
     const prompt = buildTopicPoolUserPrompt({
       week: 1,
