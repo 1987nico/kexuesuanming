@@ -231,6 +231,25 @@ export interface TopicBatchRotation {
   created_at: string;
 }
 
+/**
+ * 单个标题方法在一次生成任务中的交付结果。
+ *
+ * 新流程不再因为一个槽位无法通过而撤销整批已合格标题。这个字段只记录
+ * 运营页应如何展示本次结果；标题本身仍只有通过去重和迁移检查后才会写入。
+ */
+export interface TopicMethodDelivery {
+  method_id: TitleMethodId;
+  method_label: string;
+  status: "ready" | "paused" | "failed";
+  /** 给操作者看的简短原因，不暴露模型原始报错。 */
+  reason?: string;
+  attempts: number;
+  topic_id?: string;
+  /** 本轮新生成、沿用上一批，或当前没有可展示标题。 */
+  title_origin: "new" | "retained" | "none";
+  retained_from_run_id?: string;
+}
+
 export interface ValidationCheck {
   key: "source" | "identity" | "fulfillment" | "compliance" | "conversion";
   status: "passed" | "needs_edit" | "blocked";
@@ -707,6 +726,8 @@ export interface GrowthRun {
     method_label: string;
     reason: string;
   }>;
+  /** v3.8 槽位级交付记录；历史批次缺失时按 topic_pool 兼容读取。 */
+  method_deliveries?: TopicMethodDelivery[];
   // 已生成过的选题标题历史（用于换一批时不与历史重复）
   seen_titles?: string[];
   /**

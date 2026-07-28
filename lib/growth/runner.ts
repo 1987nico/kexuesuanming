@@ -45,6 +45,7 @@ import type {
   RawBodyTag,
   TagMergeSuggestion,
   TitleMethodId,
+  TopicMethodDelivery,
   TopicCandidate,
   TopicSourceSnapshot,
   WeeklyReviewResult,
@@ -639,33 +640,11 @@ function topicCandidateDuplicateProblems(
     if (sameBatchMaterial) {
       problems.push(`${topic.method_id}:与本批次${sameBatchMaterial.method_id}使用同一母题和素材组合`);
     }
-    const recentSameMethod = historyTopics.filter((item) =>
-      item.method_id === topic.method_id && (item.batch_index ?? Number.MAX_SAFE_INTEGER) < 5
-    );
-    const sameMother = recentSameMethod.filter((item) =>
-      item.mother_topic_key && item.mother_topic_key === diversity.mother_topic_key
-    );
-    const motherRepeatLimit = topic.source_snapshot ? 3 : 1;
-    if (sameMother.length >= motherRepeatLimit) {
-      problems.push(`${topic.method_id}:近期已使用母题${diversity.mother_topic_key}`);
-    }
-    if (!topic.source_snapshot) {
-      const sameFrame = recentSameMethod.filter((item) =>
-        item.sentence_frame && item.sentence_frame === diversity.sentence_frame
-      );
-      const immediatelyRepeatedFrame = sameFrame.some((item) => (item.batch_index ?? -1) === 0);
-      if (immediatelyRepeatedFrame || sameFrame.length >= 2) {
-        problems.push(`${topic.method_id}:近期句式${diversity.sentence_frame}使用过多`);
-      }
-      const sameMaterial = recentSameMethod.find((item) =>
-        (item.batch_index ?? Number.MAX_SAFE_INTEGER) < 3
-        && item.material_signature
-        && item.material_signature === diversity.material_signature
-      );
-      if (sameMaterial) {
-        problems.push(`${topic.method_id}:近期人物场景结果组合已使用`);
-      }
-    }
+    // 母题、句式、角色/场景组合属于“生成提示”，不能再作为历史硬门禁。
+    // 这些分类本身很粗（例如“离职”“转型”“过往-现在”），会把实质不同的
+    // 原生标题判成重复，导致整批标题不断被打回。真正的历史去重由上面的
+    // 完全指纹和同方法近似标题承担；同一批次仍保留素材组合拦截，避免卡片
+    // 同时出现两条几乎同一个角度的标题。
   }
   return problems;
 }
@@ -774,6 +753,7 @@ export async function generateTopicBatch(input: {
 }): Promise<{
   topics: TopicCandidate[];
   unavailableMethods: GrowthRun["unavailable_methods"];
+  methodDeliveries: TopicMethodDelivery[];
   generationAttempts: number;
   structureCards: BenchmarkStructureCard[];
   usage?: Record<string, unknown>;
@@ -798,9 +778,19 @@ export async function generateTopicBatch(input: {
       ),
     });
   } catch (error) {
+    if (input.allowSourcePause) {
+      prepared = {
+        cards: [],
+        rejected: [...expectedSourceMethodIds].map((method_id) => ({
+          method_id,
+          reason: "母题结构拆解暂未完成，本轮先暂停该槽位。",
+        })),
+      };
+    } else {
     throw new Error(`topic_batch_generation_failed:${[...expectedSourceMethodIds]
       .map((methodId) => `${methodId}:结构卡生成失败`)
       .join(" | ")}:${(error as Error).message}`);
+    }
   }
   if (prepared.rejected.length && !input.allowSourcePause) {
     throw new Error(`topic_batch_generation_failed:${prepared.rejected
@@ -830,10 +820,30 @@ export async function generateTopicBatch(input: {
     }
     return [];
   });
+  const initialDelivery = (method: TitleMethodDefinition): TopicMethodDelivery | null => {
+    const unavailable = unavailableMethods.find((item) => item.method_id === method.id);
+    if (!unavailable) return null;
+    return {
+      method_id: method.id,
+      method_label: method.label,
+      status: "paused",
+      reason: unavailable.reason,
+      attempts: 0,
+      title_origin: "none",
+    };
+  };
   if (!methods.length) {
     return {
       topics: [],
       unavailableMethods,
+      methodDeliveries: expected.map((method) => initialDelivery(method) ?? ({
+        method_id: method.id,
+        method_label: method.label,
+        status: "failed" as const,
+        reason: "本次没有形成可生成的标题槽位。",
+        attempts: 0,
+        title_origin: "none" as const,
+      })),
       generationAttempts: 0,
       structureCards: prepared.cards,
     };
@@ -848,8 +858,52 @@ export async function generateTopicBatch(input: {
   let lastProblems: string[] = [];
   let usage: Record<string, unknown> | undefined;
   const accepted = new Map<TitleMethodId, TopicCandidate>();
+  const maxAttempts = input.allowSourcePause ? 1 : 3;
 
-  for (let attempt = 1; attempt <= 3 && accepted.size < methods.length; attempt += 1) {
+  const operatorReason = (method: TitleMethodDefinition, raw?: string) => {
+    const unavailable = unavailableMethods.find((item) => item.method_id === method.id);
+    if (unavailable) return unavailable.reason;
+    const message = raw ?? "";
+    if (/母题|来源|结构卡/u.test(message)) {
+      return "没有形成可验证的新母题，本轮先保留当前标题。";
+    }
+    if (/迁移/u.test(message)) {
+      return "新标题没有通过对标迁移审核，本轮先保留当前标题。";
+    }
+    if (/重复|近似|句式|素材/u.test(message)) {
+      return "新候选与近期标题过于相似，本轮先保留当前标题。";
+    }
+    if (/模型未返回/u.test(message)) {
+      return "本次没有形成新的合格标题，请稍后再试。";
+    }
+    return method.sourceRequired
+      ? "该母题本轮未形成合格迁移标题，当前标题已保留。"
+      : "本次没有形成新的合格标题，当前标题已保留。";
+  };
+  const buildDeliveries = (attempts: number): TopicMethodDelivery[] => expected.map((method) => {
+    const topic = accepted.get(method.id);
+    if (topic) {
+      return {
+        method_id: method.id,
+        method_label: method.label,
+        status: "ready",
+        attempts,
+        topic_id: topic.id,
+        title_origin: "new",
+      };
+    }
+    const rawProblem = lastProblems.find((problem) => problem.startsWith(`${method.id}:`));
+    return {
+      method_id: method.id,
+      method_label: method.label,
+      status: method.sourceRequired ? "paused" : "failed",
+      reason: operatorReason(method, rawProblem),
+      attempts,
+      title_origin: "none",
+    };
+  });
+
+  for (let attempt = 1; attempt <= maxAttempts && accepted.size < methods.length; attempt += 1) {
     const pendingMethods = methods.filter((method) => !accepted.has(method.id));
     try {
       const result = await llmJSON<any>({
@@ -877,7 +931,12 @@ export async function generateTopicBatch(input: {
           diversityHistory: historyTopics,
           context: accountContext(input.account),
         }), maxTokens: 3200, temperature: Math.min(0.82, 0.62 + attempt * 0.07),
-        timeoutMs: 65_000, jsonRetries: 0,
+        // 标题批次允许在上层保留已通过的槽位；不要因主模型超时再等一次
+        // 备用模型。这样一次批次调用的时长有明确上限，局部失败也不会丢掉
+        // 已经形成的新标题。
+        timeoutMs: 45_000,
+        jsonRetries: 0,
+        allowFallback: false,
       });
       usage = resultUsage(result);
       const rows = Array.isArray(result.data?.topics) ? result.data.topics : [];
@@ -994,13 +1053,25 @@ export async function generateTopicBatch(input: {
       }
 
       if (sourceCandidates.length) {
-        const decisions = await validateSourceMigrations({
-          businessLine: input.account.business_line ?? "executive",
-          persona: input.account.persona,
-          targetUser: input.account.target_user,
-          coreProblem: input.account.core_problem,
-          candidates: sourceCandidates.map((candidate) => candidate.migration),
-        });
+        let decisions: Awaited<ReturnType<typeof validateSourceMigrations>> = [];
+        try {
+          decisions = await validateSourceMigrations({
+            businessLine: input.account.business_line ?? "executive",
+            persona: input.account.persona,
+            targetUser: input.account.target_user,
+            coreProblem: input.account.core_problem,
+            candidates: sourceCandidates.map((candidate) => candidate.migration),
+          });
+        } catch (error) {
+          for (const candidate of sourceCandidates) {
+            candidateProblemsByMethod.get(candidate.method.id)?.push(
+              `${candidate.method.id}:独立迁移审核暂不可用，本轮暂停`,
+            );
+          }
+          attemptProblems.push(...[...new Set(sourceCandidates.map((candidate) =>
+            `${candidate.method.id}:独立迁移审核暂不可用，本轮暂停`
+          ))]);
+        }
         const decisionById = new Map(decisions.map((decision) => [decision.candidateId, decision]));
 
         for (const method of pendingMethods.filter((item) => sources.has(item.id))) {
@@ -1052,6 +1123,7 @@ export async function generateTopicBatch(input: {
         return {
           topics: methods.map((method) => accepted.get(method.id)!),
           unavailableMethods,
+          methodDeliveries: buildDeliveries(attempt),
           generationAttempts: attempt,
           structureCards: prepared.cards,
           usage,
@@ -1068,11 +1140,7 @@ export async function generateTopicBatch(input: {
   }
 
   const missingMethods = methods.filter((method) => !accepted.has(method.id));
-  if (
-    input.allowSourcePause
-    && accepted.size > 0
-    && missingMethods.every((method) => method.sourceRequired)
-  ) {
+  if (input.allowSourcePause) {
     return {
       topics: methods.flatMap((method) => {
         const topic = accepted.get(method.id);
@@ -1080,13 +1148,17 @@ export async function generateTopicBatch(input: {
       }),
       unavailableMethods: [
         ...(unavailableMethods ?? []),
-        ...missingMethods.map((method) => ({
+        ...missingMethods.filter((method) => !unavailableMethods.some((item) => item.method_id === method.id)).map((method) => ({
           method_id: method.id,
           method_label: method.label,
-          reason: "更换母题后仍未形成合格迁移，本轮暂停",
+          reason: operatorReason(
+            method,
+            lastProblems.find((problem) => problem.startsWith(`${method.id}:`)),
+          ),
         })),
       ],
-      generationAttempts: 3,
+      methodDeliveries: buildDeliveries(maxAttempts),
+      generationAttempts: maxAttempts,
       structureCards: prepared.cards,
       usage,
     };
@@ -1119,7 +1191,9 @@ export async function generateTopicPool(input: {
         generationMode: input.generationMode ?? "default",
       })
     ),
-    unavailable_methods: generated.unavailableMethods, learning_trace: input.learningBrief?.trace,
+    unavailable_methods: generated.unavailableMethods,
+    method_deliveries: generated.methodDeliveries,
+    learning_trace: input.learningBrief?.trace,
     created_at: timestamp, updated_at: timestamp,
   };
   return { run, usage: generated.usage };

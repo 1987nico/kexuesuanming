@@ -12,6 +12,7 @@ import type {
   GrowthAccount,
   GrowthRun,
   TitleMethodId,
+  TopicCandidate,
 } from "@/lib/growth/types";
 import {
   buildLearningBrief,
@@ -20,15 +21,14 @@ import {
 } from "@/lib/growth/reviewLearning";
 import { ensureRecentTopicSources } from "@/lib/growth/sourceDiscovery";
 import {
-  mergeRotatedTopicPool,
+  freshBenchmarkSourcePlan,
+  historicalSourceUrlsByMethod,
   recentSourceUrls,
-  sourceMethodsDueForRotation,
   updateBenchmarkSourceUsage,
   withHistoricalBenchmarkSourceUsage,
 } from "@/lib/growth/sourceRotation";
 import {
   buildSingleTitleMutation,
-  mergeRegeneratedNativeTopic,
 } from "@/lib/growth/singleTitleRegeneration";
 import {
   accountForBusinessGeneration,
@@ -39,7 +39,9 @@ import { sourceIsUsable } from "@/lib/growth/validation";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export const maxDuration = 300;
+// 单次请求只允许完成一轮可交付生成；失败槽位会部分交付而非在同一请求中
+// 全批反复重跑，避免命中 Vercel 的 300 秒硬超时。
+export const maxDuration = 180;
 
 const DEFAULT_TENANT_ID = "mianbajun";
 
@@ -127,6 +129,68 @@ function accountWithRotatedSources(input: {
       ...(input.before.topic_sources ?? []).filter((source) =>
         !targets.has(source.method_id) || (!input.dropMissing && !changed.has(source.method_id))
       ),
+    ],
+    updated_at: now(),
+  };
+}
+
+/**
+ * 槽位级交付：新标题只替换自身方法；未通过的槽位继续沿用上一批，
+ * 绝不因为一个槽位暂停而清空已经可用的标题。
+ */
+function mergeDeliveredTopicPool(input: {
+  previous: TopicCandidate[];
+  generated: TopicCandidate[];
+  methods: ReturnType<typeof methodsForPersona>;
+}) {
+  const previousByMethod = new Map(input.previous.map((topic) => [topic.method_id, topic]));
+  const generatedByMethod = new Map(input.generated.map((topic) => [topic.method_id, topic]));
+  return input.methods.flatMap((method) => {
+    const topic = generatedByMethod.get(method.id) ?? previousByMethod.get(method.id);
+    return topic ? [topic] : [];
+  });
+}
+
+/**
+ * 正常“换一批”时，只把未曾用于该方法的新母题放进本轮账号上下文。
+ *
+ * 这一步不能只依赖自动热榜：运营手工补充、但尚未使用过的有效来源同样
+ * 应该优先可用。找不到新来源的槽位则主动移除旧来源，让生成器给出“暂停”，
+ * 而不是悄悄沿用历史母题。
+ */
+function accountWithFreshBenchmarkSources(input: {
+  before: GrowthAccount;
+  discovered: GrowthAccount;
+  runs: GrowthRun[];
+  methodIds: TitleMethodId[];
+}) {
+  const plans = freshBenchmarkSourcePlan({
+    account: input.before,
+    runs: input.runs,
+    methodIds: input.methodIds,
+    candidateSources: input.discovered.topic_sources,
+  });
+  const occupiedUrls = new Set<string>();
+  const replacements = input.methodIds.flatMap((methodId) => {
+    const plan = plans.find((item) => item.method_id === methodId);
+    if (!plan || plan.status !== "ready") return [];
+    const usedForMethod = new Set(plan.used_source_urls);
+    const source = [...(input.discovered.topic_sources ?? [])]
+      .filter((item) => item.method_id === methodId)
+      .filter((item) => sourceIsUsable(item))
+      .filter((item) => !usedForMethod.has(item.original_url))
+      .filter((item) => !occupiedUrls.has(item.original_url))
+      .sort((a, b) => b.collected_at.localeCompare(a.collected_at))[0];
+    if (!source) return [];
+    occupiedUrls.add(source.original_url);
+    return [source];
+  });
+  const targets = new Set(input.methodIds);
+  return {
+    ...input.discovered,
+    topic_sources: [
+      ...replacements,
+      ...(input.discovered.topic_sources ?? []).filter((source) => !targets.has(source.method_id)),
     ],
     updated_at: now(),
   };
@@ -290,35 +354,52 @@ export async function POST(req: Request) {
       dropMissing: action === "rotate_all_sources",
     });
   } else if (action === "regenerate_titles") {
-    // 普通“换一批标题”优先复用有效母题；缺失或硬失效来源由系统补齐。
-    const discovered = await ensureRecentTopicSources(account);
-    sourceRefreshSummary = discovered.summary;
-    account = discovered.account;
-
-    // 同一母题生成满3批后属于软换源：能找到新母题就换，找不到则继续复用一次。
-    const dueMethodIds = sourceMethodsDueForRotation(account)
-      .filter((methodId) => applicableMethods.some((method) =>
-        method.id === methodId && method.sourceRequired
-      ));
-    if (dueMethodIds.length) {
-      const rotated = await ensureRecentTopicSources(account, {
+    // “换一批标题”里的对标槽位必须换从未使用过的新母题。
+    // 找不到新来源时只暂停该槽位，绝不复用旧母题、更不拖死原生法。
+    const sourceMethodIds = benchmarkMethods.map((method) => method.id);
+    const allHistoricalSourceUrls = historicalSourceUrlsByMethod({
+      account,
+      runs,
+      methodIds: sourceMethodIds,
+    });
+    const hasUnusedCurrentSource = new Set(sourceMethodIds.filter((methodId) => {
+      const used = new Set(allHistoricalSourceUrls.get(methodId) ?? []);
+      return (account!.topic_sources ?? []).some((source) =>
+        source.method_id === methodId
+        && sourceIsUsable(source)
+        && !used.has(source.original_url)
+      );
+    }));
+    const methodsNeedingDiscovery = sourceMethodIds.filter((methodId) => !hasUnusedCurrentSource.has(methodId));
+    // 新发现的母题不能与任何历史对标槽位共用，避免“换了方法却仍是旧母题”。
+    const excluded = [...new Set([...allHistoricalSourceUrls.values()].flat())];
+    const discovered = methodsNeedingDiscovery.length
+      ? await ensureRecentTopicSources(account, {
         force: true,
-        methodIds: dueMethodIds,
-        excludeUrls: recentSourceUrls({ account, runs, methodIds: dueMethodIds }),
-      });
-      const automaticChanges = changedSources(account, rotated.account, dueMethodIds);
-      if (automaticChanges.length) {
-        account = accountWithRotatedSources({
-          before: account,
-          discovered: rotated.account,
-          methodIds: dueMethodIds,
-          changedMethodIds: automaticChanges,
-          dropMissing: false,
-        });
-        changedMethodIds = automaticChanges;
-        sourceRefreshSummary = rotated.summary;
-      }
-    }
+        methodIds: methodsNeedingDiscovery,
+        excludeUrls: excluded,
+      })
+      : {
+        account,
+        summary: {
+          status: "cached" as const,
+          provider: "redfox_daily" as const,
+          rank_date: "",
+          fetched_count: 0,
+          selected_count: hasUnusedCurrentSource.size,
+          usable_count: hasUnusedCurrentSource.size,
+          message: "当前已有从未使用过的有效母题，本轮直接使用，不重复请求热榜。",
+        },
+      };
+    sourceRefreshSummary = discovered.summary;
+    const freshAccount = accountWithFreshBenchmarkSources({
+      before: account,
+      discovered: discovered.account,
+      methodIds: sourceMethodIds,
+      runs,
+    });
+    changedMethodIds = changedSources(account, freshAccount, sourceMethodIds);
+    account = freshAccount;
   } else {
     sourceRefreshSummary = {
       status: "cached",
@@ -408,142 +489,25 @@ export async function POST(req: Request) {
       ? { [requestedTopic.method_id]: requestedTopic }
       : undefined,
   });
-  const rotateSourcesAndRetry = async (
-    methodIds: TitleMethodId[],
-    maximumAdditionalSources: number,
-  ) => {
-    let retryError = "";
-    const attemptedUrls = new Set([
-      ...recentSourceUrls({ account: account!, runs, methodIds }),
-      ...(account!.topic_sources ?? [])
-        .filter((source) => methodIds.includes(source.method_id))
-        .map((source) => source.original_url),
-    ]);
-    for (let attempt = 1; attempt <= maximumAdditionalSources; attempt += 1) {
-      const currentAccount = account!;
-      const discovered = await ensureRecentTopicSources(currentAccount, {
-        force: true,
-        methodIds,
-        excludeUrls: [...attemptedUrls],
-      });
-      sourceRefreshSummary = discovered.summary;
-      const sourceChanges = changedSources(currentAccount, discovered.account, methodIds);
-      if (!sourceChanges.length) {
-        retryError = "近期候选母题已经尝试完毕";
-        break;
-      }
-      for (const source of discovered.account.topic_sources ?? []) {
-        if (methodIds.includes(source.method_id)) attemptedUrls.add(source.original_url);
-      }
-      account = accountWithRotatedSources({
-        before: currentAccount,
-        discovered: discovered.account,
-        methodIds,
-        changedMethodIds: sourceChanges,
-        dropMissing: false,
-      });
-      changedMethodIds = [...new Set([...changedMethodIds, ...sourceChanges])];
-      try {
-        const retry = await generateTopicBatch(generationInput(false));
-        return { generated: retry, error: "" };
-      } catch (error) {
-        retryError = (error as Error).message;
-        console.warn(
-          `[growth] benchmark source recovery ${attempt}/${maximumAdditionalSources} failed:`,
-          retryError,
-        );
-      }
-    }
-    return { generated: null, error: retryError };
-  };
   try {
-    generated = await generateTopicBatch(generationInput(false));
+    // 每一轮只生成一次候选并按槽位返回。任何未通过的槽位暂停/保留，
+    // 不再在用户请求中进行“整批三轮 + 自动换源两轮”的长链重跑。
+    generated = await generateTopicBatch(generationInput(true));
   } catch (error) {
-    const firstMessage = (error as Error).message;
-    if (action === "regenerate_single_title") {
-      console.error("[growth] single title regeneration failed:", firstMessage);
-      return NextResponse.json({
-        error: "single_title_regeneration_failed",
-        message: "暂时没有生成更合适的新标题，当前标题已保留。可以稍后再试，或直接编辑当前标题。",
-      }, { status: 422 });
-    }
-    if (action !== "regenerate_titles") {
-      const recovered = await rotateSourcesAndRetry(rotationMethodIds, 2);
-      if (recovered.generated) {
-        generated = recovered.generated;
-      } else {
-        console.error(
-          "[growth] manual source rotation failed after automatic recovery:",
-          recovered.error || firstMessage,
-        );
-        return NextResponse.json({
-          error: "benchmark_rotation_failed",
-          message: "今日该方法暂无可用的近期对标，当前标题和原来源已保留。",
-        }, { status: 422 });
-      }
-    } else {
-      const sourceMethodIds = new Set((account.topic_sources ?? []).map((source) => source.method_id));
-      const sourceRelatedFailure = [...sourceMethodIds].some((methodId) =>
-        firstMessage.includes(`${methodId}:`),
-      );
-      if (!sourceRelatedFailure) {
-        console.error("[growth] atomic topic batch failed:", firstMessage);
-        return NextResponse.json({
-          error: "topic_batch_generation_failed",
-          message: "本轮部分槽位与近期母题、句式或素材组合重复，系统自动重试后仍未全部通过；当前批次没有被替换。",
-        }, { status: 422 });
-      }
-
-      // 每个来源型槽位最多连续尝试3个真实母题（当前母题 + 2个新母题）。
-      // 只有完整批次全部通过才提交，任何失败都保留操作者现有标题。
-      const swapMethods = applicableMethods
-        .filter((method) => method.sourceRequired)
-        .map((method) => method.id);
-      const recovered = await rotateSourcesAndRetry(swapMethods, 2);
-      if (recovered.generated) {
-        generated = recovered.generated;
-      } else {
-        console.error(
-          "[growth] atomic topic batch failed after source recovery:",
-          recovered.error || firstMessage,
-        );
-        return NextResponse.json({
-          error: "topic_batch_generation_failed",
-          message: "系统已自动刷新对标来源，并重新生成重复的母题、句式和素材，但仍未形成完整合格批次；当前标题没有被替换。",
-        }, { status: 422 });
-      }
-    }
+    console.error("[growth] topic generation unexpectedly failed:", (error as Error).message);
+    return NextResponse.json({
+      error: "topic_generation_unavailable",
+      message: "标题生成服务暂时不可用，当前标题没有被替换。请稍后再试。",
+    }, { status: 503 });
   }
   const {
     topics: generatedTopics,
     unavailableMethods: generatedUnavailableMethods,
+    methodDeliveries: generatedMethodDeliveries,
     usage,
     generationAttempts,
     structureCards,
   } = generated;
-  if (action === "rotate_single_source" && !generatedTopics.some((topic) =>
-    topic.method_id === requestedMethod!.id
-  )) {
-    return NextResponse.json({
-      error: "benchmark_rotation_failed",
-      message: "新母题没有形成通过审核的迁移标题；当前批次和原来源保持不变。",
-    }, { status: 422 });
-  }
-  if (action === "regenerate_single_title" && !generatedTopics.some((topic) =>
-    topic.method_id === requestedMethod!.id
-  )) {
-    return NextResponse.json({
-      error: "single_title_regeneration_failed",
-      message: "暂时没有生成更合适的新标题，当前标题已保留。可以稍后再试，或直接编辑当前标题。",
-    }, { status: 422 });
-  }
-  if (action === "rotate_all_sources" && generatedTopics.length === 0) {
-    return NextResponse.json({
-      error: "benchmark_rotation_failed",
-      message: "本次找到的新母题均未通过迁移审核；当前批次保持不变。",
-    }, { status: 422 });
-  }
-
   if (structureCards.length) {
     const replacementKeys = new Set(structureCards.map((card) =>
       `${card.business_line}:${card.persona}:${card.method_id}:${card.source_id}`
@@ -565,20 +529,11 @@ export async function POST(req: Request) {
   const regeneratedTopic = action === "regenerate_single_title"
     ? generatedTopics.find((topic) => topic.method_id === requestedMethod!.id)
     : undefined;
-  const topics = action === "regenerate_single_title" && requestedTopic && regeneratedTopic
-    ? mergeRegeneratedNativeTopic({
-      previous: latestRun?.topic_pool ?? [],
-      current: requestedTopic,
-      generated: regeneratedTopic,
-    })
-    : action === "rotate_single_source" || action === "rotate_all_sources"
-    ? mergeRotatedTopicPool({
-      previous: latestRun?.topic_pool ?? [],
-      generated: generatedTopics,
-      mode: action,
-      methodId: requestedMethod?.id,
-    })
-    : generatedTopics;
+  const topics = mergeDeliveredTopicPool({
+    previous: latestRun?.topic_pool ?? [],
+    generated: generatedTopics,
+    methods: applicableMethods,
+  });
   const rotatedMethods = new Set(rotationMethodIds);
   const unavailableMethods = action === "regenerate_single_title"
     ? (latestRun?.unavailable_methods ?? []).filter((item) =>
@@ -595,6 +550,18 @@ export async function POST(req: Request) {
         ...(generatedUnavailableMethods ?? []),
       ]
       : generatedUnavailableMethods;
+  const previousByMethod = new Map((latestRun?.topic_pool ?? []).map((topic) => [topic.method_id, topic]));
+  const methodDeliveries = generatedMethodDeliveries.map((delivery) => {
+    if (delivery.status === "ready") return delivery;
+    const previous = previousByMethod.get(delivery.method_id);
+    return previous
+      ? {
+        ...delivery,
+        title_origin: "retained" as const,
+        retained_from_run_id: latestRun?.id,
+      }
+      : delivery;
+  });
   const pausedMethodIds = unavailableMethods?.map((item) => item.method_id) ?? [];
   const sourceRotationMode = action === "regenerate_titles" && changedMethodIds.length
     ? "automatic_rotation"
@@ -664,6 +631,7 @@ export async function POST(req: Request) {
       : undefined,
     topic_pool: topics,
     unavailable_methods: unavailableMethods,
+    method_deliveries: methodDeliveries,
     seen_titles: nextSeen,
     title_fingerprints: topics.map((topic) =>
       buildGrowthTitleFingerprint({ account: account!, topic, generationMode })
@@ -708,10 +676,14 @@ export async function POST(req: Request) {
   }
 
   return NextResponse.json({
-    status: "completed",
+    status: methodDeliveries.some((delivery) => delivery.status !== "ready") ? "partial" : "completed",
     run,
     newTopics: topics,
     generatedCount: generatedTopics.length,
+    retainedCount: methodDeliveries.filter((delivery) => delivery.title_origin === "retained").length,
+    pausedCount: methodDeliveries.filter((delivery) => delivery.status === "paused").length,
+    failedCount: methodDeliveries.filter((delivery) => delivery.status === "failed").length,
+    methodDeliveries,
     sourceUsageStatus: "passed",
     uniquenessStatus: "passed",
     migrationStatus: "passed",

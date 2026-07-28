@@ -32,7 +32,7 @@ function topic(
 }
 
 describe("50次用户换批多样性回归", () => {
-  it("25次近期母题重复全部拦截，25次真正换题全部放行", () => {
+  it("25次实质重复全部拦截，25次真实新标题全部放行", () => {
     let blocked = 0;
     let passed = 0;
 
@@ -47,30 +47,25 @@ describe("50次用户换批多样性回归", () => {
           : "nostalgia";
       const overseas = businessLine === "overseas_student";
       const repeating = index % 2 === 0;
+      const previous = topic(
+        methodId,
+        overseas ? "秋招缺的不是海投，是反馈" : "中高管缺的不是机会，是判断",
+        overseas ? "讲清盲目海投为什么没有回复" : "讲清离开平台后如何判断职业价值",
+        businessLine,
+      );
       const current = repeating
         ? topic(
           methodId,
-          overseas ? `第${index + 1}次陪孩子秋招，还是怕帮倒忙` : `第${index + 1}次交回工牌，还是不敢问市场价`,
-          overseas ? "讲清家长介入孩子秋招时的真实冲突" : "讲清离开平台后的职业定价焦虑",
+          overseas ? "秋招真正缺的不是海投，而是反馈！" : "中高管真正缺的不是机会，而是判断！",
+          overseas ? "讲清盲目海投为什么没有回复" : "讲清离开平台后如何判断职业价值",
           businessLine,
         )
         : topic(
           methodId,
-          overseas ? `网申截止前，我先重排了三类岗位` : `家庭现金流只够半年，我先暂停创业`,
+          overseas
+            ? `第${index + 1}次网申截止前，我先重排三类岗位`
+            : `第${index + 1}次现金流只够半年，我先暂停创业`,
           overseas ? "讲清秋招窗口期如何重新安排投递顺序" : "讲清家庭现金流如何改变创业决定",
-          businessLine,
-        );
-      const previous = repeating
-        ? topic(
-          methodId,
-          overseas ? "陪孩子刷岗位，怕说多了又闹僵" : "总监头衔交回去后，我不敢给自己报价",
-          overseas ? "讲清家长介入孩子秋招时的真实冲突" : "讲清离开平台后的职业定价焦虑",
-          businessLine,
-        )
-        : topic(
-          methodId,
-          overseas ? "海投一个月，简历还是零回复" : "猎头三周没回信，我重写了简历",
-          overseas ? "讲清盲目海投为什么没有回复" : "讲清求职材料与岗位要求的错位",
           businessLine,
         );
       const historySignature = buildTopicDiversitySignature(previous, businessLine);

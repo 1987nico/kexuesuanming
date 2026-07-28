@@ -229,6 +229,11 @@ async function selectSources(
       user: `为当前账号的每种标题方法选择1条最适合迁移的近期母题。\n业务线：${account.business_line}\n视角：${account.persona}\n目标人群：${account.target_user}\n核心问题：${account.core_problem}\n方法：${JSON.stringify(methods)}\n候选：${JSON.stringify(candidates)}\n要求：优先方法适配，其次业务相关性和热度；尽量不要重复同一条；“相同产品”必须确实属于职业咨询、求职辅导、测评报告、顾问或陪跑类产品。任何方法没有合格母题时都必须省略，禁止选择“最接近”的无关内容。输出JSON：{"selections":[{"method_id":"...","rank":1,"migration_note":"为何适合及迁移什么逻辑"}]}`,
       maxTokens: 1800,
       temperature: 0.2,
+      // 自动选母题只是优化项：超时后改用确定性筛选即可，不能再等待一次
+      // 备用模型调用把整条“换一批标题”拖过服务端总时限。
+      timeoutMs: 25_000,
+      jsonRetries: 0,
+      allowFallback: false,
     });
     const selected = new Map<TitleMethodId, { note: RedFoxNote; migrationNote: string }>();
     const used = new Set<string>();

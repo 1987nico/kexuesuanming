@@ -60,7 +60,7 @@ describe("标题四层多样性签名", () => {
     expect(fingerprint.diversity_version).toBe("v1");
   });
 
-  it("文字不同但近期母题相同，仍然拦截", () => {
+  it("文字不同但历史母题标签相同，不误判为重复", () => {
     const current = topic(
       "human_pain",
       "工牌交回去后，我才敢问市场价",
@@ -80,10 +80,10 @@ describe("标题四层多样性签名", () => {
       ...signature,
       batch_index: 1,
     }], "executive");
-    expect(problems.some((item) => item.includes("近期已使用母题"))).toBe(true);
+    expect(problems).toHaveLength(0);
   });
 
-  it("不同母题但连续使用同一句式，仍然拦截", () => {
+  it("不同母题但连续使用同一句式，不阻断新标题", () => {
     const current = topic(
       "human_pain",
       "守着百万年薪，不敢递辞呈",
@@ -97,7 +97,7 @@ describe("标题四层多样性签名", () => {
       material_signature: "executive:family:conflict",
       batch_index: 0,
     }], "executive");
-    expect(problems.some((item) => item.includes("近期句式"))).toBe(true);
+    expect(problems).toHaveLength(0);
   });
 
   it("同一批次不接受相同母题和素材组合", () => {

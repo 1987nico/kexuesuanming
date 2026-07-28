@@ -24,6 +24,14 @@ export interface LLMRequest {
   timeoutMs?: number;
   /** JSON 解析失败后的模型重试次数，默认2次。 */
   jsonRetries?: number;
+  /**
+   * 是否允许主模型失败后改用备用模型，默认允许。
+   *
+   * 对有严格总耗时预算的交互链路（例如一次生成一批标题）应关闭：
+   * 这类调用会在上层以可恢复的局部失败处理，而不是把一次超时再等待
+   * 一个完整备用模型调用。
+   */
+  allowFallback?: boolean;
 }
 
 export interface LLMResponse {
@@ -126,8 +134,13 @@ export async function llmComplete(req: LLMRequest): Promise<LLMResponse> {
   // 生产环境可能把主、备都配置成同一个供应商和同一个模型。
   // 这种情况下超时后再次调用同一路由只会把等待时间翻倍，不是真正的故障转移。
   const fallbackIsDistinct = FALLBACK_PROVIDER !== PRIMARY_PROVIDER || FALLBACK_MODEL !== PRIMARY_MODEL;
-  const fallbackOK = hasKey(FALLBACK_PROVIDER) && fallbackIsDistinct;
+  const fallbackOK = req.allowFallback !== false
+    && hasKey(FALLBACK_PROVIDER)
+    && fallbackIsDistinct;
   if (!primaryOK && !fallbackOK) {
+    if (req.allowFallback === false) {
+      throw new Error(`主模型 ${PRIMARY_PROVIDER}/${PRIMARY_MODEL} 不可用，且本次调用不允许使用备用模型`);
+    }
     throw new Error(
       "未配置任何 AI 模型 API key。请在 .env 中设置以下任一变量：ARK_API_KEY（豆包/火山方舟）、DEEPSEEK_API_KEY、ANTHROPIC_API_KEY 或 OPENAI_API_KEY"
     );

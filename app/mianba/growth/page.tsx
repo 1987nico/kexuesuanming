@@ -20,6 +20,7 @@ import type {
   TitleMethodGroup,
   TitleMethodId,
   TopicCandidate,
+  TopicMethodDelivery,
   TopicSourceSnapshot,
   WeeklyReviewResult,
 } from "@/lib/growth/types";
@@ -867,9 +868,13 @@ export default function GrowthPage() {
     if (group) setExploreOpen((current) => ({ ...current, [group]: true }));
     try {
       const result = await requestJSON<{
-        status: "completed";
+        status: "completed" | "partial";
         run: GrowthRun;
         generatedCount: number;
+        retainedCount?: number;
+        pausedCount?: number;
+        failedCount?: number;
+        methodDeliveries?: TopicMethodDelivery[];
         unavailableMethods: GrowthRun["unavailable_methods"];
         topicSources: TopicSourceSnapshot[];
         sourceRefresh: {
@@ -899,6 +904,21 @@ export default function GrowthPage() {
           }),
         },
       );
+      const methodDeliveries = result.methodDeliveries ?? result.run.method_deliveries ?? [];
+      const selectedDelivery = selectedTopic
+        ? methodDeliveries.find((delivery) => delivery.method_id === selectedTopic.topic.method_id)
+        : undefined;
+      const selectedWasReplaced = Boolean(
+        selectedTopic
+        && selectedDelivery?.status === "ready"
+        && selectedDelivery.title_origin === "new"
+        && (
+          action === "regenerate_titles"
+          || (action === "regenerate_single_title" && selectedTopic.topic.method_id === methodId)
+          || (action === "rotate_single_source" && selectedTopic.topic.method_id === methodId)
+          || (action === "rotate_all_sources" && selectedTopic.topic.method_group === "benchmark")
+        ),
+      );
       setData((current) => current ? {
         ...current,
         account: current.account ? {
@@ -909,32 +929,58 @@ export default function GrowthPage() {
         runs: [result.run, ...current.runs.filter((run) => run.id !== result.run.id)],
       } : current);
       setActiveRunIds((current) => ({ ...current, [mode]: result.run.id }));
-      if (selectedIsAffected || action === "regenerate_titles") {
+      if (selectedWasReplaced) {
         setVariants([]);
         setSelectedTopic(null);
         setActiveTopic(null);
         setChosen(null);
+      } else if (selectedTopic && selectedDelivery?.title_origin === "retained") {
+        const retainedTopic = result.run.topic_pool.find((topic) => topic.id === selectedTopic.topic.id);
+        if (retainedTopic) {
+          setSelectedTopic({ run: result.run, topic: retainedTopic });
+          if (activeTopic?.topic.id === retainedTopic.id) setActiveTopic({ run: result.run, topic: retainedTopic });
+        }
       }
-      if (action === "regenerate_single_title" && topicId) {
-        setTitleEdits((current) => {
-          const next = { ...current };
-          delete next[topicId];
-          return next;
-        });
-      } else {
-        setTitleEdits({});
-      }
+      // 只清掉已经被新标题替换的编辑草稿；本轮保留的槽位仍保留操作者的未保存修改。
+      const currentTopicIds = new Set(result.run.topic_pool.map((topic) => topic.id));
+      setTitleEdits((current) => Object.fromEntries(
+        Object.entries(current).filter(([topicId]) => currentTopicIds.has(topicId)),
+      ));
       if (action === "regenerate_single_title") {
-        setTopicMessage(`${TITLE_METHOD_BY_ID[methodId!].label}已保留原选题方向和正文承诺，只更新标题表达；其他槽位保持不变。可在当前槽位撤回上一版。`);
+        setTopicMessage(formatTopicDeliverySummary({
+          action,
+          methodLabel: TITLE_METHOD_BY_ID[methodId!].label,
+          generatedCount: result.generatedCount,
+          methodDeliveries,
+          pausedCount: result.pausedCount,
+          failedCount: result.failedCount,
+        }));
       } else if (action === "rotate_single_source") {
-        setTopicMessage(`${TITLE_METHOD_BY_ID[methodId!].label}已更换新母题并生成新的迁移标题；其他槽位保持不变。旧批次仍可恢复。`);
+        setTopicMessage(formatTopicDeliverySummary({
+          action,
+          methodLabel: TITLE_METHOD_BY_ID[methodId!].label,
+          generatedCount: result.generatedCount,
+          methodDeliveries,
+          pausedCount: result.pausedCount,
+          failedCount: result.failedCount,
+        }));
       } else if (action === "rotate_all_sources") {
-        setTopicMessage(`已为对标法更换${result.changedMethods.length}个新母题，生成${result.generatedCount}个迁移标题；${result.unavailableMethods?.length || 0}个方法本轮暂停。原生法和旧批次保持不变。`);
+        setTopicMessage(formatTopicDeliverySummary({
+          action,
+          generatedCount: result.generatedCount,
+          methodDeliveries,
+          pausedCount: result.pausedCount,
+          failedCount: result.failedCount,
+          changedMethods: result.changedMethods.length,
+        }));
       } else {
-        const rotationText = result.rotationMode === "automatic_rotation"
-          ? ` 系统同时自动更新了${result.changedMethods.length}个已用满3批的母题。`
-          : "";
-        setTopicMessage(`${result.sourceRefresh.message} 已换新${result.generatedCount}个标题，均通过文字、母题、句式和素材组合四层去重；${result.unavailableMethods?.length || 0}个方法本轮暂停。${rotationText}旧批次仍可恢复。`);
+        setTopicMessage(`${result.sourceRefresh.message} ${formatTopicDeliverySummary({
+          action,
+          generatedCount: result.generatedCount,
+          methodDeliveries,
+          pausedCount: result.pausedCount,
+          failedCount: result.failedCount,
+        })}`);
       }
     } catch (error) {
       const errorMessage = (error as Error).message;
@@ -2093,7 +2139,43 @@ function topicBatchActionLabel(run: GrowthRun) {
   if (rotation.mode === "automatic_rotation") {
     return `换一批标题 · 自动更新${rotation.changed_method_ids.length}个母题`;
   }
-  return "换一批标题 · 母题优先复用";
+  return "换一批标题 · 对标槽位换新母题";
+}
+
+function formatTopicDeliverySummary({
+  action,
+  generatedCount,
+  methodDeliveries,
+  pausedCount,
+  failedCount,
+  methodLabel,
+  changedMethods,
+}: {
+  action: "regenerate_titles" | "regenerate_single_title" | "rotate_single_source" | "rotate_all_sources";
+  generatedCount: number;
+  methodDeliveries: TopicMethodDelivery[];
+  pausedCount?: number;
+  failedCount?: number;
+  methodLabel?: string;
+  changedMethods?: number;
+}) {
+  const updated = methodDeliveries.filter((delivery) =>
+    delivery.status === "ready" && delivery.title_origin === "new").length || generatedCount;
+  const retained = methodDeliveries.filter((delivery) => delivery.title_origin === "retained").length;
+  const paused = methodDeliveries.filter((delivery) => delivery.status === "paused").length || pausedCount || 0;
+  const failed = methodDeliveries.filter((delivery) => delivery.status === "failed").length || failedCount || 0;
+  const prefix = action === "regenerate_single_title"
+    ? `${methodLabel || "该槽位"}本轮`
+    : action === "rotate_single_source"
+      ? `${methodLabel || "该方法"}已尝试换新母题；本轮`
+      : action === "rotate_all_sources"
+        ? `已尝试更换${changedMethods ?? 0}个对标母题；本轮`
+        : "本轮";
+  const parts = [`已更新${updated}个标题`];
+  if (retained) parts.push(`${retained}个槽位保留上一版`);
+  if (paused) parts.push(`${paused}个槽位暂停`);
+  if (failed) parts.push(`${failed}个槽位暂未完成`);
+  return `${prefix}${parts.join("；")}。未被替换的标题、已选标题和正文都会保留。`;
 }
 
 function TopicBatchHistory({
@@ -2337,6 +2419,7 @@ function MethodSlot({
 }) {
   const topic = run?.topic_pool.find((item) => item.method_id === method.id);
   const unavailable = run?.unavailable_methods?.find((item) => item.method_id === method.id);
+  const delivery = run?.method_deliveries?.find((item) => item.method_id === method.id);
   const usableSource = sourceCanGenerate(source);
   const active = topic?.id === activeTopicId;
   const currentTitle = topic ? editedTitle ?? topic.title : "";
@@ -2368,8 +2451,10 @@ function MethodSlot({
                 发布于{relativeAge(source.published_at)} · {sourceAge(source)} · 数据刷新于{relativeAge(source.collected_at)}
               </div>
               <div className="mt-1 text-xs leading-5 text-slate-500">{sourceHeatSummary(source)}</div>
-              <div className={`mt-1 text-xs font-medium ${sourceBatchCount >= 3 ? "text-amber-700" : "text-slate-500"}`}>
-                本母题已生成 {sourceBatchCount}/3 批{sourceBatchCount >= 3 ? " · 建议换源" : ""}
+              <div className="mt-1 text-xs font-medium text-slate-500">
+                {sourceBatchCount > 0
+                  ? `该母题已用于${sourceBatchCount}批；下次“换一批标题”会自动换新母题`
+                  : "本母题尚未用于生成标题"}
               </div>
               <details className="mt-2 text-xs text-slate-500">
                 <summary className="cursor-pointer py-1 font-medium text-slate-600">查看完整来源数据</summary>
@@ -2424,6 +2509,8 @@ function MethodSlot({
           onClose={onCloseSource}
         />
       )}
+
+      <MethodDeliveryNotice delivery={delivery} hasTopic={Boolean(topic)} />
 
       <div className="mt-4">
         {topic && run ? (
@@ -2512,6 +2599,41 @@ function MethodSlot({
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+function MethodDeliveryNotice({
+  delivery,
+  hasTopic,
+}: {
+  delivery?: TopicMethodDelivery;
+  hasTopic: boolean;
+}) {
+  if (!delivery) return null;
+  const retained = delivery.title_origin === "retained";
+  const updated = delivery.status === "ready" && delivery.title_origin === "new";
+  const tone = updated
+    ? "border-emerald-200 bg-emerald-50 text-emerald-900"
+    : delivery.status === "failed"
+      ? "border-red-200 bg-red-50 text-red-800"
+      : "border-amber-200 bg-amber-50 text-amber-900";
+  const headline = updated
+    ? "本轮已更新"
+    : retained
+      ? "本轮未更新，已保留上一版"
+      : delivery.status === "paused"
+        ? "本轮暂停"
+        : "本轮暂未完成";
+  const explanation = retained
+    ? delivery.reason || "这个槽位没有形成新的合格标题，原标题仍可继续选择和生成正文。"
+    : delivery.reason || (hasTopic
+      ? "当前标题可以继续使用。"
+      : "本轮没有可展示的新标题。");
+  return (
+    <div className={`mt-4 rounded-xl border px-3 py-2 text-xs leading-5 ${tone}`} role="status">
+      <span className="font-semibold">{headline}</span>
+      <span> · {explanation}</span>
     </div>
   );
 }

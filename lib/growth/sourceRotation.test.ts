@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  freshBenchmarkSourcePlan,
+  historicalSourceUrlsByMethod,
   mergeRotatedTopicPool,
   recordBenchmarkSourceSelection,
   recentSourceUrls,
@@ -83,22 +85,21 @@ const account = (): GrowthAccount => ({
 });
 
 describe("对标法双层换批", () => {
-  it("同一母题生成满3批后进入建议换源状态", () => {
+  it("同一母题第一次生成后，下次换一批即进入必须换源状态", () => {
     const item = source("viral_framework", "source-1");
     let current = account();
     current.topic_sources = [item];
-    for (let index = 0; index < 3; index += 1) {
-      current = {
-        ...current,
-        benchmark_source_usage: updateBenchmarkSourceUsage({
-          account: current,
-          topics: [topic("viral_framework", `标题${index}`, item)],
-          timestamp: `2026-07-23T0${index}:00:00.000Z`,
-        }),
-      };
-    }
-    expect(sourceUsageCount(current, item)).toBe(3);
+    current = {
+      ...current,
+      benchmark_source_usage: updateBenchmarkSourceUsage({
+        account: current,
+        topics: [topic("viral_framework", "标题0", item)],
+        timestamp: "2026-07-23T00:00:00.000Z",
+      }),
+    };
+    expect(sourceUsageCount(current, item)).toBe(1);
     expect(sourceMethodsDueForRotation(current)).toEqual(["viral_framework"]);
+    expect(current.benchmark_source_usage?.[0]?.rotation_status).toBe("rotation_recommended");
   });
 
   it("换一个母题只替换目标槽位", () => {
@@ -188,6 +189,137 @@ describe("对标法双层换批", () => {
       runs: [run, oldRun],
       now: new Date("2026-07-23T00:00:00.000Z"),
     })).not.toContain("https://www.xiaohongshu.com/explore/old-source");
+  });
+
+  it("强制来源去重读取全部历史，不会因超过30天而重新使用母题", () => {
+    const current = account();
+    current.benchmark_source_usage = [{
+      business_line: "executive",
+      persona: "buyer",
+      method_id: "viral_framework",
+      source_id: "old-usage",
+      original_url: "https://www.xiaohongshu.com/explore/old-usage",
+      first_used_at: "2026-01-01T00:00:00.000Z",
+      last_used_at: "2026-01-01T00:00:00.000Z",
+      generated_batch_count: 1,
+      selected_count: 0,
+      rotation_status: "rotation_recommended",
+    }, {
+      business_line: "overseas_student",
+      persona: "buyer",
+      method_id: "viral_framework",
+      source_id: "other-business",
+      original_url: "https://www.xiaohongshu.com/explore/other-business",
+      first_used_at: "2026-07-20T00:00:00.000Z",
+      last_used_at: "2026-07-20T00:00:00.000Z",
+      generated_batch_count: 1,
+      selected_count: 0,
+      rotation_status: "rotation_recommended",
+    }];
+    const oldRun = {
+      created_at: "2025-12-01T00:00:00.000Z",
+      topic_pool: [topic(
+        "viral_framework",
+        "很早的历史标题",
+        source("viral_framework", "old-run-source"),
+      )],
+    } as GrowthRun;
+
+    const history = historicalSourceUrlsByMethod({
+      account: current,
+      runs: [oldRun],
+      methodIds: ["viral_framework"],
+    });
+    expect(history.get("viral_framework")).toEqual(expect.arrayContaining([
+      "https://www.xiaohongshu.com/explore/old-usage",
+      "https://www.xiaohongshu.com/explore/old-run-source",
+    ]));
+    expect(history.get("viral_framework")).not.toContain(
+      "https://www.xiaohongshu.com/explore/other-business",
+    );
+  });
+
+  it("同一账号内按方法判断历史来源，不会误伤另一个对标方法", () => {
+    const current = account();
+    const sharedUrl = "https://www.xiaohongshu.com/explore/shared-source";
+    current.benchmark_source_usage = [{
+      business_line: "executive",
+      persona: "buyer",
+      method_id: "viral_framework",
+      source_id: "viral-old",
+      original_url: sharedUrl,
+      first_used_at: "2026-07-20T00:00:00.000Z",
+      last_used_at: "2026-07-20T00:00:00.000Z",
+      generated_batch_count: 1,
+      selected_count: 0,
+      rotation_status: "rotation_recommended",
+    }];
+    const plans = freshBenchmarkSourcePlan({
+      account: current,
+      runs: [],
+      methodIds: ["viral_framework", "similar_audience"],
+      candidateSources: [
+        source("viral_framework", "viral-old", sharedUrl),
+        source("similar_audience", "similar-new", sharedUrl),
+      ],
+    });
+    expect(plans).toEqual([
+      expect.objectContaining({
+        method_id: "viral_framework",
+        status: "paused",
+        pause_reason: "no_unused_source",
+      }),
+      expect.objectContaining({
+        method_id: "similar_audience",
+        status: "ready",
+        unused_source_urls: [sharedUrl],
+      }),
+    ]);
+  });
+
+  it("来源池没有从未使用过的母题时，明确暂停该槽位", () => {
+    const current = account();
+    const old = source("viral_framework", "only-source");
+    current.topic_sources = [old];
+    current.benchmark_source_usage = [{
+      business_line: "executive",
+      persona: "buyer",
+      method_id: "viral_framework",
+      source_id: old.id,
+      original_url: old.original_url,
+      first_used_at: "2026-07-20T00:00:00.000Z",
+      last_used_at: "2026-07-20T00:00:00.000Z",
+      generated_batch_count: 1,
+      selected_count: 0,
+      rotation_status: "rotation_recommended",
+    }];
+    expect(freshBenchmarkSourcePlan({
+      account: current,
+      runs: [],
+      methodIds: ["viral_framework"],
+    })).toEqual([expect.objectContaining({
+      method_id: "viral_framework",
+      used_source_urls: [old.original_url],
+      unused_source_urls: [],
+      status: "paused",
+      pause_reason: "no_unused_source",
+    })]);
+  });
+
+  it("历史来源使用记录不会在第301条时被截断", () => {
+    let current = account();
+    for (let index = 0; index < 301; index += 1) {
+      const item = source("viral_framework", `history-${index}`);
+      current = {
+        ...current,
+        benchmark_source_usage: updateBenchmarkSourceUsage({
+          account: current,
+          topics: [topic("viral_framework", `历史标题${index}`, item)],
+          timestamp: `2026-07-23T00:${String(index % 60).padStart(2, "0")}.000Z`,
+        }),
+      };
+    }
+    expect(current.benchmark_source_usage).toHaveLength(301);
   });
 
   it("旧账号首次读取时根据历史批次补齐母题使用次数", () => {
