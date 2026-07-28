@@ -534,6 +534,35 @@ export function titlesAreSemanticDuplicates(leftTitle: string, rightTitle: strin
 }
 
 /**
+ * 盘点法与资料法的固定外壳不是母题本身。
+ *
+ * “留学生求职，盘点4类……”会在不同标题中天然重复九个以上字符；若直接
+ * 使用通用语义比较器，搬迁、学历认证、群面角色等不同盘点对象也会被误判
+ * 为同题。这里仅剥离方法外壳后比较真实对象；同一对象只换数字仍会命中。
+ */
+export function titleForMethodSemanticComparison(methodId: string, value: string) {
+  const canonical = canonicalizeGrowthTitle(value);
+  if (methodId !== "inventory" && methodId !== "scarce_material") return canonical;
+  return canonical
+    .replace(/^(?:留学生求职|海归求职|秋招陪跑|高管转型|中高管转型|职业转型)[，,:：]*/u, "")
+    .replace(/(?:盘点|梳理|核对|检查|查清)[数0-9一二三四五六七八九十百千万两这]*(?:项|类|种|个|份|笔|条|件|步)?/gu, "")
+    .replace(/(?:清单|表格|看板|地图|题库|索引|卡片?)(?:公开|直接看|直接用|给你)?$/u, "")
+    .replace(/^[，,:：\s]+|[，,:：\s]+$/gu, "")
+    || canonical;
+}
+
+export function titlesAreMethodAwareSemanticDuplicates(
+  methodId: string,
+  leftTitle: string,
+  rightTitle: string,
+) {
+  return evaluateTitleSemanticDuplicate(
+    titleForMethodSemanticComparison(methodId, leftTitle),
+    titleForMethodSemanticComparison(methodId, rightTitle),
+  ).duplicate;
+}
+
+/**
  * 生成链路可直接使用的硬门禁结果。
  * 有传统字时返回 canonicalTitle 供“修复后再校验”使用，但本次模型输出仍不应放行。
  */

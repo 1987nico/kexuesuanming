@@ -5,7 +5,7 @@ import type {
   GrowthPersona,
   TitleMethodId,
 } from "./types";
-import { titlesAreSemanticDuplicates } from "./titleQuality";
+import { titlesAreMethodAwareSemanticDuplicates } from "./titleQuality";
 
 /**
  * 标题的规则去重能识别已知模式，却无法可靠识别“同一件事换了整句话”的情况。
@@ -138,11 +138,16 @@ export function normalizeNativeTitleNoveltyDecisions(
      */
     const duplicateReferenceIds = reportedDuplicateReferenceIds.filter((referenceId) => {
       const reference = referencesById.get(referenceId);
-      return Boolean(reference && titlesAreSemanticDuplicates(candidate.title, reference.title));
+      return Boolean(reference && titlesAreMethodAwareSemanticDuplicates(
+        candidate.methodId,
+        candidate.title,
+        reference.title,
+      ));
     });
     const conflictingCandidateIds = reportedConflictingCandidateIds.filter((candidateId) => {
       const conflictingCandidate = candidatesById.get(candidateId);
-      return Boolean(conflictingCandidate && titlesAreSemanticDuplicates(
+      return Boolean(conflictingCandidate && titlesAreMethodAwareSemanticDuplicates(
+        candidate.methodId,
         candidate.title,
         conflictingCandidate.title,
       ));

@@ -7,6 +7,8 @@ import {
   evaluateTitleSemanticDuplicate,
   findUnsupportedTitleClaims,
   hasGarbledLatinCjkMix,
+  titleForMethodSemanticComparison,
+  titlesAreMethodAwareSemanticDuplicates,
   titlesAreSemanticDuplicates,
 } from "./titleQuality";
 
@@ -325,5 +327,25 @@ describe("标题语义去重", () => {
     expect(titlesAreSemanticDuplicates(first, second)).toBe(false);
     expect(buildTitleSemanticSignature(first).scenario).toBe("recruiting_timeline");
     expect(buildTitleSemanticSignature(second).scenario).toBe("job_targeting");
+  });
+
+  it("盘点法剥离固定外壳后比较真正对象，不误伤不同对象", () => {
+    expect(titleForMethodSemanticComparison(
+      "inventory",
+      "留学生求职，盘点4类入职认证材料",
+    )).toBe("入职认证材料");
+    expect(titlesAreMethodAwareSemanticDuplicates(
+      "inventory",
+      "留学生求职，盘点4类入职认证材料",
+      "留学生求职，盘点3种群面核心角色",
+    )).toBe(false);
+  });
+
+  it("盘点法同一对象只换数字仍判为重复", () => {
+    expect(titlesAreMethodAwareSemanticDuplicates(
+      "inventory",
+      "秋招陪跑，盘点5项异地入职提前量",
+      "秋招陪跑，盘点3项异地入职提前量",
+    )).toBe(true);
   });
 });

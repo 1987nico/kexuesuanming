@@ -168,6 +168,74 @@ describe("原生标题批次语义新颖度审核", () => {
     });
   });
 
+  it("盘点法固定外壳相同但盘点对象不同时放行", () => {
+    const inventoryCandidates: NativeTitleNoveltyCandidate[] = [
+      {
+        id: "I1",
+        methodId: "inventory",
+        kind: "model",
+        title: "留学生求职，盘点4类入职认证材料",
+      },
+    ];
+    const inventoryReferences: NativeTitleNoveltyReference[] = [
+      {
+        id: "IH1",
+        kind: "history",
+        title: "留学生求职，盘点3种群面核心角色",
+      },
+    ];
+    const decisions = normalizeNativeTitleNoveltyDecisions({
+      decisions: [{
+        candidate_id: "I1",
+        novel: false,
+        natural: true,
+        duplicate_reference_ids: ["IH1"],
+        conflicting_candidate_ids: [],
+        reason: "都以留学生求职盘点开头",
+      }],
+    }, inventoryCandidates, inventoryReferences);
+
+    expect(decisions[0]).toMatchObject({
+      novel: true,
+      eligible: true,
+      duplicateReferenceIds: [],
+    });
+  });
+
+  it("盘点法同一对象只换数量时继续拒绝", () => {
+    const inventoryCandidates: NativeTitleNoveltyCandidate[] = [
+      {
+        id: "I1",
+        methodId: "inventory",
+        kind: "model",
+        title: "秋招陪跑，盘点5项异地入职提前量",
+      },
+    ];
+    const inventoryReferences: NativeTitleNoveltyReference[] = [
+      {
+        id: "IH1",
+        kind: "history",
+        title: "秋招陪跑，盘点3项异地入职提前量",
+      },
+    ];
+    const decisions = normalizeNativeTitleNoveltyDecisions({
+      decisions: [{
+        candidate_id: "I1",
+        novel: false,
+        natural: true,
+        duplicate_reference_ids: ["IH1"],
+        conflicting_candidate_ids: [],
+        reason: "同一异地入职提前量盘点",
+      }],
+    }, inventoryCandidates, inventoryReferences);
+
+    expect(decisions[0]).toMatchObject({
+      novel: false,
+      eligible: false,
+      duplicateReferenceIds: ["IH1"],
+    });
+  });
+
   it("模型指出且本地复核确认的历史同题仍然必须拒绝", () => {
     const duplicateCandidates: NativeTitleNoveltyCandidate[] = [
       { id: "D1", methodId: "inventory", kind: "model", title: "秋招陪跑常见的4个低效动作" },

@@ -85,6 +85,7 @@ import {
   canonicalizeGrowthTitle,
   evaluateGrowthTitleQuality,
   normalizeTitleForComparison,
+  titleForMethodSemanticComparison,
   titlesAreSemanticDuplicates,
 } from "./titleQuality";
 import {
@@ -717,6 +718,20 @@ export function titlesAreNearDuplicate(left: string, right: string) {
   return bigramDice >= 0.76 || lcsRatio >= 0.84 || (characterDice >= 0.9 && lcsRatio >= 0.72);
 }
 
+function titlesAreMethodAwareNearDuplicate(
+  methodId: TitleMethodId,
+  left: string,
+  right: string,
+) {
+  if (methodId !== "inventory" && methodId !== "scarce_material") {
+    return titlesAreNearDuplicate(left, right);
+  }
+  return titlesAreNearDuplicate(
+    titleForMethodSemanticComparison(methodId, left),
+    titleForMethodSemanticComparison(methodId, right),
+  );
+}
+
 function titlesAreSameMethodNearDuplicate(left: string, right: string) {
   const a = normalizeTitleHistoryFingerprint(left);
   const b = normalizeTitleHistoryFingerprint(right);
@@ -1198,11 +1213,18 @@ function topicCandidateDuplicateProblems(
   // 不能因为换了方法就允许用户连续看到同一个母题的换皮标题。
   const sameFingerprint = historyTitles.find((item) => titlesHaveSameHistoryFingerprint(topic.title, item));
   const semanticHistory = historyTopics.find((item) =>
-    titlesAreNearDuplicate(topic.title, item.title));
-  const nearHistory = semanticHistory?.title ?? historyTitles.find((item) => titlesAreNearDuplicate(topic.title, item));
+    (item.method_id === topic.method_id
+      ? titlesAreMethodAwareNearDuplicate(topic.method_id, topic.title, item.title)
+      : titlesAreNearDuplicate(topic.title, item.title)));
+  const nearHistory = semanticHistory?.title ?? historyTitles.find((item) =>
+    titlesAreMethodAwareNearDuplicate(topic.method_id, topic.title, item));
   if (sameFingerprint) problems.push(`${topic.method_id}:与历史标题“${sameFingerprint}”实质相同`);
   else if (nearHistory) problems.push(`${topic.method_id}:与历史标题“${nearHistory}”重复或近似`);
-  const inBatch = accepted.find((item) => titlesAreNearDuplicate(topic.title, item.title));
+  const inBatch = accepted.find((item) => (
+    item.method_id === topic.method_id
+      ? titlesAreMethodAwareNearDuplicate(topic.method_id, topic.title, item.title)
+      : titlesAreNearDuplicate(topic.title, item.title)
+  ));
   if (inBatch) problems.push(`${topic.method_id}:与本批次${inBatch.method_id}标题重复或近似`);
   // 同一批次不能把“投错岗/岗没选对”这一核心冲突拆成两张卡片。
   // 这是批内组合约束，不把不同句式、不同材料的历史选岗题一概判重。
