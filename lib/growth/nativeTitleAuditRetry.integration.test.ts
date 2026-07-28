@@ -82,6 +82,7 @@ describe("原生标题语义审核二次恢复", () => {
         decisions: candidates.map((candidate) => ({
           candidate_id: candidate.candidate_id,
           novel: !isFirstAudit,
+          natural: true,
           duplicate_reference_ids: [],
           conflicting_candidate_ids: [],
           reason: isFirstAudit ? "模拟历史重复" : "模拟二审通过",
@@ -118,6 +119,7 @@ describe("原生标题语义审核二次恢复", () => {
           decisions: candidates.map((candidate) => ({
             candidate_id: candidate.candidate_id,
             novel: false,
+            natural: true,
             duplicate_reference_ids: [],
             conflicting_candidate_ids: [],
             reason: "模拟历史重复",
@@ -128,6 +130,7 @@ describe("原生标题语义审核二次恢复", () => {
         decisions: candidates.filter((candidate) => candidate.method_id !== "tug_of_war").map((candidate) => ({
           candidate_id: candidate.candidate_id,
           novel: true,
+          natural: true,
           duplicate_reference_ids: [],
           conflicting_candidate_ids: [],
           reason: "故意漏项",
@@ -160,6 +163,7 @@ describe("原生标题语义审核二次恢复", () => {
           decisions: candidates.map((candidate) => ({
             candidate_id: candidate.candidate_id,
             novel: false,
+            natural: true,
             duplicate_reference_ids: [],
             conflicting_candidate_ids: [],
             reason: "模拟历史重复",
@@ -171,6 +175,7 @@ describe("原生标题语义审核二次恢复", () => {
           decisions: candidates.slice(0, -1).map((candidate) => ({
             candidate_id: candidate.candidate_id,
             novel: true,
+            natural: true,
             duplicate_reference_ids: [],
             conflicting_candidate_ids: [],
             reason: "故意漏掉一项",
@@ -203,6 +208,7 @@ describe("原生标题语义审核二次恢复", () => {
         decisions: candidates.map((candidate) => ({
           candidate_id: candidate.candidate_id,
           novel: true,
+          natural: true,
           duplicate_reference_ids: [],
           conflicting_candidate_ids: [],
           reason: "新标题",
@@ -218,5 +224,57 @@ describe("原生标题语义审核二次恢复", () => {
     expect(generationCalls).toBe(2);
     expect(result.generationAttempts).toBe(2);
     expect(result.topics.map((topic) => topic.method_id)).toEqual(["human_pain", "tug_of_war"]);
+  });
+
+  it("残缺标题在送审前被本地门禁挡住，并自动交付自然备选", async () => {
+    const parentAccount: GrowthAccount = {
+      ...account,
+      id: "native-audit-parent-title-quality",
+      business_line: "overseas_student",
+      persona: "buyer",
+      name: "留学生家长",
+      target_user: "正在陪孩子准备秋招的留学生家长",
+      core_problem: "孩子求职选择很多，家长想帮忙又怕越帮越乱",
+      account_value: "记录陪孩子判断岗位和节奏的真实过程",
+      one_liner: "陪海外读书的娃走秋招的真实家长记录",
+    };
+    const malformed = "我替孩子找内推，不如先对岗位";
+    const naturalAlternative = "我替孩子找内推，不如先看岗位匹配";
+    const auditBatches: Array<Array<{ candidate_id: string; title: string }>> = [];
+
+    llmJSONMock.mockImplementation(async (input: { user: string }) => {
+      if (!input.user.includes("语义新颖度终审")) {
+        return modelResponse({
+          topics: [{
+            method_id: "contrarian",
+            title: malformed,
+            alternative_titles: [naturalAlternative],
+          }],
+        });
+      }
+      const candidates = auditCandidates(input.user);
+      auditBatches.push(candidates);
+      return modelResponse({
+        decisions: candidates.map((candidate) => ({
+          candidate_id: candidate.candidate_id,
+          novel: true,
+          natural: true,
+          duplicate_reference_ids: [],
+          conflicting_candidate_ids: [],
+          reason: "自然且新颖",
+        })),
+      });
+    });
+
+    const result = await generateTopicBatch({
+      account: parentAccount,
+      methodIds: ["contrarian"],
+    });
+
+    expect(result.topics.map((topic) => topic.title)).toEqual([naturalAlternative]);
+    expect(result.rejectedTitles).toContain(malformed);
+    expect(auditBatches).toHaveLength(1);
+    expect(auditBatches[0].map((candidate) => candidate.title)).not.toContain(malformed);
+    expect(auditBatches[0].map((candidate) => candidate.title)).toContain(naturalAlternative);
   });
 });

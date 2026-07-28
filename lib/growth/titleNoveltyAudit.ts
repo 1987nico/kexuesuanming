@@ -39,6 +39,10 @@ export interface NativeTitleNoveltyReference {
 export interface NativeTitleNoveltyDecision {
   candidateId: string;
   novel: boolean;
+  /** 语义终审同时确认标题是自然、完整的简体中文，不是半句话或病句。 */
+  natural: boolean;
+  /** 只有同时通过新颖度与自然中文检查，才可进入操作者可见的标题批次。 */
+  eligible: boolean;
   duplicateReferenceIds: string[];
   conflictingCandidateIds: string[];
   reason: string;
@@ -106,6 +110,8 @@ export function normalizeNativeTitleNoveltyDecisions(
       return {
         candidateId: candidate.id,
         novel: false,
+        natural: false,
+        eligible: false,
         duplicateReferenceIds: [],
         conflictingCandidateIds: [],
         reason: "语义新颖度审核没有返回该候选，未放行。",
@@ -119,14 +125,21 @@ export function normalizeNativeTitleNoveltyDecisions(
         .map((value) => compact(value, 80))
         .filter((id) => id !== candidate.id && candidateIds.has(id))
       : [];
-    // 若模型一边标记 novel、一边又指出历史重复，优先按不放行处理。
+    // natural 缺失、格式错误或明确为 false 都不能放行。否则模型漏掉字段时，
+    // “半句话/病句”会被误当成可交付标题，破坏生成即交付的保证。
+    const natural = row.natural === true;
+    // 若模型一边标记 novel、一边又指出历史重复，优先按新颖度不通过处理；
+    // 自然度单独保留，方便恢复轮和内部诊断知道为何未采用。
     const novel = row.novel === true && duplicateReferenceIds.length === 0;
+    const eligible = novel && natural;
     return {
       candidateId: candidate.id,
       novel,
+      natural,
+      eligible,
       duplicateReferenceIds,
       conflictingCandidateIds,
-      reason: compact(row.reason, 80) || (novel ? "与当前历史标题语义不同。" : "与历史或本批候选语义过近。"),
+      reason: compact(row.reason, 80) || (natural ? (novel ? "与当前历史标题语义不同。" : "与历史或本批候选语义过近。") : "标题不是自然完整的中文。"),
     };
   });
 }
@@ -191,7 +204,8 @@ export function buildNativeTitleNoveltyAuditPrompt(input: NativeTitleNoveltyAudi
 2. 不要因为都属于“秋招、离职、转型”等大类就一律拒绝。人物、具体场景、冲突和承诺都明显不同，才算新题。
 3. 同一批候选彼此如果只是换词，也标出 conflicting_candidate_ids；它们可以各自 novel=true，但系统只会从冲突组里选一个。
 4. 不要按字面重合率判断；请按普通读者看到的“这是不是同一个选题”判断。
-5. 不确定时宁可 novel=false。不要重写或美化标题，只做审核。
+5. 同时判断标题是否为自然、完整的简体中文：不能是半句话、病句、缺少必要宾语/补语、机械缩写或读起来别扭的拼接。例：“我替孩子找内推，不如先对岗位”不完整，应 natural=false；“我替孩子找内推，不如先看岗位匹配”才是完整表达。
+6. 不确定时宁可 novel=false、natural=false。不要重写或美化标题，只做审核。
 
 历史/已选参考：
 ${JSON.stringify(references)}
@@ -205,6 +219,7 @@ ${JSON.stringify(candidates)}
     {
       "candidate_id": "必须逐一返回每个候选的 candidate_id",
       "novel": true,
+      "natural": true,
       "duplicate_reference_ids": ["如重复，写对应 reference_id；否则 []"],
       "conflicting_candidate_ids": ["如与其他候选同题，写对应 candidate_id；否则 []"],
       "reason": "不超过12字的判定原因"

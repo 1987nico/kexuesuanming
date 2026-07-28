@@ -355,7 +355,7 @@ const OVERSEAS_STUDENT_PARENT_BUYER_TITLE_VARIANTS: Record<TitleMethodId, string
     "孩子实习越多，岗位未必越好选",
     "孩子投得越勤，越要先收窄方向",
     "孩子消息越多，越不能乱投简历",
-    "我替孩子找内推，不如先对岗位",
+    "我替孩子找内推，不如先看岗位匹配",
     "孩子拿到面试，未必是方向对了",
     "孩子项目越亮，越要说清岗位",
   ],
@@ -1007,6 +1007,7 @@ function titleQualityProblems(topic: TopicCandidate, account: GrowthAccount) {
       garbled_latin_cjk: "标题含中英文乱码拼接",
       unsupported_factual_claim: `标题含无依据的具体事实${quality.unsupportedClaims.length ? `：${quality.unsupportedClaims.join("、")}` : ""}`,
       unnatural_jargon: "标题含不自然的生造黑话",
+      incomplete_sentence: "标题是残缺半句话，缺少必要动作或补语",
       generic_title: "标题只有抽象对照，缺少具体人物、场景或动作",
     };
     return `${topic.method_id}:${labels[reason] || "标题质量不合格"}`;
@@ -1200,7 +1201,7 @@ export function selectAuditedNativeTitleOptions(input: {
     let selected = false;
     for (const option of options) {
       const decision = decisionByCandidate.get(option.audit.id);
-      if (!decision?.novel) {
+      if (!decision?.eligible) {
         rejectedTitles.push(option.topic.title);
         continue;
       }
@@ -1234,9 +1235,9 @@ export function selectAuditedNativeTitleOptions(input: {
     if (!selected) {
       const firstRejected = options
         .map((option) => decisionByCandidate.get(option.audit.id))
-        .find((decision) => decision && !decision.novel);
+        .find((decision) => decision && !decision.eligible);
       problems.push(
-        `${method.id}:新候选与历史标题语义重复或批内过近${firstRejected?.reason ? `（${firstRejected.reason}）` : ""}`,
+        `${method.id}:新候选未通过新颖度或中文表达审核${firstRejected?.reason ? `（${firstRejected.reason}）` : ""}`,
       );
     }
   }

@@ -5,6 +5,7 @@
  * - 繁体字 / 乱码 / 超长；
  * - 没有业务事实依据的角色、金额、成绩、日期、公司断言；
  * - 明显不自然的生造黑话；
+ * - 明显残缺、缺少必要宾语或补语的半句话；
  * - 仅替换少量词语的“换一批”。
  *
  * 所有函数都不依赖数据库或模型，方便在生成前、重试后和保存前重复调用。
@@ -17,6 +18,7 @@ export type TitleQualityReason =
   | "garbled_latin_cjk"
   | "unsupported_factual_claim"
   | "unnatural_jargon"
+  | "incomplete_sentence"
   | "generic_title";
 
 export interface TitleSemanticSignature {
@@ -106,6 +108,17 @@ const UNNATURAL_JARGON_PATTERNS: RegExp[] = [
   // “投岗”是生成模型常见的行业缩略词；应写成“投岗位”或“投递”。
   /投岗(?!位)/gu,
   /(?:玄学|黑话|邪门)[^，。！？?；;]{0,8}(?:漏斗|胜算|定价)/gu,
+];
+
+/**
+ * 这不是通用中文语法器，只拦生成中反复出现、读者一眼可见的“缩到半句话”结构。
+ * 更细的自然度仍由标题语义终审负责；本地规则只承担不会因模型误判而漏出的底线。
+ */
+const INCOMPLETE_TITLE_PATTERNS: RegExp[] = [
+  // “先对岗位/方向”里的“对”缺少“准、齐、比照”等补足，不能作为完整标题交付。
+  /(?:^|[，,])(?:不如)?先对(?:岗位|方向|简历|机会|公司|工作)(?:[。！？?!]?|$)/u,
+  // “先把岗位/方向”后面缺少动作，也是常见的模型截断形式。
+  /(?:^|[，,])(?:不如)?先把(?:岗位|方向|简历|机会|公司|工作)(?:[。！？?!]?|$)/u,
 ];
 
 const ALLOWED_LATIN_TERMS = new Set([
@@ -233,6 +246,11 @@ export function findUnsupportedTitleClaims(value: string, supportedFacts: readon
 export function findUnnaturalTitleJargon(value: string) {
   const canonical = canonicalizeGrowthTitle(value);
   return unique(UNNATURAL_JARGON_PATTERNS.flatMap((pattern) => canonical.match(pattern) ?? []));
+}
+
+export function findIncompleteTitleFragments(value: string) {
+  const canonical = canonicalizeGrowthTitle(value);
+  return unique(INCOMPLETE_TITLE_PATTERNS.flatMap((pattern) => canonical.match(pattern) ?? []));
 }
 
 const CONCRETE_TITLE_ANCHORS = /简历|岗位|秋招|校招|面试|offer|实习|学位|学校|项目|导师|校友|家长|合同|工资|客户|老板|团队|会议|工牌|猎头|离职|辞呈|绩效|预算|公司|部门|证据|招聘|投递|工作/u;
@@ -529,6 +547,7 @@ export function evaluateGrowthTitleQuality(title: string, options: TitleQualityO
   if (hasGarbledLatinCjkMix(canonicalTitle)) reasons.push("garbled_latin_cjk");
   if (unsupportedClaims.length) reasons.push("unsupported_factual_claim");
   if (findUnnaturalTitleJargon(canonicalTitle).length) reasons.push("unnatural_jargon");
+  if (findIncompleteTitleFragments(canonicalTitle).length) reasons.push("incomplete_sentence");
   if (isGenericAbstractTitle(canonicalTitle)) reasons.push("generic_title");
   return {
     title,

@@ -32,6 +32,8 @@ describe("标题质量门禁", () => {
     expect(evaluateGrowthTitleQuality("花家里钱留学，投错岗不敢说").reasons).toContain("unsupported_factual_claim");
     expect(evaluateGrowthTitleQuality("跟风投管培，还是蹲对口秋招岗？").reasons).toContain("unnatural_jargon");
     expect(evaluateGrowthTitleQuality("背景看着光鲜，投岗全没回音").reasons).toContain("unnatural_jargon");
+    expect(evaluateGrowthTitleQuality("我替孩子找内推，不如先对岗位").reasons).toContain("incomplete_sentence");
+    expect(evaluateGrowthTitleQuality("我替孩子找内推，不如先看岗位匹配").acceptable).toBe(true);
     expect(evaluateGrowthTitleQuality("从前等机会，现在先做准备").reasons).toContain("generic_title");
     expect(evaluateGrowthTitleQuality("以前怕没学位，现在怕没方向").acceptable).toBe(true);
     expect(evaluateGrowthTitleQuality("投岗位前，先看匹配度").acceptable).toBe(true);
