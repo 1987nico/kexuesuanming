@@ -77,6 +77,31 @@ describe("标题生成30批用户验收标准（确定性兜底回归）", () =>
     expect(localOrReturn?.premise_key).not.toBe(returnOrLocal?.premise_key);
   });
 
+  it("留学生家长旧怀旧题耗尽后，仍有充足的家长专属恢复候选", () => {
+    const parent = account("overseas_student", "buyer");
+    const candidates = fallbackTitleCandidates(parent, "nostalgia");
+    const historical = candidates.slice(0, 9);
+    const historyTitles = historical.map((candidate) => candidate.title);
+    const historyTopics = historical.map((candidate) => ({
+      method_id: "nostalgia" as TitleMethodId,
+      title: candidate.title,
+    }));
+    const recoverable = candidates.slice(9).filter((candidate) => {
+      const current = candidateTopic("overseas_student", "buyer", "nostalgia", candidate);
+      if (!evaluateGrowthTitleQuality(candidate.title).acceptable) return false;
+      if (titlePersonaProblems(current, parent).length) return false;
+      return topicBatchDuplicateProblems(
+        [current],
+        historyTitles,
+        historyTopics,
+        "overseas_student",
+      ).length === 0;
+    });
+
+    expect(recoverable.length).toBeGreaterThanOrEqual(6);
+    expect(recoverable.every((candidate) => /孩子|陪孩子/u.test(candidate.title))).toBe(true);
+  });
+
   it("所有内置原生兜底标题本身都能通过发布质量门禁", () => {
     const businessLines: GrowthBusinessLine[] = ["overseas_student", "executive"];
     const personas: GrowthPersona[] = ["buyer", "merchant", "expert"];

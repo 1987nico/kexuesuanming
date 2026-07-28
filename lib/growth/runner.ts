@@ -385,6 +385,72 @@ const OVERSEAS_STUDENT_PARENT_BUYER_TITLE_VARIANTS: Record<TitleMethodId, string
 };
 
 /**
+ * 留学生家长账号经历多轮真实使用后，主兜底池可能已全部进入历史。
+ * 这组候选只服务于默认原生法的内部恢复，继续显式写出亲子关系，并且仍要
+ * 经过本地质量、全历史去重和模型语义终审，不能因为是应急候选就直接放行。
+ */
+const OVERSEAS_STUDENT_PARENT_BUYER_EMERGENCY_TITLE_VARIANTS: Partial<
+  Record<TitleMethodId, string[]>
+> = {
+  human_pain: [
+    "孩子秋招没消息，我不敢再问",
+    "孩子说先等等，我却一夜没睡",
+    "孩子投完简历，家里没人敢催",
+    "孩子面试沉默，我怕问多了添乱",
+    "孩子毕业临近，我更怕他没方向",
+    "孩子海投没回音，我不知该不该管",
+    "孩子说想留英，我怕劝错方向",
+    "孩子想回国，我却怕他没准备好",
+    "孩子收到拒信，我装作没看见",
+    "孩子简历改完，我还是不敢放心",
+    "孩子笔试结束，我不敢追问结果",
+    "孩子不再聊秋招，我才真的着急",
+  ],
+  tug_of_war: [
+    "孩子先回国，还是等海外岗位？",
+    "孩子先保底，还是继续冲对口岗？",
+    "孩子先改简历，还是先定岗位？",
+    "孩子先练面试，还是继续补经历？",
+    "孩子先投大厂，还是先看成长性？",
+    "孩子先选城市，还是先看岗位？",
+    "孩子先接Offer，还是再等一轮？",
+    "孩子先回家，还是留校找工作？",
+    "我该帮孩子筛岗，还是让他自己选？",
+    "我该提醒孩子截止，还是让他负责？",
+    "陪孩子冲秋招，还是先补一段实习？",
+    "孩子先求稳，还是再试一次喜欢的？",
+  ],
+  contrarian: [
+    "我越替孩子着急，他越不想投",
+    "孩子简历越漂亮，越要先看岗位",
+    "孩子海投越多，越容易错过方向",
+    "我替孩子找机会，不如先听他想法",
+    "孩子拿到笔试，不等于方向选对",
+    "孩子学校不错，更要早点试岗位",
+    "我越帮孩子改简历，他越说不清自己",
+    "孩子实习多，不代表岗位就好选",
+    "孩子回国越急，越要先排求职顺序",
+    "我替孩子问人脉，不如先看岗位匹配",
+    "孩子机会越多，越要先做减法",
+    "孩子准备越久，越不能只改简历",
+  ],
+  nostalgia: [
+    "当年我催选学校，如今陪孩子看岗位",
+    "以前我替孩子选校，现在让他先试岗位",
+    "翻出旧录取信，我先陪孩子查招聘",
+    "我当年只问名校，孩子如今先看项目",
+    "以前陪孩子申请，现在陪他练面试",
+    "孩子毕业那天，我想起当年的申请季",
+    "从前我替孩子做主，如今先听他选岗位",
+    "以前盯孩子成绩，现在先听他讲项目",
+    "当年只看排名，如今陪孩子看岗位",
+    "以前问学校名气，现在问孩子想做啥",
+    "孩子收起录取信，我开始和他看岗位",
+    "陪孩子走到秋招，我才放下名校执念",
+  ],
+};
+
+/**
  * 模型偶发超时或只返回了不合格候选时的安全兜底池。
  *
  * 它只服务于无外部来源依赖的原生法：来源型方法宁可透明暂停，也不能伪造
@@ -882,9 +948,12 @@ export function fallbackTitleCandidates(account: GrowthAccount, methodId: TitleM
       ? OVERSEAS_STUDENT_FALLBACK_TITLE_VARIANTS[methodId]
       : EXECUTIVE_FALLBACK_TITLE_VARIANTS[methodId];
   const emergency = NATIVE_EMERGENCY_TITLE_VARIANTS[account.business_line ?? "executive"][methodId] ?? [];
+  const parentEmergency = OVERSEAS_STUDENT_PARENT_BUYER_EMERGENCY_TITLE_VARIANTS[methodId] ?? [];
   // 亲子账号绝不能在兜底时退回泛“留学生本人”标题；否则模型波动会让
   // 选题页重新出现正确正文、错误标题的视角串线。
-  const candidates = isOverseasParentBuyer ? variants : [primary, ...variants, ...emergency];
+  const candidates = isOverseasParentBuyer
+    ? [...variants, ...parentEmergency]
+    : [primary, ...variants, ...emergency];
   return Array.from(new Set(candidates)).map((title) => ({
     title,
     title_promise: fallbackCandidatePromise(methodId, title, primary, primaryPromise),
@@ -2587,6 +2656,10 @@ export async function generateTopicBatch(input: {
         accepted: accepted.has(method.id),
       };
     }),
+    native_method_problems: nativeMethods.map((method) => ({
+      method_id: method.id,
+      problems: lastProblems.filter((problem) => problem.startsWith(`${method.id}:`)).slice(-4),
+    })),
   }));
   if (input.allowSourcePause) {
     return {
