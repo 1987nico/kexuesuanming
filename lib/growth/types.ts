@@ -124,7 +124,7 @@ export interface TopicSourceSnapshot {
   rank_position?: number;
   /** v3.6：来源是否真的适合当前标题方法。旧来源读取时会重新计算，不要求数据库迁移。 */
   source_method_fit_status?: "passed" | "failed" | "uncertain";
-  source_method_fit_version?: "v3_6" | "v3_7";
+  source_method_fit_version?: "v3_6" | "v3_7" | "v3_8";
   source_method_fit_evidence?: string;
 }
 
@@ -145,11 +145,31 @@ export interface BenchmarkStructureCard {
   promised_result: string;
   inheritable_element: string;
   replacement_requirement: string;
+  /**
+   * v3.8：从原题中抽出的可迁移语义槽位。它们是给生成器与门禁共同使用的
+   * “原题关系”，不是运营者需要填写的字段。
+   */
+  semantic_slots: {
+    audience_or_role: string;
+    unusual_action_or_method: string;
+    scene_or_channel: string;
+    goal_or_outcome: string;
+    relationship: string;
+    required_slot_keys: Array<
+      "audience_or_role"
+      | "unusual_action_or_method"
+      | "scene_or_channel"
+      | "goal_or_outcome"
+      | "relationship"
+    >;
+  };
+  /** 语义槽位不足时不会锁卡，来源型标题会透明暂停。 */
+  semantic_status: "ready" | "insufficient";
   forbidden_copy_elements: string[];
   source_fit_status: "passed" | "failed";
   source_fit_reason: string;
   status: "locked" | "expired" | "rejected";
-  structure_version: "v3_7";
+  structure_version: "v3_7" | "v3_8";
   generated_at: string;
   expires_at: string;
 }
@@ -675,13 +695,13 @@ export interface TopicCandidate {
   source_snapshot?: TopicSourceSnapshot;
   /** 来源型标题已通过“确实使用母题逻辑”的内部二元门禁；不保存具体迁移推理。 */
   source_usage_status?: "passed" | "failed";
-  source_usage_version?: "v3_5" | "v3_6" | "v3_7";
+  source_usage_version?: "v3_5" | "v3_6" | "v3_7" | "v3_8";
   /** 独立模型完成的来源适配与迁移二元门禁；只存审计证据，不在运营页展示推理。 */
   migration_validation_status?: "passed" | "failed";
-  migration_validation_version?: "v3_6" | "v3_7";
+  migration_validation_version?: "v3_6" | "v3_7" | "v3_8";
   migration_validation_evidence?: string;
   structure_card_id?: string;
-  structure_version?: "v3_7";
+  structure_version?: "v3_7" | "v3_8";
   internal_insight_source?: string;
   validation_checks?: ValidationCheck[];
   // 旧字段只用于打开历史数据；新流程不再写入或依赖。
@@ -733,7 +753,7 @@ export interface GrowthRun {
     generation_ms?: number;
     save_ms?: number;
   };
-  structure_version?: "v3_7";
+  structure_version?: "v3_7" | "v3_8";
   migration_status?: "passed" | "failed";
   title_fingerprints?: GrowthTitleFingerprint[];
   source_rotation?: TopicBatchRotation;

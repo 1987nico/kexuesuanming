@@ -5,6 +5,8 @@ import {
   SOURCE_MIGRATION_VERSION,
   sourceMethodFit,
   sourceSnapshotFitsMethod,
+  sourceSemanticSlots,
+  titleStructureSignals,
   validateSourceMigrations,
 } from "./sourceMigration";
 import type { GrowthAccount, TopicSourceSnapshot } from "./types";
@@ -53,9 +55,13 @@ function account(): GrowthAccount {
   };
 }
 
-describe("对标母题与迁移门禁 v3.7", () => {
+describe("对标母题与迁移门禁 v3.8", () => {
   it("使用锁定结构卡版本，避免回退到生成器自述迁移", () => {
-    expect(SOURCE_MIGRATION_VERSION).toBe("v3_7");
+    expect(SOURCE_MIGRATION_VERSION).toBe("v3_8");
+  });
+
+  it("不把00后人群身份误判成数字清单结构", () => {
+    expect(titleStructureSignals("00后毕业生邪修boss直聘，高尔夫球场找工作").has("number")).toBe(false);
   });
 
   it("拒绝把心理访谈当作中高管职业决策的相同产品", () => {
@@ -118,6 +124,94 @@ describe("对标母题与迁移门禁 v3.7", () => {
     }).passed).toBe(true);
   });
 
+  it("相似人群原题若靠具体求职渠道制造反差，新标题不能退化成泛动作", () => {
+    const sourceTitle = "00后毕业生邪修boss直聘，高尔夫球场找工作";
+    expect(deterministicMigrationFit({
+      methodId: "similar_audience",
+      businessLine: "overseas_student",
+      sourceTitle,
+      newTitle: "留学生反向捋秋招，刚好赶上窗口",
+    }).passed).toBe(false);
+    expect(deterministicMigrationFit({
+      methodId: "similar_audience",
+      businessLine: "overseas_student",
+      sourceTitle,
+      newTitle: "留学生不只海投，先去校友会找内推",
+    }).passed).toBe(true);
+  });
+
+  it("把具体渠道、人群和关系提取为 v3.8 语义槽位，而不是退化为通用句式卡", () => {
+    const slots = sourceSemanticSlots({
+      methodId: "similar_audience",
+      sourceTitle: "00后毕业生邪修boss直聘，高尔夫球场找工作",
+    });
+    expect(slots).toMatchObject({
+      audience_or_role: "00后毕业生",
+      scene_or_channel: "线下非传统求职场景",
+    });
+    expect(slots?.required_slot_keys).toContain("audience_or_role");
+    expect(slots?.required_slot_keys).toContain("scene_or_channel");
+  });
+
+  it("相似人群的渠道型母题必须在新标题中映射成当前业务的具体渠道", async () => {
+    const current = {
+      ...account(),
+      business_line: "overseas_student" as const,
+      persona: "buyer" as const,
+      target_user: "正在准备秋招的留学生和家长",
+      core_problem: "不知道如何在有限时间内找到合适岗位",
+    };
+    const item = source("similar_audience", "00后毕业生邪修boss直聘，高尔夫球场找工作");
+    const prepared = await ensureBenchmarkStructureCards({ account: current, sources: [item] });
+    const card = prepared.cards[0]!;
+
+    const [generic] = await validateSourceMigrations({
+      businessLine: "overseas_student",
+      persona: "buyer",
+      targetUser: current.target_user,
+      coreProblem: current.core_problem,
+      candidates: [{
+        candidateId: "generic",
+        methodId: "similar_audience",
+        methodLabel: "相似人群",
+        source: item,
+        structureCard: card,
+        title: "留学生反向捋秋招，刚好赶上窗口",
+        inheritedStructure: card.inheritable_element,
+        replacedContent: card.replacement_requirement,
+      }],
+    });
+    expect(generic.passed).toBe(false);
+    expect(generic.reason).toContain("原题场景/渠道");
+
+    const [mapped] = await validateSourceMigrations({
+      businessLine: "overseas_student",
+      persona: "buyer",
+      targetUser: current.target_user,
+      coreProblem: current.core_problem,
+      candidates: [{
+        candidateId: "mapped",
+        methodId: "similar_audience",
+        methodLabel: "相似人群",
+        source: item,
+        structureCard: card,
+        title: "留学生不只海投，先去校友会找内推",
+        inheritedStructure: card.inheritable_element,
+        replacedContent: card.replacement_requirement,
+      }],
+    });
+    expect(mapped.passed).toBe(true);
+    expect(mapped.evidence).toContain("原题「00后毕业生邪修boss直聘，高尔夫球场找工作」");
+  });
+
+  it("没有至少两项可迁移关系的母题不锁结构卡，来源型标题应暂停", async () => {
+    const current = account();
+    const item = source("viral_framework", "为什么要努力？");
+    const prepared = await ensureBenchmarkStructureCards({ account: current, sources: [item] });
+    expect(prepared.cards).toHaveLength(0);
+    expect(prepared.rejected[0]?.reason).toContain("至少两项可迁移");
+  });
+
   it("爆款框架必须继承可识别的句式或冲突结构", () => {
     expect(deterministicMigrationFit({
       methodId: "viral_framework",
@@ -131,6 +225,31 @@ describe("对标母题与迁移门禁 v3.7", () => {
       sourceTitle: "老师过度真诚，是一种商业上的不成熟",
       newTitle: "中高管转型前先查现金流",
     }).passed).toBe(false);
+  });
+
+  it("爆款框架只要求保留句式关系，不错误复刻来源动作", async () => {
+    const current = account();
+    const item = source("viral_framework", "你缺的不是客户，是跟进客户的能力");
+    const prepared = await ensureBenchmarkStructureCards({ account: current, sources: [item] });
+    const card = prepared.cards[0]!;
+    const [decision] = await validateSourceMigrations({
+      businessLine: "executive",
+      persona: "merchant",
+      targetUser: current.target_user,
+      coreProblem: current.core_problem,
+      candidates: [{
+        candidateId: "framework",
+        methodId: "viral_framework",
+        methodLabel: "爆款框架",
+        source: item,
+        structureCard: card,
+        title: "中高管缺的不是机会，是判断胜率",
+        inheritedStructure: card.inheritable_element,
+        replacedContent: card.replacement_requirement,
+      }],
+    });
+    expect(card.semantic_slots.required_slot_keys).toEqual(["relationship"]);
+    expect(decision.passed).toBe(true);
   });
 
   it("终极结果相同必须继承同类最终利益", () => {
@@ -173,7 +292,9 @@ describe("对标母题与迁移门禁 v3.7", () => {
     });
 
     expect(decision.passed).toBe(true);
-    expect(decision.evidence).toContain("可复用结构：");
+    expect(decision.evidence).toContain(`原题「${item.original_title}」`);
+    expect(decision.evidence).toContain("迁移逻辑：");
+    expect(decision.evidence).toContain("新标题「中高管筛顾问，先过3道关」");
     expect(decision.evidence).toContain("当前替换：以商家视角");
     expect(decision.evidence).toContain(current.target_user);
 

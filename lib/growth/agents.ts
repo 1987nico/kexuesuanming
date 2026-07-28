@@ -253,8 +253,10 @@ export function buildTopicPoolUserPrompt(input: {
   }>;
   context?: AccountContext;
 }) {
-  // 历史全集由服务端做确定性去重；提示词只带最近一段，避免长期使用后挤爆上下文。
-  const exclude = (input.excludeTitles ?? []).filter(Boolean).slice(-160);
+  // 历史全集由服务端做确定性去重；调用方已按“最新在前”排序，提示词只带最近一段，
+  // 避免长期使用后挤爆上下文。此前 slice(-160) 会错误地把最旧的标题交给模型，
+  // 使它看不见刚生成的方向并反复提近题。
+  const exclude = (input.excludeTitles ?? []).filter(Boolean).slice(0, 160);
   const sourceByMethod = new Map((input.sources ?? []).map((source) => [source.method_id, source]));
   const cardByMethod = new Map((input.structureCards ?? []).map((card) => [card.method_id, card]));
   const lockByMethod = new Map((input.directionLocks ?? []).map((lock) => [lock.method_id, lock]));
@@ -284,6 +286,8 @@ export function buildTopicPoolUserPrompt(input: {
           promised_result: card.promised_result,
           inheritable_element: card.inheritable_element,
           replacement_requirement: card.replacement_requirement,
+          semantic_slots: card.semantic_slots,
+          semantic_status: card.semantic_status,
           forbidden_copy_elements: card.forbidden_copy_elements,
         })}`
         : source
@@ -334,6 +338,7 @@ ${methodLines.join("\n\n")}
 - 来源型方法已经在上一步完成母题拆解。你只能使用“已锁定结构卡”生成，不会看到原标题，也不得自行重新解释母题。
 - 蹭流量必须能从新标题中识别出所绑定热点的事件、人物或社会冲突；相同产品迁移产品表达或选择场景；相同功效迁移解决问题或降低风险的功效；相似人群迁移人群处境；终极结果相同迁移最终利益；爆款框架迁移句式与冲突结构。
 - 绑定母题的标题不得调用与结构卡无关的通用模板。必须继承结构卡指定的元素，并完成replacement_requirement。
+- 每张结构卡的 semantic_slots 都列出了必须迁移的原题关系。required_slot_keys 中的每一项都要在新标题中用当前业务的等价人物、动作、渠道、结果或关系呈现；不要求复用原词，但不能省掉关系后写成泛化标题。
 - 对标方法必须先沿用结构卡中的“关系”再替换为当前业务和当前视角：只迁移句式、冲突、功效、人群处境或最终利益，绝不能把原题的人物履历、公司、金额、年龄、成绩或结果带进新标题；若无法在20字内完成可解释迁移，请省略该候选，禁止编造。
 ${exclude.length ? `- 严禁与以下已生成选题重复或近似：${exclude.join(" / ")}` : ""}
 

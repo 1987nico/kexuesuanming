@@ -23,11 +23,13 @@ import { ensureRecentTopicSources } from "@/lib/growth/sourceDiscovery";
 import {
   freshBenchmarkSourcePlan,
   historicalSourceUrlsByMethod,
-  recentSourceUrls,
   updateBenchmarkSourceUsage,
   withHistoricalBenchmarkSourceUsage,
 } from "@/lib/growth/sourceRotation";
-import { sourceSnapshotFitsMethod } from "@/lib/growth/sourceMigration";
+import {
+  SOURCE_MIGRATION_VERSION,
+  sourceSnapshotFitsMethod,
+} from "@/lib/growth/sourceMigration";
 import {
   buildSingleTitleMutation,
 } from "@/lib/growth/singleTitleRegeneration";
@@ -92,7 +94,7 @@ function completedGenerationResponse(run: GrowthRun, account: GrowthAccount) {
     sourceUsageStatus: "passed" as const,
     uniquenessStatus: run.uniqueness_status ?? "passed",
     migrationStatus: run.migration_status ?? "passed",
-    structureVersion: run.structure_version ?? "v3_7",
+    structureVersion: run.structure_version ?? SOURCE_MIGRATION_VERSION,
     rotationMode: run.source_rotation?.mode ?? "regenerate_titles",
     changedMethods: run.source_rotation?.changed_method_ids ?? [],
     retainedMethods: run.source_rotation?.retained_method_ids ?? [],
@@ -221,6 +223,16 @@ function mergeDeliveredTopicPool(input: {
 }
 
 /**
+ * v3.8 的语义槽位是来源型标题能否继续展示的最低依据。旧 v3.7 标题没有
+ * 这份可核验链路，下一次生成时必须暂停或重新产出，不能被“保留上一批”逻辑
+ * 悄悄带回页面。
+ */
+function retainableTopicUnderCurrentSourceMigration(topic: TopicCandidate) {
+  const method = TITLE_METHOD_BY_ID[topic.method_id];
+  return !method?.sourceRequired || topic.structure_version === SOURCE_MIGRATION_VERSION;
+}
+
+/**
  * 正常“换一批”时，只把未曾用于该方法的新母题放进本轮账号上下文。
  *
  * 这一步不能只依赖自动热榜：运营手工补充、但尚未使用过的有效来源同样
@@ -326,6 +338,14 @@ export async function POST(req: Request) {
   const notes = await store.listDrafts(account.id);
   const reviews = await store.listReviewsByAccount(account.id);
   const runs = await store.listRuns(account.id);
+  // 不把 store 的返回顺序当成隐式合同：标题历史进入模型时必须始终是最新在前。
+  // 服务端仍使用完整历史做门禁，模型只取这份列表的前 160 条近期标题。
+  const runsNewestFirst = [...runs].sort((left, right) => (
+    Date.parse(right.created_at) - Date.parse(left.created_at)
+  ));
+  const notesNewestFirst = [...notes].sort((left, right) => (
+    Date.parse(right.updated_at) - Date.parse(left.updated_at)
+  ));
   // 浏览器可能在服务端保存成功后断开。本次请求带着同一个 requestId 重试时，
   // 必须返回原批次，不能再次生成或覆盖标题。
   const idempotentRun = parsed.data.requestId
@@ -343,7 +363,7 @@ export async function POST(req: Request) {
   account = withHistoricalBenchmarkSourceUsage(account, runs);
   // 断网恢复时的“生成中”占位不能被当成上一批标题；它没有题目，也绝不能
   // 影响单槽换题、来源轮换和历史去重。
-  const previousRuns = runs.filter((item) =>
+  const previousRuns = runsNewestFirst.filter((item) =>
     item.generation_mode === generationMode && item.topic_pool.length > 0
   );
   const latestRun = parsed.data.baseRunId
@@ -414,11 +434,14 @@ export async function POST(req: Request) {
   const sourceStartedAt = Date.now();
 
   if (action === "rotate_single_source" || action === "rotate_all_sources") {
-    const excluded = recentSourceUrls({
+    // “换一个母题”和“换一批标题”遵循同一规则：同一业务×视角×方法下，
+    // 已经使用过的来源永久不再回收。否则超过 30 天仍可能悄悄复用旧母题。
+    const historical = historicalSourceUrlsByMethod({
       account,
       runs,
       methodIds: rotationMethodIds,
     });
+    const excluded = [...new Set([...historical.values()].flat())];
     const discovered = await ensureRecentTopicSources(account, {
       force: true,
       methodIds: rotationMethodIds,
@@ -518,11 +541,11 @@ export async function POST(req: Request) {
   const currentTitles = latestRun?.topic_pool.map((topic) => topic.title) ?? [];
   // 当前账号就是“业务×视角”隔离空间；读取全部批次、编辑历史和正文标题，永不只截最近120条。
   const historyTitles = Array.from(new Set([
-    ...runs.flatMap((item) => [
+    ...runsNewestFirst.flatMap((item) => [
     ...(item.seen_titles ?? []),
     ...item.topic_pool.map((topic) => topic.title),
     ]),
-    ...notes.map((draft) => draft.title),
+    ...notesNewestFirst.map((draft) => draft.title),
   ].filter(Boolean)));
   // 单槽换题和换母题会把未变化的槽位复制到新 run。这里按“方法×标题指纹”
   // 去重，避免同一个旧标题被误算成近5批里重复使用了很多次。
@@ -535,7 +558,7 @@ export async function POST(req: Request) {
     source_id?: string;
     batch_index: number;
   }>();
-  runs.forEach((item, batchIndex) => {
+  runsNewestFirst.forEach((item, batchIndex) => {
     item.topic_pool.forEach((topic) => {
       const historyKey = `${topic.method_id}:${normalizeTitleHistoryFingerprint(topic.title)}`;
       if (historyTopicMap.has(historyKey)) return;
@@ -698,8 +721,11 @@ export async function POST(req: Request) {
   const regeneratedTopic = action === "regenerate_single_title"
     ? generatedTopics.find((topic) => topic.method_id === requestedMethod!.id)
     : undefined;
+  const retainablePreviousTopics = (latestRun?.topic_pool ?? []).filter(
+    retainableTopicUnderCurrentSourceMigration,
+  );
   const topics = mergeDeliveredTopicPool({
-    previous: latestRun?.topic_pool ?? [],
+    previous: retainablePreviousTopics,
     generated: generatedTopics,
     methods: applicableMethods,
   });
@@ -719,7 +745,7 @@ export async function POST(req: Request) {
         ...(generatedUnavailableMethods ?? []),
       ]
       : generatedUnavailableMethods;
-  const previousByMethod = new Map((latestRun?.topic_pool ?? []).map((topic) => [topic.method_id, topic]));
+  const previousByMethod = new Map(retainablePreviousTopics.map((topic) => [topic.method_id, topic]));
   const methodDeliveries = generatedMethodDeliveries.map((delivery) => {
     if (delivery.status === "ready") return delivery;
     const previous = previousByMethod.get(delivery.method_id);
@@ -787,7 +813,7 @@ export async function POST(req: Request) {
     uniqueness_status: "passed",
     generation_attempts: generationAttempts,
     generation_request_id: parsed.data.requestId,
-    structure_version: "v3_7",
+    structure_version: SOURCE_MIGRATION_VERSION,
     migration_status: "passed",
     source_rotation: sourceRotation,
     title_mutation: action === "regenerate_single_title" && requestedTopic && regeneratedTopic && latestRun
@@ -865,7 +891,7 @@ export async function POST(req: Request) {
     sourceUsageStatus: "passed",
     uniquenessStatus: "passed",
     migrationStatus: "passed",
-    structureVersion: "v3_7",
+    structureVersion: SOURCE_MIGRATION_VERSION,
     rotationMode: sourceRotationMode,
     changedMethods: reportedChangedMethodIds,
     retainedMethods: sourceRotation.retained_method_ids,

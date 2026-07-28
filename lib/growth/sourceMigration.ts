@@ -7,7 +7,11 @@ import type {
   TopicSourceSnapshot,
 } from "./types";
 
-export const SOURCE_MIGRATION_VERSION = "v3_7" as const;
+/**
+ * v3.8 不再只缓存“句式说明”。每张结构卡还必须保存可被当前业务替换的
+ * 语义槽位；旧 v3.7 卡没有这些槽位，不能继续作为来源型标题的交付依据。
+ */
+export const SOURCE_MIGRATION_VERSION = "v3_8" as const;
 const STRUCTURE_CARD_TTL_MS = 24 * 60 * 60 * 1000;
 
 const STRUCTURE_CARD_CONTRACTS: Partial<Record<TitleMethodId, string>> = {
@@ -60,6 +64,151 @@ const OUTCOME_TOKENS = [
   "选择权", "安全感", "匹配", "定价权", "职业起点", "自由", "不痛苦", "方向",
 ];
 
+type SemanticSlotKey = BenchmarkStructureCard["semantic_slots"]["required_slot_keys"][number];
+type SemanticSlots = BenchmarkStructureCard["semantic_slots"];
+
+const JOB_OUTCOME_PATTERN = /找工作|求职|投递|入职|offer|上岸|就业/u;
+const SELECTION_ACTION_PATTERN = /(?:筛|选|问|查|比较|判断|识别|避|防|争|找|投|跟进|推进|验证|错把|不只|别只|先|再)/u;
+const RELATIONSHIP_PATTERN = /不是.+(?:而是|是)|越.+(?:越|反而)|还是|为什么|为何|如何|怎么|不如|别只|不只|不要|别|却|没想到|结果|根本不知道|，?是(?:一种|个)?/u;
+
+function firstMatched(value: string, patterns: RegExp[]) {
+  for (const pattern of patterns) {
+    const match = value.match(pattern);
+    if (match?.[0]) return match[0].trim().slice(0, 36);
+  }
+  return "";
+}
+
+function audienceSlot(value: string) {
+  return firstMatched(value, [
+    /(?:\d{2}后|[一二三四五六七八九十两]+十?后)?(?:毕业生|应届生|留学生|海归|中高管|高管|中层|管理者|老板|创业者|家长|宝妈|打工人|职场人)/u,
+    /(?:\d{2}\+|\d{2}岁)(?:中层|高管|职场人|打工人)?/u,
+  ]);
+}
+
+function channelSlot(value: string) {
+  if (/(?:高尔夫)?球场/u.test(value)) return "线下非传统求职场景";
+  if (/招聘会|展会|沙龙|活动现场|线下活动/u.test(value)) return "线下求职活动场景";
+  if (/校友会|校友/u.test(value)) return "校友关系网络";
+  if (/社群/u.test(value)) return "职业社群网络";
+  if (/内推/u.test(value)) return "内推关系网络";
+  if (/(?:boss直聘|招聘网站|求职平台|领英|linkedin)/iu.test(value)) return "具体招聘平台";
+  if (/咖啡馆|餐厅/u.test(value)) return "线下社交场景";
+  return "";
+}
+
+function actionSlot(value: string, methodId: TitleMethodId) {
+  if (channelSlot(value) && JOB_OUTCOME_PATTERN.test(value)) return "通过非常规渠道主动寻找工作机会";
+  if (/识别.+信号|信号.+识别/u.test(value)) return "识别关键信号";
+  if (/找.+顾问|筛.+顾问|问这\d+件事|先问/u.test(value)) return "在选择服务前进行关键核查";
+  if (/别只争|要争/u.test(value)) return "从表层目标转向主动争取真正利益";
+  if (/跟进/u.test(value)) return "持续推进与跟进";
+  if (/转型前|离职前|求职前/u.test(value)) return "在关键决策前先做判断";
+  if (methodId === "viral_framework" && /缺的不是/u.test(value)) return "从表层问题追问到真实能力";
+  if (SELECTION_ACTION_PATTERN.test(value)) return "围绕具体选择或风险采取行动";
+  return "";
+}
+
+function outcomeSlot(value: string, methodId: TitleMethodId) {
+  if (JOB_OUTCOME_PATTERN.test(value)) return "获得工作机会";
+  if (/选择权|主动权|自由/u.test(value)) return "获得职业选择权";
+  if (/安全感|稳定/u.test(value)) return "获得稳定与安全感";
+  if (/升职|加薪|收入|定价权/u.test(value)) return "提升职业市场价值";
+  if (/方向|转型|创业|匹配/u.test(value)) return "明确职业方向";
+  if (/信号|风险|入侵|避坑|踩坑/u.test(value)) return "识别并降低风险";
+  if (/能力|成熟/u.test(value)) return "识别真正需要的能力";
+  if (methodId === "same_product" && includesAny(value, PRODUCT_TOKENS)) return "判断服务是否适配";
+  return "";
+}
+
+function relationshipSlot(value: string, methodId: TitleMethodId, slots: Pick<SemanticSlots,
+  "audience_or_role" | "unusual_action_or_method" | "scene_or_channel" | "goal_or_outcome"
+>) {
+  const signals = titleStructureSignals(value);
+  if (slots.scene_or_channel && slots.audience_or_role) {
+    return "特定人群通过非传统渠道或关系网络寻找机会";
+  }
+  if (signals.has("not_but")) return "否定表层问题，指出真正关键变量";
+  if (signals.has("more_but")) return "条件看似更强，结果反而更难";
+  if (signals.has("choice")) return "两条路径要在真实约束下作选择";
+  if (signals.has("why")) return "从一个反常为什么切入关键原因";
+  if (signals.has("how")) return "从具体问题切入识别或处理路径";
+  if (signals.has("rather_than")) return "放下表面动作，争取真正结果";
+  if (signals.has("number")) return "用明确数量组织关键核查或行动";
+  if (signals.has("warning")) return "先提示具体风险，再说明判断条件";
+  if (signals.has("turn")) return "具体处境出现反转或落差";
+  if (methodId === "same_product" && slots.unusual_action_or_method) return "选择服务前先完成关键核查";
+  if (methodId === "same_effect" && slots.goal_or_outcome) return "先识别风险或问题，再找到对应处理路径";
+  if (methodId === "same_outcome" && slots.goal_or_outcome) return "表面目标背后是更深层的职业结果";
+  if (methodId === "viral_framework" && slots.unusual_action_or_method) return "从表层现象转向真正能力或判断";
+  return "";
+}
+
+/**
+ * 结构卡不是让模型重新“猜”原题，而是从真实原题提取最小、可核验的语义关系。
+ * 若连两个可迁移的关系都抽不出，宁可暂停该槽位，也不能退化成泛泛模板。
+ */
+export function sourceSemanticSlots(input: {
+  methodId: TitleMethodId;
+  sourceTitle: string;
+}): SemanticSlots | null {
+  const audience_or_role = audienceSlot(input.sourceTitle);
+  const scene_or_channel = channelSlot(input.sourceTitle);
+  const unusual_action_or_method = actionSlot(input.sourceTitle, input.methodId);
+  const goal_or_outcome = outcomeSlot(input.sourceTitle, input.methodId);
+  const relationship = relationshipSlot(input.sourceTitle, input.methodId, {
+    audience_or_role,
+    unusual_action_or_method,
+    scene_or_channel,
+    goal_or_outcome,
+  });
+  const transferableCount = [
+    audience_or_role,
+    unusual_action_or_method,
+    scene_or_channel,
+    goal_or_outcome,
+    relationship,
+  ].filter(Boolean).length;
+  if (transferableCount < 2) return null;
+
+  const required = new Set<SemanticSlotKey>();
+  switch (input.methodId) {
+    case "similar_audience":
+      if (audience_or_role) required.add("audience_or_role");
+      if (scene_or_channel) required.add("scene_or_channel");
+      else if (unusual_action_or_method) required.add("unusual_action_or_method");
+      break;
+    case "same_product":
+      if (unusual_action_or_method) required.add("unusual_action_or_method");
+      else if (goal_or_outcome) required.add("goal_or_outcome");
+      break;
+    case "same_effect":
+    case "same_outcome":
+      if (goal_or_outcome) required.add("goal_or_outcome");
+      else if (unusual_action_or_method) required.add("unusual_action_or_method");
+      break;
+    case "viral_framework":
+      // 爆款框架迁移的是句式和冲突关系；不能错误要求当前标题复刻原题动作，
+      // 否则“缺的不是客户，是跟进能力”会误杀“缺的不是机会，是判断胜率”。
+      break;
+    case "traffic":
+      if (scene_or_channel) required.add("scene_or_channel");
+      else if (goal_or_outcome) required.add("goal_or_outcome");
+      break;
+    default:
+      break;
+  }
+  required.add("relationship");
+  return {
+    audience_or_role,
+    unusual_action_or_method,
+    scene_or_channel,
+    goal_or_outcome,
+    relationship,
+    required_slot_keys: [...required],
+  };
+}
+
 function includesAny(value: string, tokens: string[]) {
   const normalized = value.toLowerCase();
   return tokens.some((token) => normalized.includes(token.toLowerCase()));
@@ -74,7 +223,8 @@ export function titleStructureSignals(value: string) {
   if (/如何|怎么/u.test(value)) signals.add("how");
   if (/不如/u.test(value)) signals.add("rather_than");
   if (/，?是(?:一种|个)?/u.test(value)) signals.add("is_a");
-  if (/\d+|[一二三四五六七八九十两]+(?=[个项条步天年])/u.test(value)) signals.add("number");
+  // “00后”是人群身份，不是可迁移的数字清单；只把“3个/5步/7天”等数量结构记为 number。
+  if (/(?:\d+|[一二三四五六七八九十两]+)(?=(?:个|项|条|步|天|年|家|份|件|道))/u.test(value)) signals.add("number");
   if (/却|没想到|结果|根本不知道/u.test(value)) signals.add("turn");
   if (/不要|别|千万/u.test(value)) signals.add("warning");
   return signals;
@@ -96,6 +246,23 @@ function outcomeSignals(value: string) {
   if (/选择权|自由|主动权/u.test(value)) signals.add("choice");
   if (/安全感|稳定|不痛苦|少焦虑/u.test(value)) signals.add("security");
   if (/匹配|方向|职业起点|转型|创业/u.test(value)) signals.add("direction");
+  return signals;
+}
+
+/**
+ * 有些“相似人群”母题的关键不是一个普通句式，而是一个具体求职渠道：
+ * 例如“在高尔夫球场找工作”。这类来源若被迁成“反向捋秋招”之类的泛动作，
+ * 虽然看似保留了反差，却已经丢掉原标题真正可复用的关系。
+ */
+function concreteJobSearchChannelSignals(value: string) {
+  const signals = new Set<string>();
+  if (/(?:高尔夫)?球场|招聘会|展会|沙龙|活动现场|线下活动|校友会|社群|咖啡馆|餐厅/u.test(value)) {
+    signals.add("concrete_channel");
+  }
+  if (/(?:boss直聘|招聘网站|求职平台|领英|linkedin)/iu.test(value)) {
+    signals.add("job_platform");
+  }
+  if (/内推|校友/u.test(value)) signals.add("referral_network");
   return signals;
 }
 
@@ -281,6 +448,13 @@ function normalizeStructureCard(input: {
     input.account.business_line ?? "executive",
   );
   if (!fit.passed) return null;
+  const semanticSlots = sourceSemanticSlots({
+    methodId: input.source.method_id,
+    sourceTitle: input.source.original_title,
+  });
+  // 不用模型或默认模板补“语义槽位”。空槽位意味着该来源无法证明自己
+  // 真正可迁移，来源型方法应暂停而不是带着一个泛化标题继续走。
+  if (!semanticSlots) return null;
   const raw = input.raw ?? {};
   const fallback = minimumStructureFields({ source: input.source });
   const fields = {
@@ -306,6 +480,8 @@ function normalizeStructureCard(input: {
     source_title: input.source.original_title,
     source_author: input.source.author,
     ...fields,
+    semantic_slots: semanticSlots,
+    semantic_status: "ready",
     forbidden_copy_elements: forbidden,
     source_fit_status: "passed",
     source_fit_reason: fit.reason,
@@ -352,7 +528,7 @@ export async function ensureBenchmarkStructureCards(input: {
     if (card) cards.push(card);
     else rejected.push({
       method_id: source.method_id,
-      reason: "母题未形成可用的结构卡，本轮暂停。",
+      reason: "母题未形成至少两项可迁移的语义关系，本轮暂停，避免套用泛化标题。",
     });
   }
   return { cards, rejected };
@@ -388,13 +564,20 @@ export function deterministicMigrationFit(input: {
         reason: !structurePreserved ? structureReason : "新标题没有继承母题对应的判断、比较、方法或风险降低功效。",
       };
     case "similar_audience":
-      return {
-        passed: structurePreserved
-          && includesAny(input.newTitle, BUSINESS_AUDIENCE_TOKENS[input.businessLine]),
-        reason: !structurePreserved
-          ? structureReason
-          : "新标题没有呈现当前业务中与母题相似的人群或人生阶段。",
-      };
+      {
+        const sourceHasConcreteChannel = concreteJobSearchChannelSignals(input.sourceTitle).size > 0;
+        const newTitleHasConcreteChannel = concreteJobSearchChannelSignals(input.newTitle).size > 0;
+        return {
+          passed: structurePreserved
+            && includesAny(input.newTitle, BUSINESS_AUDIENCE_TOKENS[input.businessLine])
+            && (!sourceHasConcreteChannel || newTitleHasConcreteChannel),
+          reason: !structurePreserved
+            ? structureReason
+            : !includesAny(input.newTitle, BUSINESS_AUDIENCE_TOKENS[input.businessLine])
+              ? "新标题没有呈现当前业务中与母题相似的人群或人生阶段。"
+              : "原标题依靠具体求职渠道形成反差，新标题也必须保留一个具体渠道、线下场景或关系网络。",
+        };
+      }
     case "same_outcome":
       return {
         passed: structurePreserved
@@ -410,6 +593,93 @@ export function deterministicMigrationFit(input: {
     default:
       return { passed: true, reason: "交由独立语义门禁判断。" };
   }
+}
+
+const SEMANTIC_SLOT_LABELS: Record<SemanticSlotKey, string> = {
+  audience_or_role: "原题人群/角色",
+  unusual_action_or_method: "原题动作/方法",
+  scene_or_channel: "原题场景/渠道",
+  goal_or_outcome: "原题目标/结果",
+  relationship: "原题关系",
+};
+
+function candidateHasAction(value: string) {
+  return SELECTION_ACTION_PATTERN.test(value)
+    || concreteJobSearchChannelSignals(value).size > 0;
+}
+
+function candidateHasOutcome(input: {
+  methodId: TitleMethodId;
+  sourceTitle: string;
+  newTitle: string;
+}) {
+  if (input.methodId === "same_effect") {
+    return setsOverlap(effectSignals(input.sourceTitle), effectSignals(input.newTitle));
+  }
+  if (input.methodId === "same_outcome") {
+    return setsOverlap(outcomeSignals(input.sourceTitle), outcomeSignals(input.newTitle));
+  }
+  if (input.methodId === "same_product") {
+    return includesAny(input.newTitle, [...PRODUCT_TOKENS, "适配", "选择", "找老师", "第一步", "值不值"]);
+  }
+  return includesAny(input.newTitle, [
+    ...BUSINESS_TOKENS.executive,
+    ...BUSINESS_TOKENS.overseas_student,
+    ...OUTCOME_TOKENS,
+    ...EFFECT_TOKENS,
+  ]);
+}
+
+function candidateHasRelationship(input: {
+  sourceTitle: string;
+  newTitle: string;
+  slots: SemanticSlots;
+}) {
+  // 原题靠具体渠道/关系网反差时，当前标题也必须明确出现一个可见渠道；
+  // 不允许把“球场找工作”迁成“反向捋秋招”之类的抽象动作。
+  if (input.slots.scene_or_channel) {
+    return concreteJobSearchChannelSignals(input.newTitle).size > 0;
+  }
+  if (titleStructureSignals(input.sourceTitle).size > 0) {
+    return keepsSourceStructure(input.sourceTitle, input.newTitle);
+  }
+  return RELATIONSHIP_PATTERN.test(input.newTitle);
+}
+
+/**
+ * v3.8 第二道确定性门禁：模型即使写出了“看起来合理”的业务标题，也必须
+ * 显式承接结构卡要求的语义槽位。这里不比较原词，比较的是渠道、关系、结果等
+ * 可迁移类别，因此不会强迫复制来源文本。
+ */
+export function semanticSlotTransferProblems(input: {
+  methodId: TitleMethodId;
+  businessLine: GrowthBusinessLine;
+  sourceTitle: string;
+  newTitle: string;
+  structureCard: BenchmarkStructureCard;
+}) {
+  const card = input.structureCard;
+  if (card.semantic_status !== "ready") {
+    return ["母题语义槽位不足，本轮暂停，不能使用泛化标题。"];
+  }
+  const problems: string[] = [];
+  for (const key of card.semantic_slots.required_slot_keys) {
+    const passed = key === "audience_or_role"
+      ? includesAny(input.newTitle, BUSINESS_AUDIENCE_TOKENS[input.businessLine])
+      : key === "unusual_action_or_method"
+        ? candidateHasAction(input.newTitle)
+        : key === "scene_or_channel"
+          ? concreteJobSearchChannelSignals(input.newTitle).size > 0
+          : key === "goal_or_outcome"
+            ? candidateHasOutcome(input)
+            : candidateHasRelationship({
+              sourceTitle: input.sourceTitle,
+              newTitle: input.newTitle,
+              slots: card.semantic_slots,
+            });
+    if (!passed) problems.push(`新标题未迁移${SEMANTIC_SLOT_LABELS[key]}。`);
+  }
+  return problems;
 }
 
 export interface SourceMigrationCandidate {
@@ -449,6 +719,13 @@ export async function validateSourceMigrations(input: {
       sourceTitle: candidate.source.original_title,
       newTitle: candidate.title,
     });
+    const semanticProblems = semanticSlotTransferProblems({
+      methodId: candidate.methodId,
+      businessLine: input.businessLine,
+      sourceTitle: candidate.source.original_title,
+      newTitle: candidate.title,
+      structureCard: candidate.structureCard,
+    });
     const copied = isTooCloseToSource(candidate.source.original_title, candidate.title);
     const personaLabel: Record<GrowthPersona, string> = {
       buyer: "买家",
@@ -456,20 +733,26 @@ export async function validateSourceMigrations(input: {
       merchant: "商家",
     };
     const structure = candidate.structureCard.sentence_structure;
-    const relationship = candidate.structureCard.conflict_structure;
+    const relationship = candidate.structureCard.semantic_slots.relationship
+      || candidate.structureCard.conflict_structure;
+    const requiredSlots = candidate.structureCard.semantic_slots.required_slot_keys
+      .map((key) => `${SEMANTIC_SLOT_LABELS[key]}：${candidate.structureCard.semantic_slots[key]}`)
+      .filter((item) => !item.endsWith("："));
     const replacement = `以${personaLabel[input.persona]}视角面向“${input.targetUser}”，围绕“${input.coreProblem}”替换人物、场景和业务内容。`;
     return {
       candidateId: candidate.candidateId,
       sourceFit,
-      migrationFit: migration.passed && !copied,
-      passed: sourceFit && migration.passed && !copied,
+      migrationFit: migration.passed && !copied && semanticProblems.length === 0,
+      passed: sourceFit && migration.passed && !copied && semanticProblems.length === 0,
       reason: !sourceFit
         ? "原题不符合当前对标方法。"
         : copied
           ? "新标题与原题过于接近，未完成原创迁移。"
+          : semanticProblems.length
+            ? semanticProblems[0]
           : migration.reason,
-      evidence: sourceFit && migration.passed && !copied
-        ? `可复用结构：${structure} 关系：${relationship} 当前替换：${replacement}`
+      evidence: sourceFit && migration.passed && !copied && semanticProblems.length === 0
+        ? `原题「${candidate.source.original_title}」→ 迁移逻辑：保留${requiredSlots.join("；")}；句式/关系「${structure} / ${relationship}」。当前替换：${replacement} → 新标题「${candidate.title}」`
         : "",
     };
   });

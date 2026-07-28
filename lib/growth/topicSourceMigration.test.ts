@@ -36,16 +36,44 @@ const structureCard: BenchmarkStructureCard = {
   promised_result: "帮助读者识别真正阻碍转型的变量",
   inheritable_element: "先否定表层问题，再指出深层能力",
   replacement_requirement: "把客户与跟进能力替换为中高管转型中的真实变量",
+  semantic_slots: {
+    audience_or_role: "",
+    unusual_action_or_method: "持续推进与跟进",
+    scene_or_channel: "",
+    goal_or_outcome: "识别真正需要的能力",
+    relationship: "否定表层问题，指出真正关键变量",
+    required_slot_keys: ["relationship", "unusual_action_or_method"],
+  },
+  semantic_status: "ready",
   forbidden_copy_elements: ["客户", "跟进客户"],
   source_fit_status: "passed",
   source_fit_reason: "爆款框架可迁移到职业决策场景",
   status: "locked",
-  structure_version: "v3_7",
+  structure_version: "v3_8",
   generated_at: "2026-07-22T01:00:00.000Z",
   expires_at: "2026-07-23T01:00:00.000Z",
 };
 
 describe("来源型标题生成合同", () => {
+  it("标题提示词只带最新160条历史，不会误把最旧标题当作近期禁区", () => {
+    const newestFirstHistory = Array.from({ length: 161 }, (_, index) => (
+      `最新历史标题${String(index + 1).padStart(3, "0")}`
+    ));
+    const prompt = buildTopicPoolUserPrompt({
+      week: 1,
+      targetUser: "转型中的中高管",
+      coreProblem: "方向不清晰",
+      persona: "buyer",
+      methods: [TITLE_METHOD_BY_ID.human_pain],
+      generationMode: "default",
+      excludeTitles: newestFirstHistory,
+    });
+
+    expect(prompt).toContain("最新历史标题001");
+    expect(prompt).toContain("最新历史标题160");
+    expect(prompt).not.toContain("最新历史标题161");
+  });
+
   it("标题生成阶段只接收锁定结构卡，不再看到或解释原题", () => {
     const prompt = buildTopicPoolUserPrompt({
       week: 1,
@@ -61,6 +89,8 @@ describe("来源型标题生成合同", () => {
     expect(prompt).toContain("只能使用“已锁定结构卡”生成");
     expect(prompt).toContain(structureCard.sentence_structure);
     expect(prompt).toContain(structureCard.replacement_requirement);
+    expect(prompt).toContain("semantic_slots");
+    expect(prompt).toContain("required_slot_keys");
     expect(prompt).not.toContain(source.original_title);
     expect(prompt).not.toContain('"source_usage"');
   });

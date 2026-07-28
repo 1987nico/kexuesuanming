@@ -13,7 +13,7 @@ import {
   type DraftBlueprintContext,
   type ReportPrices,
 } from "./agents";
-import { methodsForPersona, type TitleMethodDefinition } from "./methods";
+import { methodsForPersona, TITLE_METHOD_BY_ID, type TitleMethodDefinition } from "./methods";
 import {
   buildReviewBenchmarks,
   buildWeeklyReviewResult,
@@ -76,6 +76,7 @@ import {
   ensureBenchmarkStructureCards,
   SOURCE_MIGRATION_VERSION,
   sourceSnapshotFitsMethod,
+  titleStructureSignals,
   validateSourceMigrations,
   type SourceMigrationCandidate,
 } from "./sourceMigration";
@@ -809,6 +810,27 @@ function topicCandidateDuplicateProblems(
   if (inBatch) problems.push(`${topic.method_id}:与本批次${inBatch.method_id}标题重复或近似`);
   if (!options.preserveDirection) {
     const diversity = buildTopicDiversitySignature(topic, options.businessLine);
+    // “换一批标题”不能只换词继续写同一原生法母题。只对同一原生方法的
+    // 最近五批启用“母题＋人物/场景/结果素材”冷却，避免把宽泛的“离职/秋招”
+    // 一概误杀；跨方法仍由语义近似门禁判断。单槽换题保留方向，不走这条规则。
+    if (topic.method_group === "native") {
+      const repeatedRecentNativePremise = historyTopics.find((item) => {
+        if (item.method_id !== topic.method_id || (item.batch_index ?? Number.MAX_SAFE_INTEGER) >= 5) {
+          return false;
+        }
+        const historicalMethod = item.method_id ? TITLE_METHOD_BY_ID[item.method_id] : undefined;
+        return historicalMethod?.group === "native"
+          && Boolean(item.mother_topic_key)
+          && Boolean(item.material_signature)
+          && item.mother_topic_key === diversity.mother_topic_key
+          && item.material_signature === diversity.material_signature;
+      });
+      if (repeatedRecentNativePremise) {
+        problems.push(
+          `${topic.method_id}:与近5批同方法标题“${repeatedRecentNativePremise.title}”复用了同一母题和素材组合`,
+        );
+      }
+    }
     const sameBatchMaterial = accepted.find((item) => {
       const other = buildTopicDiversitySignature(item, options.businessLine);
       return other.mother_topic_key === diversity.mother_topic_key
@@ -863,18 +885,6 @@ const TITLE_METHOD_GATE_RULES: Record<TitleMethodId, string> = {
   viral_framework: "必须迁移母题的句式骨架、信息排列或冲突结构",
 };
 
-function titleStructureSignals(value: string) {
-  const signals = new Set<string>();
-  if (/不是.+(?:而是|是)/u.test(value)) signals.add("not_but");
-  if (/越.+(?:越|反而)/u.test(value)) signals.add("more_but");
-  if (/还是|到底.+选/u.test(value)) signals.add("choice");
-  if (/为什么|为何/u.test(value)) signals.add("why");
-  if (/不如/u.test(value)) signals.add("rather_than");
-  if (/\d+|[一二三四五六七八九十两]+(?=[个项条步天年])/u.test(value)) signals.add("number");
-  if (/却|没想到|结果/u.test(value)) signals.add("turn");
-  return signals;
-}
-
 function hasBigramOverlap(left: string, right: string) {
   const a = ngrams(normalizeTitleHistoryFingerprint(left), 2);
   const b = ngrams(normalizeTitleHistoryFingerprint(right), 2);
@@ -893,7 +903,7 @@ function sourceMigrationProblems(
     const card = structureCards.get(topic.method_id);
     const problems: string[] = [];
     if (!card || card.status !== "locked" || card.structure_version !== SOURCE_MIGRATION_VERSION) {
-      problems.push(`${topic.method_id}:缺少已锁定的v3.7母题结构卡`);
+      problems.push(`${topic.method_id}:缺少已锁定的${SOURCE_MIGRATION_VERSION}母题结构卡`);
       return problems;
     }
     if (titlesAreNearDuplicate(topic.title, source.original_title)) {

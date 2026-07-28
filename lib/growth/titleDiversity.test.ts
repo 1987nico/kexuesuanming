@@ -100,6 +100,40 @@ describe("标题四层多样性签名", () => {
     expect(problems).toHaveLength(0);
   });
 
+  it("同一原生方法在近五批不能复用同一母题和素材组合", () => {
+    const current = topic(
+      "human_pain",
+      "总监辞呈递了，才知市场价不是年薪",
+      "讲清离开平台后重新判断职业定价的方法",
+    );
+    const signature = buildTopicDiversitySignature(current, "executive");
+    const problems = topicBatchDuplicateProblems([current], [], [{
+      method_id: "human_pain",
+      title: "历史中不同措辞的离职定价标题",
+      ...signature,
+      batch_index: 4,
+    }], "executive");
+
+    expect(problems.some((item) => item.includes("近5批同方法标题"))).toBe(true);
+  });
+
+  it("超过五批的同方法素材不会仅凭粗粒度签名被误伤", () => {
+    const current = topic(
+      "human_pain",
+      "总监辞呈递了，才知市场价不是年薪",
+      "讲清离开平台后重新判断职业定价的方法",
+    );
+    const signature = buildTopicDiversitySignature(current, "executive");
+    const problems = topicBatchDuplicateProblems([current], [], [{
+      method_id: "human_pain",
+      title: "六批前的旧标题",
+      ...signature,
+      batch_index: 5,
+    }], "executive");
+
+    expect(problems).toHaveLength(0);
+  });
+
   it("同一批次不接受相同母题和素材组合", () => {
     const first = topic(
       "human_pain",
