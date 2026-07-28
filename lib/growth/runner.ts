@@ -781,6 +781,26 @@ const MAX_NATIVE_AUDIT_WAVES = 2;
 const MAX_NATIVE_TARGETED_RECOVERY_CANDIDATES_PER_METHOD = 4;
 /** 定向补题同样可以轮换尚未审核的候选，但严格限制为两轮，避免补题链拉长。 */
 const MAX_NATIVE_TARGETED_RECOVERY_AUDIT_WAVES = 2;
+/**
+ * 一次模型请求最多处理三个标题方法。
+ *
+ * 默认批次最多同时包含 7 个方法，每个方法又要求 3 组“标题＋正文承诺”。
+ * 把整批塞进一次请求会让主、备模型都在 18 秒内来不及返回，最终表现为
+ * candidate_count=0，且任意一个超时会连带丢掉整批。小批并行后，每个
+ * 响应都足够短；其中一个小批失败也不会抹掉其他小批已经生成的候选。
+ */
+const MAX_TITLE_METHODS_PER_MODEL_CALL = 3;
+
+function chunkTitleMethods(
+  methods: TitleMethodDefinition[],
+  size = MAX_TITLE_METHODS_PER_MODEL_CALL,
+): TitleMethodDefinition[][] {
+  const chunks: TitleMethodDefinition[][] = [];
+  for (let index = 0; index < methods.length; index += size) {
+    chunks.push(methods.slice(index, index + size));
+  }
+  return chunks;
+}
 
 export interface NativeTitleAuditDiagnostic {
   status: "passed" | "fallback_recovery" | "timeout" | "incomplete" | "unavailable" | "not_needed";
@@ -1699,49 +1719,75 @@ export async function generateTopicBatch(input: {
     if (!pendingMethods.length) break;
     const generationAttemptStartedAt = Date.now();
     try {
-      const result = await llmJSON<any>({
-        system: GROWTH_SYSTEM_PROMPT,
-        user: buildTopicPoolUserPrompt({
-          week: Math.max(1, Math.min(4, input.week ?? 1)), persona: input.account.persona,
-          targetUser: input.account.target_user, coreProblem: input.account.core_problem,
-          recentSignals: input.learningBrief ? formatLearningBrief(input.learningBrief) : input.recentSignals,
-          methods: pendingMethods, generationMode,
-          sources: pendingMethods.map((method) => sources.get(method.id)).filter(Boolean) as TopicSourceSnapshot[],
-          structureCards: pendingMethods.map((method) => structureCards.get(method.id)).filter(Boolean) as BenchmarkStructureCard[],
-          excludeTitles: historyTitles,
-          priorityExcludeTitles: [
-            ...[...accepted.values()].map((topic) => topic.title),
-            ...rejectedTitles.slice().reverse(),
-          ],
-          directionLocks: pendingMethods.flatMap((method) => {
-            const lock = input.directionLocks?.[method.id];
-            return lock ? [{
-              method_id: method.id,
-              current_title: lock.title,
-              title_promise: lock.title_promise,
-              target_user: lock.target_user,
-              pain: lock.pain,
-              origin_force: lock.origin_force,
-              conflict_judgement: lock.conflict_judgement,
-            }] : [];
-          }),
-          diversityHistory: historyTopics,
-          context: accountContext(input.account),
-        }),
-        // 每个方法要求三组“标题＋独立正文承诺”。专家视角一次最多六个
-        // 方法，固定 2200 token 会把 topics 数组截断，表现为多个槽位根本
-        // 没有候选。按方法数给结构化输出留空间，同时设置上限避免无界响应。
-        maxTokens: Math.min(4_000, 1_000 + pendingMethods.length * 500),
-        temperature: Math.min(0.82, 0.62 + attempt * 0.07),
-        // 主模型中断时，由不同供应商补同一份“整批候选”请求；两条路径都有
-        // 单次上限，避免历史重复一多就把操作者困在无休止的重试里。
-        timeoutMs: 18_000,
-        jsonRetries: 0,
-        allowFallback: true,
-      });
-      usage = resultUsage(result);
-      const rows = Array.isArray(result.data?.topics) ? result.data.topics : [];
       const attemptProblems: string[] = [];
+      const rows: any[] = [];
+      const methodChunks = chunkTitleMethods(pendingMethods);
+      const chunkResults = await Promise.allSettled(methodChunks.map(async (chunk) => ({
+        methods: chunk,
+        result: await llmJSON<any>({
+          system: GROWTH_SYSTEM_PROMPT,
+          user: buildTopicPoolUserPrompt({
+            week: Math.max(1, Math.min(4, input.week ?? 1)), persona: input.account.persona,
+            targetUser: input.account.target_user, coreProblem: input.account.core_problem,
+            recentSignals: input.learningBrief ? formatLearningBrief(input.learningBrief) : input.recentSignals,
+            methods: chunk, generationMode,
+            sources: chunk.map((method) => sources.get(method.id)).filter(Boolean) as TopicSourceSnapshot[],
+            structureCards: chunk.map((method) => structureCards.get(method.id)).filter(Boolean) as BenchmarkStructureCard[],
+            excludeTitles: historyTitles,
+            priorityExcludeTitles: [
+              ...[...accepted.values()].map((topic) => topic.title),
+              ...rejectedTitles.slice().reverse(),
+            ],
+            directionLocks: chunk.flatMap((method) => {
+              const lock = input.directionLocks?.[method.id];
+              return lock ? [{
+                method_id: method.id,
+                current_title: lock.title,
+                title_promise: lock.title_promise,
+                target_user: lock.target_user,
+                pain: lock.pain,
+                origin_force: lock.origin_force,
+                conflict_judgement: lock.conflict_judgement,
+              }] : [];
+            }),
+            diversityHistory: historyTopics,
+            context: accountContext(input.account),
+          }),
+          // 每个小批最多三个方法、九组“标题＋承诺”，避免长响应把 JSON
+          // 截断；小批并行不会把页面等待时间按方法数线性放大。
+          maxTokens: Math.min(2_700, 900 + chunk.length * 600),
+          temperature: Math.min(0.82, 0.62 + attempt * 0.07),
+          timeoutMs: 28_000,
+          jsonRetries: 0,
+          allowFallback: true,
+        }),
+      })));
+      for (const [chunkIndex, chunkResult] of chunkResults.entries()) {
+        const chunk = methodChunks[chunkIndex] ?? [];
+        if (chunkResult.status === "rejected") {
+          const problem = (chunkResult.reason as Error)?.message || "模型小批生成失败";
+          const problemKind = /abort|timeout|超时/iu.test(problem) ? "超时" : "暂不可用";
+          for (const method of chunk) {
+            attemptProblems.push(`${method.id}:模型小批${problemKind}`);
+          }
+          console.warn("[growth] topic model chunk failed", JSON.stringify({
+            attempt,
+            chunk_index: chunkIndex,
+            method_ids: chunk.map((method) => method.id),
+            elapsed_ms: Date.now() - generationAttemptStartedAt,
+            error_kind: problemKind === "超时" ? "timeout" : "unavailable",
+          }));
+          continue;
+        }
+        const result = chunkResult.value.result;
+        usage = {
+          ...(usage ?? {}),
+          [`generation_${attempt}_${chunkIndex}`]: resultUsage(result),
+        };
+        if (Array.isArray(result.data?.topics)) {
+          rows.push(...result.data.topics);
+        }
+      }
       const sourceCandidates: Array<{
         method: TitleMethodDefinition;
         topic: TopicCandidate;
