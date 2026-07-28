@@ -39,7 +39,7 @@ function option(
 }
 
 describe("原生标题语义审核候选预算", () => {
-  it("六个原生方法首轮每法只审一条最优候选，避免审核响应漏项", () => {
+  it("六个原生方法首轮每法审核两条候选，兼顾交付率与12条全局预算", () => {
     const methods = methodsForPersona("expert", "default").filter((method) => !method.sourceRequired);
     expect(methods).toHaveLength(6);
     const candidatesByMethod = new Map(methods.map((method) => [method.id, [
@@ -51,10 +51,10 @@ describe("原生标题语义审核候选预算", () => {
 
     const compact = compactNativeAuditOptions({ methods, candidatesByMethod });
     const total = methods.flatMap((method) => compact.get(method.id) ?? []);
-    expect(total).toHaveLength(6);
+    expect(total).toHaveLength(12);
     for (const method of methods) {
       const options = compact.get(method.id) ?? [];
-      expect(options).toHaveLength(1);
+      expect(options).toHaveLength(2);
       expect(options.some((item) => item.audit.kind === "model")).toBe(true);
     }
   });

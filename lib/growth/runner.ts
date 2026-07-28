@@ -653,20 +653,19 @@ export interface NativeTitleCandidateOption {
  * 原模型会为一个槽位给出 1 个首选和 4 个备选。语义审核只需要看最靠前的
  * 少量合格候选；再多会挤占响应时间，却不会提升运营可选范围。
  */
-const MAX_NATIVE_MODEL_CANDIDATES_PER_METHOD = 4;
+const MAX_NATIVE_MODEL_CANDIDATES_PER_METHOD = 5;
 /**
  * 静态兜底池不是直接交给运营，而是用于模型审核短暂不可用时的安全恢复。
  * 多保留几条，才能避免某一条撞到历史就让整批原生法全部空掉。
  */
 const MAX_NATIVE_FALLBACK_CANDIDATES_PER_METHOD = 6;
-/** 二次审核每个方法最多保留两条模型替代题和一条静态候选。 */
+/** 每波每个方法最多保留两条模型候选和一条静态候选。 */
 const MAX_NATIVE_AUDIT_CANDIDATES_PER_METHOD = 3;
 /**
- * 首轮终审只看“两个模型候选＋一个兜底”，避免一次审核变成性能瓶颈。
- * 但首轮未选中的安全候选不能被直接丢弃：只对失败槽位再做一次小批审核，
- * 才能在全历史去重很长时仍然交付一整批新标题。
+ * 审核分小波次滚动处理，不再只做“首审 + 一次二审”。候选被判重复时，
+ * 同一槽位仍能继续尝试已通过本地门禁的剩余候选；所有候选耗尽后才失败。
  */
-const MAX_NATIVE_RETRY_AUDIT_CANDIDATES_PER_METHOD = 3;
+const MAX_NATIVE_AUDIT_WAVES = 4;
 
 export interface NativeTitleAuditDiagnostic {
   status: "passed" | "fallback_recovery" | "timeout" | "incomplete" | "unavailable" | "not_needed";
@@ -1117,17 +1116,33 @@ export function topicBatchDuplicateProblems(
 export function compactNativeAuditOptions(input: {
   methods: TitleMethodDefinition[];
   candidatesByMethod: Map<TitleMethodId, NativeTitleCandidateOption[]>;
+  /** 已拿到完整审核协议的标题不再重复送审；协议漏字段的候选会留在下一波。 */
+  auditedTitleFingerprints?: Set<string>;
+  /** 仅用于让多波次返回的短 candidate id 不互相混淆。 */
+  idPrefix?: string;
 }) {
   const byMethod = new Map<TitleMethodId, NativeTitleCandidateOption[]>();
   let sequence = 1;
+  const audited = input.auditedTitleFingerprints ?? new Set<string>();
+  const perMethodLimit = Math.max(1, Math.min(
+    MAX_NATIVE_AUDIT_CANDIDATES_PER_METHOD,
+    Math.floor(TITLE_NOVELTY_AUDIT_MAX_CANDIDATES / Math.max(1, input.methods.length)),
+  ));
   for (const method of input.methods) {
-    const options = input.candidatesByMethod.get(method.id) ?? [];
-    const firstOption = options.find((option) => option.audit.kind === "model")
-      ?? options.find((option) => option.audit.kind === "fallback");
-    const shortlist = (firstOption ? [firstOption] : [])
-      .map((option) => ({
+    const options = (input.candidatesByMethod.get(method.id) ?? []).filter((option) => !audited.has(
+      normalizeTitleForComparison(option.topic.title),
+    ));
+    // 第一波同时给模型候选和安全候选机会；此前只审首个模型题，首题被判近似后
+    // 安全候选要到很晚才被看见，导致整批原子失败。
+    const models = options.filter((option) => option.audit.kind === "model");
+    const fallbacks = options.filter((option) => option.audit.kind === "fallback");
+    const modelLimit = Math.min(models.length, Math.max(1, perMethodLimit - 1));
+    const shortlist = [
+      ...models.slice(0, modelLimit),
+      ...fallbacks.slice(0, perMethodLimit - modelLimit),
+    ].map((option) => ({
         ...option,
-        audit: { ...option.audit, id: `N${sequence++}` },
+        audit: { ...option.audit, id: `${input.idPrefix ?? "N"}${sequence++}` },
       }));
     byMethod.set(method.id, shortlist);
   }
@@ -1144,33 +1159,12 @@ export function compactNativeAuditRetryOptions(input: {
   candidatesByMethod: Map<TitleMethodId, NativeTitleCandidateOption[]>;
   auditedTitleFingerprints: Set<string>;
 }) {
-  const byMethod = new Map<TitleMethodId, NativeTitleCandidateOption[]>();
-  let sequence = 1;
-  const perMethodLimit = Math.max(1, Math.min(
-    MAX_NATIVE_RETRY_AUDIT_CANDIDATES_PER_METHOD,
-    Math.floor(TITLE_NOVELTY_AUDIT_MAX_CANDIDATES / Math.max(1, input.methods.length)),
-  ));
-  for (const method of input.methods) {
-    const options = input.candidatesByMethod.get(method.id) ?? [];
-    const unreviewed = options.filter((option) => !input.auditedTitleFingerprints.has(
-      normalizeTitleForComparison(option.topic.title),
-    ));
-    // 首轮容量有限：买家视角会留下模型第 3、4 个候选，专家视角也会留下
-    // 额外模型候选。旧实现只拿静态候选做二审，等于把已经生成、也通过本地
-    // 门禁的模型替代题直接丢掉，导致“有新题却整批失败”。二审先看未审模型
-    // 候选，再看未审静态候选；每一条仍必须经过同一语义终审，绝不直接放行。
-    const modelAlternatives = unreviewed
-      .filter((option) => option.audit.kind === "model")
-      .slice(0, Math.max(1, perMethodLimit - 1));
-    const fallbackOption = unreviewed.find((option) => option.audit.kind === "fallback");
-    const shortlisted = [...modelAlternatives, ...(fallbackOption ? [fallbackOption] : [])]
-      .slice(0, perMethodLimit).map((option) => ({
-      ...option,
-      audit: { ...option.audit, id: `R${sequence++}` },
-    }));
-    byMethod.set(method.id, shortlisted);
-  }
-  return byMethod;
+  return compactNativeAuditOptions({
+    methods: input.methods,
+    candidatesByMethod: input.candidatesByMethod,
+    auditedTitleFingerprints: input.auditedTitleFingerprints,
+    idPrefix: "R",
+  });
 }
 
 /**
@@ -1848,7 +1842,17 @@ export async function generateTopicBatch(input: {
     const auditStartedAt = Date.now();
     // 只有真正拿到 decision 的候选才算“已经审核”。若模型漏回一项，它仍可
     // 进入一次受限恢复，不能因为被送过一次就永久从候选池消失。
-    let auditedTitleFingerprints = new Set<string>();
+    const auditedTitleFingerprints = new Set<string>();
+    const rememberAuditedOptions = (
+      options: NativeTitleCandidateOption[],
+      missingCandidateIds: string[],
+    ) => {
+      for (const option of options) {
+        if (!missingCandidateIds.includes(option.audit.id)) {
+          auditedTitleFingerprints.add(normalizeTitleForComparison(option.topic.title));
+        }
+      }
+    };
     try {
       // 审核只复核“已通过本地质量、身份和全历史去重”的精简候选。完整历史
       // 仍由确定性门禁覆盖，第二次模型不再是整批标题交付的性能单点。
@@ -1869,9 +1873,7 @@ export async function generateTopicBatch(input: {
           ? audit.coverage.missingCandidateIds
           : undefined,
       };
-      auditedTitleFingerprints = new Set(auditOptions
-        .filter((option) => !audit.coverage.missingCandidateIds.includes(option.audit.id))
-        .map((option) => normalizeTitleForComparison(option.topic.title)));
+      rememberAuditedOptions(auditOptions, audit.coverage.missingCandidateIds);
 
       usage = { ...(usage ?? {}), novelty_audit: audit.usage };
       const initialSelection = selectAuditedNativeTitleOptions({
@@ -1916,6 +1918,7 @@ export async function generateTopicBatch(input: {
             references: retryReferences,
           });
           usage = { ...(usage ?? {}), novelty_audit_retry: retryAudit.usage };
+          rememberAuditedOptions(retryOptions, retryAudit.coverage.missingCandidateIds);
           const retrySelection = selectAuditedNativeTitleOptions({
             methods: retryMethods,
             optionsByMethod: retryOptionsByMethod,
@@ -1951,6 +1954,68 @@ export async function generateTopicBatch(input: {
             lastProblems.push(`${method.id}:没有剩余的本地合格候选可进入二次审核`);
           }
         }
+      }
+      // 首审和二审都无法挑出标题时，继续只审核尚未拿到完整结论的候选。
+      // 这样“某一条像历史题”不会把整个槽位提前耗尽；但每波总量仍不超过
+      // 12 条、总波次不超过 4，避免把操作者困在无休止的等待里。
+      for (let wave = 3; wave <= MAX_NATIVE_AUDIT_WAVES; wave += 1) {
+        const remainingMethods = nativeMethods.filter((method) => !accepted.has(method.id));
+        if (!remainingMethods.length) break;
+        const waveOptionsByMethod = compactNativeAuditRetryOptions({
+          methods: remainingMethods,
+          candidatesByMethod: nativeCandidatesByMethod,
+          auditedTitleFingerprints,
+        });
+        const waveOptions = remainingMethods.flatMap((method) => waveOptionsByMethod.get(method.id) ?? []);
+        const waveCandidates = waveOptions.map((option) => option.audit);
+        if (!waveCandidates.length) {
+          for (const method of remainingMethods) {
+            lastProblems.push(`${method.id}:所有本地合格候选均已审核，但没有形成新的可交付标题`);
+          }
+          break;
+        }
+        const waveReferences = compactNativeAuditReferences({
+          methods: remainingMethods,
+          historyTopics,
+          historyTitles,
+          accepted: [...accepted.values()],
+        });
+        const waveAudit = await auditNativeTitleBatchNovelty({
+          businessLine: input.account.business_line ?? "executive",
+          persona: input.account.persona,
+          targetUser: input.account.target_user,
+          coreProblem: input.account.core_problem,
+          candidates: waveCandidates,
+          references: waveReferences,
+        });
+        usage = { ...(usage ?? {}), [`novelty_audit_wave_${wave}`]: waveAudit.usage };
+        rememberAuditedOptions(waveOptions, waveAudit.coverage.missingCandidateIds);
+        const waveSelection = selectAuditedNativeTitleOptions({
+          methods: remainingMethods,
+          optionsByMethod: waveOptionsByMethod,
+          decisions: waveAudit.decisions,
+          alreadyAccepted: [...accepted.values()],
+          historyTitles,
+          historyTopics,
+          businessLine: input.account.business_line ?? "executive",
+          directionLocks: input.directionLocks,
+        });
+        for (const [methodId, topic] of waveSelection.accepted) accepted.set(methodId, topic);
+        rejectedTitles.push(...waveSelection.rejectedTitles);
+        lastProblems.push(...waveSelection.problems);
+        nativeTitleAudit = {
+          status: nativeMethods.every((method) => accepted.has(method.id))
+            ? "passed"
+            : waveAudit.coverage.complete
+              ? "passed"
+              : "incomplete",
+          candidate_count: (nativeTitleAudit?.candidate_count ?? auditCandidates.length) + waveCandidates.length,
+          reference_count: Math.max(nativeTitleAudit?.reference_count ?? references.length, waveReferences.length),
+          elapsed_ms: Date.now() - auditStartedAt,
+          missing_candidate_ids: waveAudit.coverage.missingCandidateIds.length
+            ? waveAudit.coverage.missingCandidateIds
+            : undefined,
+        };
       }
       if (nativeMethods.every((method) => accepted.has(method.id))) {
         nativeTitleAudit = {

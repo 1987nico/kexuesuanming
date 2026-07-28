@@ -144,8 +144,9 @@ describe("原生标题语义审核二次恢复", () => {
       allowSourcePause: true,
     });
 
-    // 审核函数不再在内部叠一层补审；整条请求最多两次审核。
-    expect(auditCalls).toBe(2);
+    // 协议漏项会继续进入受限的后续审核波次；即使四波都漏项，也绝不
+    // 放行任何未经完整审核的标题。
+    expect(auditCalls).toBe(4);
     expect(result.topics.map((topic) => topic.method_id)).toEqual(["human_pain"]);
     expect(result.nativeTitleAudit?.status).toBe("incomplete");
     expect(result.methodDeliveries.find((delivery) => delivery.method_id === "human_pain")?.status).toBe("ready");
@@ -191,6 +192,47 @@ describe("原生标题语义审核二次恢复", () => {
     });
 
     expect(auditCalls).toBe(2);
+    expect(result.nativeTitleAudit?.status).toBe("passed");
+    expect(result.topics).toHaveLength(2);
+  });
+
+  it("审核漏回 natural 时，会把候选视为协议不完整并在补审中重新审核", async () => {
+    const auditBatches: Array<Array<{ candidate_id: string; method_id: string; title: string }>> = [];
+    llmJSONMock.mockImplementation(async (input: { user: string }) => {
+      if (!input.user.includes("语义新颖度终审")) return modelResponse(generatedTopics());
+      const candidates = auditCandidates(input.user);
+      auditBatches.push(candidates);
+      if (auditBatches.length === 1) {
+        return modelResponse({
+          decisions: candidates.map((candidate, index) => ({
+            candidate_id: candidate.candidate_id,
+            novel: false,
+            ...(index === 0 ? {} : { natural: true }),
+            duplicate_reference_ids: [],
+            conflicting_candidate_ids: [],
+            reason: "首轮不通过",
+          })),
+        });
+      }
+      return modelResponse({
+        decisions: candidates.map((candidate) => ({
+          candidate_id: candidate.candidate_id,
+          novel: true,
+          natural: true,
+          duplicate_reference_ids: [],
+          conflicting_candidate_ids: [],
+          reason: "补审通过",
+        })),
+      });
+    });
+
+    const result = await generateTopicBatch({
+      account,
+      methodIds: ["human_pain", "tug_of_war"],
+    });
+
+    expect(auditBatches).toHaveLength(2);
+    expect(auditBatches[1].some((candidate) => candidate.title === "绩效不错，我却越来越想走")).toBe(true);
     expect(result.nativeTitleAudit?.status).toBe("passed");
     expect(result.topics).toHaveLength(2);
   });

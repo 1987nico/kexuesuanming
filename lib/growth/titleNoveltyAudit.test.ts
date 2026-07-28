@@ -132,4 +132,17 @@ describe("原生标题批次语义新颖度审核", () => {
 
     expect(decisions[0]).toMatchObject({ candidateId: "C1", novel: true, natural: false, eligible: false });
   });
+
+  it("自然度或新颖度字段缺失时，覆盖率必须标为不完整并进入补审", () => {
+    const raw = {
+      decisions: [
+        { candidate_id: "C1", novel: true, duplicate_reference_ids: [] },
+        { candidate_id: "C2", natural: true, duplicate_reference_ids: [] },
+      ],
+    };
+    expect(nativeTitleNoveltyCoverage(raw, candidates)).toEqual({
+      complete: false,
+      missingCandidateIds: ["C1", "C2"],
+    });
+  });
 });

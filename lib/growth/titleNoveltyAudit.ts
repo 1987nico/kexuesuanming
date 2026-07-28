@@ -159,8 +159,14 @@ export function nativeTitleNoveltyCoverage(
   const received = new Set<string>();
   for (const value of rawRows) {
     if (!value || typeof value !== "object") continue;
-    const candidateId = compact((value as Record<string, unknown>).candidate_id, 80);
-    if (candidateIds.has(candidateId)) received.add(candidateId);
+    const row = value as Record<string, unknown>;
+    const candidateId = compact(row.candidate_id, 80);
+    // 只有完整的判定协议才算“已经审核”。此前模型漏回 natural 时，
+    // 覆盖率仍被误判为 complete；随后选择器会安全地拒绝该标题，却不会
+    // 把它送去下一波补审，最终把协议问题伪装成标题质量失败。
+    const hasCompleteDecisionProtocol = typeof row.novel === "boolean"
+      && typeof row.natural === "boolean";
+    if (candidateIds.has(candidateId) && hasCompleteDecisionProtocol) received.add(candidateId);
   }
   const missingCandidateIds = candidates
     .map((candidate) => candidate.id)
