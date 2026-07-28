@@ -27,6 +27,7 @@ import {
   updateBenchmarkSourceUsage,
   withHistoricalBenchmarkSourceUsage,
 } from "@/lib/growth/sourceRotation";
+import { sourceSnapshotFitsMethod } from "@/lib/growth/sourceMigration";
 import {
   buildSingleTitleMutation,
 } from "@/lib/growth/singleTitleRegeneration";
@@ -36,6 +37,7 @@ import {
 } from "@/lib/growth/businessCompatibility";
 import { methodsForPersona, TITLE_METHOD_BY_ID } from "@/lib/growth/methods";
 import { sourceIsUsable } from "@/lib/growth/validation";
+import { evaluateGrowthTitleQuality } from "@/lib/growth/titleQuality";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -44,6 +46,70 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 180;
 
 const DEFAULT_TENANT_ID = "mianbajun";
+// 浏览器在请求已经到达服务端后断网时，会以同一个 requestId 再发一次。
+// 在最终结果写入前先保留一个极小的 run 占位，避免第二个请求重新调用模型。
+// 占位超时后才允许接管，防止某次函数实例异常退出后永久卡住。
+const GENERATION_RESERVATION_TTL_MS = 4 * 60 * 1_000;
+const inFlightGenerationRequests = new Map<string, number>();
+
+function generationReservationIsFresh(run: GrowthRun) {
+  return run.generation_status === "generating"
+    && Date.now() - Date.parse(run.updated_at) < GENERATION_RESERVATION_TTL_MS;
+}
+
+function pendingGenerationResponse() {
+  return NextResponse.json({
+    status: "generating" as const,
+    retryAfterMs: 1_500,
+    message: "刚才点击的这批标题仍在生成，系统正在安全恢复同一批，不会重复生成。",
+  });
+}
+
+function requestIsAlreadyInFlight(accountId: string, requestId?: string) {
+  if (!requestId) return false;
+  const key = `${accountId}:${requestId}`;
+  const startedAt = inFlightGenerationRequests.get(key);
+  if (startedAt && Date.now() - startedAt < GENERATION_RESERVATION_TTL_MS) return true;
+  if (startedAt) inFlightGenerationRequests.delete(key);
+  inFlightGenerationRequests.set(key, Date.now());
+  return false;
+}
+
+function releaseInFlightGenerationRequest(accountId: string, requestId?: string) {
+  if (requestId) inFlightGenerationRequests.delete(`${accountId}:${requestId}`);
+}
+
+function completedGenerationResponse(run: GrowthRun, account: GrowthAccount) {
+  return NextResponse.json({
+    status: run.method_deliveries?.some((delivery) => delivery.status !== "ready") ? "partial" : "completed",
+    run,
+    newTopics: run.topic_pool,
+    generatedCount: run.method_deliveries?.filter((delivery) => delivery.title_origin === "new").length ?? run.topic_pool.length,
+    retainedCount: run.method_deliveries?.filter((delivery) => delivery.title_origin === "retained").length ?? 0,
+    pausedCount: run.method_deliveries?.filter((delivery) => delivery.status === "paused").length ?? 0,
+    failedCount: run.method_deliveries?.filter((delivery) => delivery.status === "failed").length ?? 0,
+    methodDeliveries: run.method_deliveries ?? [],
+    sourceUsageStatus: "passed" as const,
+    uniquenessStatus: run.uniqueness_status ?? "passed",
+    migrationStatus: run.migration_status ?? "passed",
+    structureVersion: run.structure_version ?? "v3_7",
+    rotationMode: run.source_rotation?.mode ?? "regenerate_titles",
+    changedMethods: run.source_rotation?.changed_method_ids ?? [],
+    retainedMethods: run.source_rotation?.retained_method_ids ?? [],
+    pausedMethods: run.unavailable_methods ?? [],
+    unavailableMethods: run.unavailable_methods ?? [],
+    topicSources: account.topic_sources ?? [],
+    sourceUsage: account.benchmark_source_usage ?? [],
+    sourceRefresh: {
+      status: "cached" as const,
+      provider: "redfox_daily" as const,
+      fetched_count: 0,
+      selected_count: 0,
+      usable_count: 0,
+      message: "已恢复刚才完成的标题批次，没有重复生成。",
+    },
+  });
+}
 
 const bodySchema = z.object({
   accountId: z.string().min(1),
@@ -60,6 +126,7 @@ const bodySchema = z.object({
   methodId: z.string().optional(),
   topicId: z.string().optional(),
   baseRunId: z.string().optional(),
+  requestId: z.string().min(8).max(160).optional(),
 });
 
 const updateTitleSchema = z.object({
@@ -92,7 +159,9 @@ function now() {
 
 function sourceForMethod(account: GrowthAccount, methodId: TitleMethodId) {
   return [...(account.topic_sources ?? [])]
-    .filter((source) => source.method_id === methodId && sourceIsUsable(source))
+    .filter((source) => source.method_id === methodId
+      && sourceIsUsable(source)
+      && sourceSnapshotFitsMethod(source, account.business_line ?? "executive").passed)
     .sort((a, b) => b.collected_at.localeCompare(a.collected_at))[0];
 }
 
@@ -178,6 +247,7 @@ function accountWithFreshBenchmarkSources(input: {
     const source = [...(input.discovered.topic_sources ?? [])]
       .filter((item) => item.method_id === methodId)
       .filter((item) => sourceIsUsable(item))
+      .filter((item) => sourceSnapshotFitsMethod(item, input.before.business_line ?? "executive").passed)
       .filter((item) => !usedForMethod.has(item.original_url))
       .filter((item) => !occupiedUrls.has(item.original_url))
       .sort((a, b) => b.collected_at.localeCompare(a.collected_at))[0];
@@ -197,6 +267,7 @@ function accountWithFreshBenchmarkSources(input: {
 }
 
 export async function POST(req: Request) {
+  const requestStartedAt = Date.now();
   const guard = await requireMianbaApiAuth();
   if ("response" in guard) return guard.response;
 
@@ -255,8 +326,26 @@ export async function POST(req: Request) {
   const notes = await store.listDrafts(account.id);
   const reviews = await store.listReviewsByAccount(account.id);
   const runs = await store.listRuns(account.id);
+  // 浏览器可能在服务端保存成功后断开。本次请求带着同一个 requestId 重试时，
+  // 必须返回原批次，不能再次生成或覆盖标题。
+  const idempotentRun = parsed.data.requestId
+    ? runs.find((run) => run.generation_request_id === parsed.data.requestId)
+    : undefined;
+  if (idempotentRun && generationReservationIsFresh(idempotentRun)) {
+    return pendingGenerationResponse();
+  }
+  if (idempotentRun?.generation_status === "completed") {
+    return completedGenerationResponse(idempotentRun, account);
+  }
+  if (requestIsAlreadyInFlight(account.id, parsed.data.requestId)) {
+    return pendingGenerationResponse();
+  }
   account = withHistoricalBenchmarkSourceUsage(account, runs);
-  const previousRuns = runs.filter((item) => item.generation_mode === generationMode);
+  // 断网恢复时的“生成中”占位不能被当成上一批标题；它没有题目，也绝不能
+  // 影响单槽换题、来源轮换和历史去重。
+  const previousRuns = runs.filter((item) =>
+    item.generation_mode === generationMode && item.topic_pool.length > 0
+  );
   const latestRun = parsed.data.baseRunId
     ? previousRuns.find((run) => run.id === parsed.data.baseRunId) ?? previousRuns[0] ?? null
     : previousRuns[0] ?? null;
@@ -322,6 +411,7 @@ export async function POST(req: Request) {
     : benchmarkMethods.map((method) => method.id);
   let changedMethodIds: TitleMethodId[] = [];
   let sourceRefreshSummary: Awaited<ReturnType<typeof ensureRecentTopicSources>>["summary"];
+  const sourceStartedAt = Date.now();
 
   if (action === "rotate_single_source" || action === "rotate_all_sources") {
     const excluded = recentSourceUrls({
@@ -367,6 +457,7 @@ export async function POST(req: Request) {
       return (account!.topic_sources ?? []).some((source) =>
         source.method_id === methodId
         && sourceIsUsable(source)
+        && sourceSnapshotFitsMethod(source, account!.business_line ?? "executive").passed
         && !used.has(source.original_url)
       );
     }));
@@ -411,6 +502,7 @@ export async function POST(req: Request) {
       message: "保留当前选题方向和来源，只更新这个标题的表达。",
     };
   }
+  const sourceElapsedMs = Date.now() - sourceStartedAt;
 
   let weeklyReview = account.weekly_review ?? account.stage_review;
   if (!weeklyReview || isWeeklyReviewStale(weeklyReview, reviews)) {
@@ -474,6 +566,7 @@ export async function POST(req: Request) {
       ? rotationMethodIds
       : undefined;
   let generated: Awaited<ReturnType<typeof generateTopicBatch>>;
+  const generationStartedAt = Date.now();
   const generationInput = (allowSourcePause = false) => ({
     account: account!,
     week: parsed.data.week ?? latestRun?.week ?? 1,
@@ -489,11 +582,65 @@ export async function POST(req: Request) {
       ? { [requestedTopic.method_id]: requestedTopic }
       : undefined,
   });
+  // 把幂等键先落到 run 里，再进入模型调用。这样即使第一个请求的响应在
+  // 浏览器侧丢失，第二个同 requestId 请求也只会等候/读取这一批，不会再开一批。
+  let generationReservation: GrowthRun | undefined;
+  const generationAccountId = account.id;
+  if (parsed.data.requestId) {
+    const currentRuns = await store.listRuns(account.id);
+    const existingRequest = currentRuns.find((item) =>
+      item.generation_request_id === parsed.data.requestId
+    );
+    if (existingRequest && generationReservationIsFresh(existingRequest)) {
+      return pendingGenerationResponse();
+    }
+    if (existingRequest?.generation_status === "completed") {
+      return completedGenerationResponse(existingRequest, account);
+    }
+    const reservationTimestamp = now();
+    generationReservation = {
+      id: existingRequest?.id ?? crypto.randomUUID(),
+      tenant_id: DEFAULT_TENANT_ID,
+      owner_user_id: existingRequest?.owner_user_id ?? guard.auth.user.id,
+      account_id: account.id,
+      status: "draft",
+      week: parsed.data.week ?? latestRun?.week ?? 1,
+      objective: "正在生成当前业务与视角的一批新标题。",
+      experiment_hypothesis: "生成完成后再进入标题方法验证。",
+      generation_mode: generationMode,
+      generation_status: "generating",
+      generation_request_id: parsed.data.requestId,
+      topic_pool: [],
+      created_at: existingRequest?.created_at ?? reservationTimestamp,
+      updated_at: reservationTimestamp,
+    };
+    await store.saveRun(generationReservation);
+  }
+  const markGenerationReservationFailed = async () => {
+    if (!generationReservation) {
+      releaseInFlightGenerationRequest(generationAccountId, parsed.data.requestId);
+      return;
+    }
+    try {
+      await store.saveRun({
+        ...generationReservation,
+        generation_status: "failed",
+        uniqueness_status: "failed",
+        updated_at: now(),
+      });
+    } catch (error) {
+      // 原始生成错误比“写入诊断失败”更应交给操作者；过期占位随后可安全接管。
+      console.error("[growth] failed to close generation reservation:", (error as Error).message);
+    } finally {
+      releaseInFlightGenerationRequest(generationAccountId, parsed.data.requestId);
+    }
+  };
   try {
     // 每一轮只生成一次候选并按槽位返回。任何未通过的槽位暂停/保留，
     // 不再在用户请求中进行“整批三轮 + 自动换源两轮”的长链重跑。
     generated = await generateTopicBatch(generationInput(true));
   } catch (error) {
+    await markGenerationReservationFailed();
     console.error("[growth] topic generation unexpectedly failed:", (error as Error).message);
     return NextResponse.json({
       error: "topic_generation_unavailable",
@@ -508,6 +655,28 @@ export async function POST(req: Request) {
     generationAttempts,
     structureCards,
   } = generated;
+  const generationElapsedMs = Date.now() - generationStartedAt;
+
+  // 原生法没有“缺少外部来源”的合理暂停理由。若其中任何一个槽位没有
+  // 交付新标题，整批就不写入、不替换旧批次；否则会把“半批/旧标题”误标成
+  // 用户刚刚换出的新标题。对标和蹭流量仍可因真实母题不足而透明暂停。
+  const failedNativeDeliveries = generatedMethodDeliveries.filter((delivery) => {
+    const method = TITLE_METHOD_BY_ID[delivery.method_id];
+    return method && !method.sourceRequired && delivery.status !== "ready";
+  });
+  if (failedNativeDeliveries.length) {
+    await markGenerationReservationFailed();
+    return NextResponse.json({
+      error: "native_title_generation_incomplete",
+      message: `本轮有${failedNativeDeliveries.length}个原生法标题未通过质量或去重门禁，当前批次没有被替换；系统已保留原有标题。`,
+      failedMethods: failedNativeDeliveries.map((delivery) => ({
+        method_id: delivery.method_id,
+        method_label: delivery.method_label,
+        reason: delivery.reason || "未生成新的合格标题",
+      })),
+      sourceRefresh: sourceRefreshSummary,
+    }, { status: 503 });
+  }
   if (structureCards.length) {
     const replacementKeys = new Set(structureCards.map((card) =>
       `${card.business_line}:${card.persona}:${card.method_id}:${card.source_id}`
@@ -606,7 +775,7 @@ export async function POST(req: Request) {
   // 每次生成都是一个独立批次。旧批次继续保留，前台可查看并恢复最近3批；
   // 新批次失败时不会覆盖当前批次，也不会清空操作者已经编辑或选中的标题。
   const run: GrowthRun = {
-    id: crypto.randomUUID(),
+    id: generationReservation?.id ?? crypto.randomUUID(),
     tenant_id: DEFAULT_TENANT_ID,
     account_id: account.id,
     status: "draft",
@@ -617,6 +786,7 @@ export async function POST(req: Request) {
     generation_status: "completed",
     uniqueness_status: "passed",
     generation_attempts: generationAttempts,
+    generation_request_id: parsed.data.requestId,
     structure_version: "v3_7",
     migration_status: "passed",
     source_rotation: sourceRotation,
@@ -637,7 +807,7 @@ export async function POST(req: Request) {
       buildGrowthTitleFingerprint({ account: account!, topic, generationMode })
     ),
     learning_trace: learningBrief.trace,
-    created_at: timestamp,
+    created_at: generationReservation?.created_at ?? timestamp,
     updated_at: timestamp,
   };
 
@@ -657,6 +827,13 @@ export async function POST(req: Request) {
       updated_at: timestamp,
     };
   }
+  const saveStartedAt = Date.now();
+  run.generation_diagnostics = {
+    total_ms: saveStartedAt - requestStartedAt,
+    source_ms: sourceElapsedMs,
+    generation_ms: generationElapsedMs,
+    save_ms: 0,
+  };
   await store.saveRun(run);
   await store.saveAccount(account);
   if (usage) {
@@ -674,6 +851,7 @@ export async function POST(req: Request) {
       },
     });
   }
+  releaseInFlightGenerationRequest(account.id, parsed.data.requestId);
 
   return NextResponse.json({
     status: methodDeliveries.some((delivery) => delivery.status !== "ready") ? "partial" : "completed",
@@ -729,6 +907,32 @@ export async function PATCH(req: Request) {
 
   const timestamp = now();
   const nextTitle = parsed.data.title ?? currentTopic.title;
+  if (parsed.data.title) {
+    const supportedFacts = [
+      account.target_user,
+      account.core_problem,
+      account.trust_source,
+      account.account_value,
+      account.one_liner,
+      account.follow_reason,
+      ...Object.values(account.persona_specific ?? {}),
+    ].filter((value): value is string => typeof value === "string" && value.trim().length >= 4);
+    const quality = evaluateGrowthTitleQuality(nextTitle, { supportedFacts });
+    if (!quality.acceptable) {
+      const labels: Record<string, string> = {
+        too_long: "超过20字",
+        traditional_chinese: "含繁体字",
+        garbled_latin_cjk: "含中英文乱码拼接",
+        unsupported_factual_claim: "含没有事实依据的具体身份、金额或成果",
+        unnatural_jargon: "含不自然的生造黑话",
+        empty: "为空",
+      };
+      return NextResponse.json({
+        error: "title_quality_failed",
+        message: `这个标题暂不能保存：${quality.reasons.map((reason) => labels[reason] || "质量不合格").join("、")}。`,
+      }, { status: 422 });
+    }
+  }
   const topic = parsed.data.syncPromise
     ? {
       ...currentTopic,

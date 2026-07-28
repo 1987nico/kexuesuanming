@@ -53,11 +53,11 @@ describe("selectFreshTitle（换一批不重复当前标题）", () => {
     })).toBe(options[1]);
   });
 
-  it("历史候选用完后仍不会重复页面当前标题", () => {
+  it("历史候选用完后明确返回空，不把旧标题伪装成新标题", () => {
     expect(selectFreshTitle(options, {
       currentTitles: [options[2]],
       seenTitles: options,
-    })).toBe(options[0]);
+    })).toBeUndefined();
   });
 
   it("忽略标点差异识别当前重复标题", () => {
@@ -106,12 +106,12 @@ describe("标题批次长期去重范围", () => {
     )).toHaveLength(1);
   });
 
-  it("语义近似只拦截同方法历史，避免业务词重复拖垮整批", () => {
+  it("跨方法的同一核心选题也必须拦截，不能换个方法继续交付换皮题", () => {
     const current = topic("human_pain", "留英等工签，还是回国赶秋招？");
     const history = "留英等工签，还是赶国内秋招？";
     expect(topicBatchDuplicateProblems([current], [history], [
       { method_id: "contrarian", title: history },
-    ])).toHaveLength(0);
+    ])).toHaveLength(1);
     expect(topicBatchDuplicateProblems([current], [history], [
       { method_id: "human_pain", title: history },
     ])).toHaveLength(1);

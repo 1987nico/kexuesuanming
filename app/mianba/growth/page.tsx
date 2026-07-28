@@ -184,12 +184,10 @@ const STATUS_LABEL: Record<string, string> = {
 };
 
 const TOPIC_GENERATION_STAGES = [
-  "正在获取近期母题…",
-  "正在检查母题适配…",
-  "正在拆解并锁定标题结构…",
-  "正在迁移到当前业务与视角…",
-  "正在检查全部历史重复…",
-  "正在完成独立迁移审核…",
+  "正在准备当前可用母题…",
+  "正在生成这一批新标题…",
+  "正在检查标题质量与历史重复…",
+  "正在保存这一批可交付标题…",
 ];
 
 async function requestJSON<T>(url: string, options?: RequestInit): Promise<T> {
@@ -198,7 +196,11 @@ async function requestJSON<T>(url: string, options?: RequestInit): Promise<T> {
     headers: { "Content-Type": "application/json", ...(options?.headers || {}) },
   });
   const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data.message || data.error || "操作失败");
+  if (!response.ok) throw new Error(
+    data.message
+      || data.error
+      || `请求暂时不可用（HTTP ${response.status}）`,
+  );
   return data as T;
 }
 
@@ -370,6 +372,9 @@ export default function GrowthPage() {
     title: string;
     promise: Promise<{ run: GrowthRun; topic: TopicCandidate }>;
   }>());
+  // setState 生效前的双击仍可能发出两次请求；标题生成在客户端先串行，
+  // 服务端再用 requestId 做最终幂等保护。
+  const topicGenerationInFlight = useRef(false);
   const activeWorkspace = useRef(workspaceKey("overseas_student", "buyer"));
   const prefetchStarted = useRef(false);
 
@@ -820,6 +825,11 @@ export default function GrowthPage() {
     topicId?: string,
   ) {
     if (!data?.account) return;
+    if (topicGenerationInFlight.current) {
+      setTopicMessage("上一轮标题仍在生成，请等待这一轮完成；系统不会并行生成第二批。");
+      return;
+    }
+    const account = data.account;
     const selectedIsAffected = Boolean(selectedTopic && (
       action === "regenerate_titles"
       || (action === "regenerate_single_title" && selectedTopic.topic.method_id === methodId)
@@ -841,6 +851,9 @@ export default function GrowthPage() {
             : "当前有未保存的标题修改。换源成功后会进入新批次，旧批次仍可恢复。确认继续吗？",
       )
     ) return;
+    // 确认弹窗期间也可能被另一处点击触发；只允许其中一次真正进入请求链路。
+    if (topicGenerationInFlight.current) return;
+    topicGenerationInFlight.current = true;
     const busyKey = action === "regenerate_single_title"
       ? `title-${mode}-${methodId}`
       : action === "rotate_single_source"
@@ -866,9 +879,12 @@ export default function GrowthPage() {
       setTopicMessage(TOPIC_GENERATION_STAGES[stageIndex]);
     }, 8_000);
     if (group) setExploreOpen((current) => ({ ...current, [group]: true }));
-    try {
-      const result = await requestJSON<{
-        status: "completed" | "partial";
+    // 同一操作使用同一个幂等键：浏览器偶发断连后可安全重试，不会生成第二批。
+    const requestId = crypto.randomUUID();
+    const performTopicRequest = () => requestJSON<{
+        status: "completed" | "partial" | "generating";
+        retryAfterMs?: number;
+        message?: string;
         run: GrowthRun;
         generatedCount: number;
         retainedCount?: number;
@@ -893,7 +909,7 @@ export default function GrowthPage() {
         {
           method: "POST",
           body: JSON.stringify({
-            accountId: data.account.id,
+            accountId: account.id,
             businessLine,
             persona,
             generationMode: mode,
@@ -901,9 +917,40 @@ export default function GrowthPage() {
             methodId,
             topicId,
             baseRunId: runs[mode]?.id,
+            requestId,
           }),
         },
       );
+    try {
+      let result: Awaited<ReturnType<typeof performTopicRequest>>;
+      let recoveryPolls = 0;
+      let transportRetries = 0;
+      const waitForRecovery = (milliseconds: number) => new Promise<void>((resolve) => {
+        window.setTimeout(resolve, milliseconds);
+      });
+      const isRetriableTransportError = (message: string) =>
+        /failed to fetch|networkerror|aborterror|aborted|load failed|network.*(?:断开|失败)|HTTP (?:502|504)/iu.test(message);
+
+      // 正常情况下只请求一次。只有浏览器断线或服务端报告“同一 requestId 仍在
+      // 生成”时，才以同一个 requestId 安全恢复；绝不会新开一批标题。
+      while (true) {
+        try {
+          result = await performTopicRequest();
+          if (result.status !== "generating") break;
+          if (recoveryPolls >= 50) {
+            throw new Error("这批标题生成超过预期时间，原批次仍在服务端处理；请稍后刷新页面查看，不会重复生成。");
+          }
+          recoveryPolls += 1;
+          setTopicMessage(result.message || "刚才点击的标题仍在生成，正在安全恢复同一批…");
+          await waitForRecovery(Math.max(800, Math.min(result.retryAfterMs ?? 1_500, 3_000)));
+        } catch (error) {
+          const message = (error as Error).message;
+          if (!isRetriableTransportError(message) || transportRetries >= 2) throw error;
+          transportRetries += 1;
+          setTopicMessage("网络刚刚中断，正在安全恢复同一批标题…");
+          await waitForRecovery(900 * transportRetries);
+        }
+      }
       const methodDeliveries = result.methodDeliveries ?? result.run.method_deliveries ?? [];
       const selectedDelivery = selectedTopic
         ? methodDeliveries.find((delivery) => delivery.method_id === selectedTopic.topic.method_id)
@@ -993,6 +1040,7 @@ export default function GrowthPage() {
       setTopicMessage(errorMessage);
     } finally {
       window.clearInterval(stageTimer);
+      topicGenerationInFlight.current = false;
       setBusy(null);
     }
   }
@@ -2554,6 +2602,16 @@ function MethodSlot({
               <summary className="cursor-pointer font-medium">查看正文承诺</summary>
               <p className="mt-2">{topic.title_promise}</p>
             </details>
+            {method.sourceRequired && topic.source_snapshot && (
+              <details className="mt-2 rounded-xl border border-sky-100 bg-sky-50/60 px-3 py-2 text-sm leading-6 text-slate-700">
+                <summary className="cursor-pointer font-medium">查看对标迁移链路</summary>
+                <div className="mt-2 grid gap-2">
+                  <p><span className="font-semibold">原题：</span>{topic.source_snapshot.original_title}</p>
+                  <p><span className="font-semibold">迁移逻辑：</span>{topic.migration_validation_evidence || topic.source_snapshot.migration_note || "保留母题的结构关系，替换为当前业务与视角。"}</p>
+                  <p><span className="font-semibold">新标题：</span>{topic.title}</p>
+                </div>
+              </details>
+            )}
             {(topic.title_promise_status === "stale" || topic.title_promise_status === "invalid") && (
               <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
                 <div className="font-semibold">承诺未跟随标题</div>

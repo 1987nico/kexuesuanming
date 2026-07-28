@@ -79,6 +79,12 @@ import {
   validateSourceMigrations,
   type SourceMigrationCandidate,
 } from "./sourceMigration";
+import {
+  canonicalizeGrowthTitle,
+  evaluateGrowthTitleQuality,
+  normalizeTitleForComparison,
+  titlesAreSemanticDuplicates,
+} from "./titleQuality";
 
 const DEFAULT_TENANT_ID = "mianbajun";
 const now = () => new Date().toISOString();
@@ -289,6 +295,121 @@ const OVERSEAS_STUDENT_FALLBACK_TITLE_VARIANTS: Record<TitleMethodId, string[]> 
   viral_framework: ["海归缺的不是简历，是方向", "秋招缺的不是海投，是反馈"],
 };
 
+/**
+ * 模型偶发超时或只返回了不合格候选时的安全兜底池。
+ *
+ * 它只服务于无外部来源依赖的原生法：来源型方法宁可透明暂停，也不能伪造
+ * “刚找到的新母题”。每个方法都至少有五个不同的真实场景，避免把旧标题或
+ * 只换一个词的标题重新交给操作者。
+ */
+const NATIVE_EMERGENCY_TITLE_VARIANTS: Record<
+  GrowthBusinessLine,
+  Partial<Record<TitleMethodId, string[]>>
+> = {
+  executive: {
+    human_pain: [
+      "猎头来电，我却不敢接",
+      "合同续签后，反而更想走",
+      "绩效很好，为什么更焦虑",
+      "团队要扩张，我却想换路",
+      "工资到账后，我更怕选错",
+    ],
+    tug_of_war: [
+      "继续升职，还是出去试价？",
+      "留在平台，还是换条赛道？",
+      "守住年薪，还是先做验证？",
+      "转管理，还是回专业线？",
+      "先做副业，还是稳住主业？",
+    ],
+    scarce_material: [
+      "离职前，我只看这张表",
+      "转型时，先写这份判断单",
+      "换赛道前，先做一页盘点",
+      "高管求职，先补这张地图",
+      "职业选择卡住时，先看清单",
+    ],
+    superlative: [
+      "高管跳槽最容易漏的一步",
+      "转型前最不该忽略的风险",
+      "离开平台最贵的一次误判",
+      "职业选择最怕算错的成本",
+      "高位换工作最危险的信号",
+    ],
+    contrarian: [
+      "平台越大，转型未必越稳",
+      "经验越多，换赛道越要慢",
+      "职位越高，越该先做验证",
+      "人脉越广，离职越要算账",
+      "年薪越高，越不能急着走",
+    ],
+    nostalgia: [
+      "以前拼升职，现在拼可迁移",
+      "当年看头衔，现在看市场",
+      "过去靠平台，现在靠真本事",
+      "以前抢机会，现在先验方向",
+      "从前怕失业，现在怕选错路",
+    ],
+    inventory: [
+      "转型前，先查这5个信号",
+      "离职前，盘点这5笔成本",
+      "换赛道前，写下这5个问题",
+      "高管求职前，先看这5项",
+      "重新选方向，先算这5笔账",
+    ],
+  },
+  overseas_student: {
+    human_pain: [
+      "秋招临近，孩子反而不敢投",
+      "笔试结束后，我更不敢催",
+      "简历改完，还是怕方向错",
+      "毕业快到了，反而更焦虑",
+      "网申没回音，孩子开始怀疑自己",
+    ],
+    tug_of_war: [
+      "留英等工签，还是赶秋招？",
+      "先补实习，还是直接投递？",
+      "回国求职，还是留在当地？",
+      "先收窄岗位，还是继续海投？",
+      "冲提前批，还是先改简历？",
+    ],
+    scarce_material: [
+      "秋招前，先看这张时间表",
+      "回国求职，先补这份地图",
+      "网申卡住时，先用这张清单",
+      "留学生求职，先写一页盘点",
+      "毕业前，先整理这份路径表",
+    ],
+    superlative: [
+      "秋招最容易错过的一个窗口",
+      "海投最浪费的一次努力",
+      "留学生求职最怕的误判",
+      "简历修改最容易漏的一步",
+      "回国投递最危险的节奏错位",
+    ],
+    contrarian: [
+      "简历改得越多，未必越有回音",
+      "学校越好，越要先看匹配",
+      "实习越多，岗位未必越好选",
+      "投得越勤，越要先收窄方向",
+      "信息越多，越不能乱投简历",
+    ],
+    nostalgia: [
+      "以前看学校，现在看岗位证据",
+      "当年海归吃香，现在先看匹配",
+      "过去拼背景，现在拼项目表达",
+      "以前怕没学位，现在怕没方向",
+      "从前等机会，现在先做准备",
+    ],
+    inventory: [
+      "秋招前，先查这5个日期",
+      "投简历前，盘点这5件事",
+      "回国求职前，先看这5项",
+      "网申前，先补这5个信息",
+      "毕业季，先排这5个优先级",
+    ],
+  },
+};
+
 function fallbackTitles(account: GrowthAccount) {
   return account.business_line === "overseas_student"
     ? OVERSEAS_STUDENT_FALLBACK_TITLES
@@ -306,14 +427,11 @@ const TITLE_SEMANTIC_REPLACEMENTS: Array<[RegExp, string]> = [
 
 /** 用于完整历史去重；不保存模型推理，也不把标点或数字微调误认为新标题。 */
 export function normalizeTitleHistoryFingerprint(value: string) {
-  let normalized = value.normalize("NFKC").toLocaleLowerCase();
+  let normalized = canonicalizeGrowthTitle(value).toLocaleLowerCase();
   for (const [pattern, replacement] of TITLE_SEMANTIC_REPLACEMENTS) {
     normalized = normalized.replace(pattern, replacement);
   }
-  return normalized
-    .replace(/真正|其实|真的|一定|到底|究竟|原来|竟然|你知道吗/gu, "")
-    .replace(/[0-9一二三四五六七八九十百千万两]+/gu, "数")
-    .replace(/[\s，。！？、；：,.!?;:'"“”‘’（）()【】\[\]《》<>—\-|｜]/gu, "");
+  return normalizeTitleForComparison(normalized);
 }
 
 function titleFingerprint(value: string) {
@@ -358,7 +476,7 @@ export function titlesAreNearDuplicate(left: string, right: string) {
   const a = normalizeTitleHistoryFingerprint(left);
   const b = normalizeTitleHistoryFingerprint(right);
   if (!a || !b) return false;
-  if (a === b) return true;
+  if (a === b || titlesAreSemanticDuplicates(left, right)) return true;
   if (Math.min(Array.from(a).length, Array.from(b).length) < 6) return false;
   const bigramDice = diceCoefficient(ngrams(a, 2), ngrams(b, 2));
   const characterDice = diceCoefficient(new Set(Array.from(a)), new Set(Array.from(b)));
@@ -380,7 +498,8 @@ function titlesAreSameMethodNearDuplicate(left: string, right: string) {
 }
 
 export function findDuplicateTitle(title: string, history: string[]) {
-  return history.find((item) => titlesAreNearDuplicate(title, item));
+  return history.find((item) => titlesHaveSameHistoryFingerprint(title, item))
+    ?? history.find((item) => titlesAreNearDuplicate(title, item));
 }
 
 export function buildGrowthTitleFingerprint(input: {
@@ -389,6 +508,7 @@ export function buildGrowthTitleFingerprint(input: {
   generationMode: MethodGenerationMode;
 }): GrowthTitleFingerprint {
   const normalized = normalizeTitleHistoryFingerprint(input.topic.title);
+  const quality = evaluateGrowthTitleQuality(input.topic.title);
   const diversity = buildTopicDiversitySignature(
     input.topic,
     input.account.business_line ?? "executive",
@@ -397,6 +517,13 @@ export function buildGrowthTitleFingerprint(input: {
     title: input.topic.title,
     normalized_fingerprint: normalized,
     semantic_fingerprint: [...ngrams(normalized, 2)].sort().join("|"),
+    semantic_signature: {
+      audience: quality.signature.audience,
+      scenario: quality.signature.scenario,
+      conflict: quality.signature.conflict,
+      promise: quality.signature.promise,
+      frame: quality.signature.frame,
+    },
     ...diversity,
     diversity_version: "v1",
     business_line: input.account.business_line ?? "executive",
@@ -543,18 +670,19 @@ export function selectFreshTitle(
     const key = titleFingerprint(title);
     return !current.has(key) && !reserved.has(key) && (!avoidHistory || !seen.has(key));
   };
-  return candidates.find((title) => available(title, true))
-    ?? candidates.find((title) => available(title, false))
-    ?? candidates[0]
-    ?? "待补充标题";
+  // “换一批”不能把历史标题当作兜底再交给用户。候选池耗尽时应该由上层
+  // 定向重写或明确暂停，而不是把旧题伪装成新题。
+  return candidates.find((title) => available(title, true));
 }
 
-function fallbackTitleOptions(account: GrowthAccount, methodId: TitleMethodId) {
+/** 仅供原生法内部兜底与回归测试使用；来源型方法不会使用此池伪造母题。 */
+export function fallbackTitleOptions(account: GrowthAccount, methodId: TitleMethodId) {
   const [primary] = fallbackTitles(account)[methodId];
   const variants = account.business_line === "overseas_student"
     ? OVERSEAS_STUDENT_FALLBACK_TITLE_VARIANTS[methodId]
     : EXECUTIVE_FALLBACK_TITLE_VARIANTS[methodId];
-  return [primary, ...variants];
+  const emergency = NATIVE_EMERGENCY_TITLE_VARIANTS[account.business_line ?? "executive"][methodId] ?? [];
+  return Array.from(new Set([primary, ...variants, ...emergency]));
 }
 
 function fallbackTopic(account: GrowthAccount, method: TitleMethodDefinition, mode: MethodGenerationMode, source?: TopicSourceSnapshot, titleOverride?: string): TopicCandidate {
@@ -611,6 +739,55 @@ function normalizeTopics(
   });
 }
 
+function supportedTitleFacts(account: GrowthAccount) {
+  return [
+    account.target_user,
+    account.core_problem,
+    account.trust_source,
+    account.account_value,
+    account.one_liner,
+    account.follow_reason,
+    ...Object.values(account.persona_specific ?? {}),
+  ].filter((value): value is string => typeof value === "string" && value.trim().length >= 4);
+}
+
+function titlePersonaProblems(topic: TopicCandidate, account: GrowthAccount) {
+  const title = topic.title;
+  const problems: string[] = [];
+  if (!isBusinessCompatibleText(title, account.business_line ?? "executive")) {
+    problems.push(`${topic.method_id}:标题混入了另一条业务的人群或场景`);
+  }
+  // 这不是要求标题必须直说“我是买家/专家/商家”，而是拦住明显串视角的表达。
+  if (account.persona === "buyer" && /(?:我们团队|服务对象|客户交付|本机构|咨询产品)/u.test(title)) {
+    problems.push(`${topic.method_id}:买家视角不能把服务方口吻写进标题`);
+  }
+  if (account.persona === "expert" && /(?:我家孩子|陪娃|我们家)/u.test(title)) {
+    problems.push(`${topic.method_id}:专家视角不能写成家长亲历口吻`);
+  }
+  if (account.persona === "merchant" && /(?:我家孩子|陪娃秋招|作为老师)/u.test(title)) {
+    problems.push(`${topic.method_id}:商家视角不能写成买家或专家第一人称口吻`);
+  }
+  return problems;
+}
+
+function titleQualityProblems(topic: TopicCandidate, account: GrowthAccount) {
+  const quality = evaluateGrowthTitleQuality(topic.title, {
+    supportedFacts: supportedTitleFacts(account),
+  });
+  const problems = quality.reasons.map((reason) => {
+    const labels: Record<string, string> = {
+      empty: "标题为空",
+      too_long: "标题超过20字",
+      traditional_chinese: "标题含繁体字",
+      garbled_latin_cjk: "标题含中英文乱码拼接",
+      unsupported_factual_claim: `标题含无依据的具体事实${quality.unsupportedClaims.length ? `：${quality.unsupportedClaims.join("、")}` : ""}`,
+      unnatural_jargon: "标题含不自然的生造黑话",
+    };
+    return `${topic.method_id}:${labels[reason] || "标题质量不合格"}`;
+  });
+  return [...problems, ...titlePersonaProblems(topic, account)];
+}
+
 function topicCandidateDuplicateProblems(
   topic: TopicCandidate,
   historyTitles: string[],
@@ -619,15 +796,14 @@ function topicCandidateDuplicateProblems(
   options: { preserveDirection?: boolean; businessLine?: GrowthBusinessLine } = {},
 ) {
   const problems: string[] = [];
-  // 全历史禁止原样、标点微调、数字替换和语气词微调；这才是“以前没有出现过”。
+  // 全历史禁止原样、标点微调、繁简体、数字替换、近义改写和轻微语序调整。
+  // 不能因为换了方法就允许用户连续看到同一个母题的换皮标题。
   const sameFingerprint = historyTitles.find((item) => titlesHaveSameHistoryFingerprint(topic.title, item));
+  const semanticHistory = historyTopics.find((item) =>
+    titlesAreNearDuplicate(topic.title, item.title));
+  const nearHistory = semanticHistory?.title ?? historyTitles.find((item) => titlesAreNearDuplicate(topic.title, item));
   if (sameFingerprint) problems.push(`${topic.method_id}:与历史标题“${sameFingerprint}”实质相同`);
-  // 语义近似只和同一种方法比较。不同方法天然会共享业务词，跨方法近似拦截会让长期生成失去可用空间。
-  const sameMethodHistory = historyTopics.find((item) =>
-    item.method_id === topic.method_id && titlesAreSameMethodNearDuplicate(topic.title, item.title));
-  if (sameMethodHistory && sameMethodHistory.title !== sameFingerprint) {
-    problems.push(`${topic.method_id}:与该方法历史标题“${sameMethodHistory.title}”重复或近似`);
-  }
+  else if (nearHistory) problems.push(`${topic.method_id}:与历史标题“${nearHistory}”重复或近似`);
   const inBatch = accepted.find((item) => titlesAreNearDuplicate(topic.title, item.title));
   if (inBatch) problems.push(`${topic.method_id}:与本批次${inBatch.method_id}标题重复或近似`);
   if (!options.preserveDirection) {
@@ -858,7 +1034,9 @@ export async function generateTopicBatch(input: {
   let lastProblems: string[] = [];
   let usage: Record<string, unknown> | undefined;
   const accepted = new Map<TitleMethodId, TopicCandidate>();
-  const maxAttempts = input.allowSourcePause ? 1 : 3;
+  // 两轮模型尝试后，原生法会从经过同一门禁的场景化兜底池中挑一个全新标题；
+  // 来源型方法仍只允许透明暂停。这样一次点击不会因模型偶发输出拖到分钟级。
+  const maxAttempts = 2;
 
   const operatorReason = (method: TitleMethodDefinition, raw?: string) => {
     const unavailable = unavailableMethods.find((item) => item.method_id === method.id);
@@ -930,11 +1108,11 @@ export async function generateTopicBatch(input: {
           }),
           diversityHistory: historyTopics,
           context: accountContext(input.account),
-        }), maxTokens: 3200, temperature: Math.min(0.82, 0.62 + attempt * 0.07),
+        }), maxTokens: 2200, temperature: Math.min(0.82, 0.62 + attempt * 0.07),
         // 标题批次允许在上层保留已通过的槽位；不要因主模型超时再等一次
         // 备用模型。这样一次批次调用的时长有明确上限，局部失败也不会丢掉
         // 已经形成的新标题。
-        timeoutMs: 45_000,
+        timeoutMs: 24_000,
         jsonRetries: 0,
         allowFallback: false,
       });
@@ -959,13 +1137,25 @@ export async function generateTopicBatch(input: {
         const candidateTitles = Array.from(new Set([
           asText(row.title),
           ...(Array.isArray(row.alternative_titles) ? row.alternative_titles.map(asText) : []),
-        ].map(enforceTitleLimit).filter(Boolean))).slice(0, 5);
+        ].map((value) => value.trim()).filter(Boolean))).slice(0, 5);
         let acceptedTopic: TopicCandidate | undefined;
         const candidateProblems: string[] = [];
         candidateProblemsByMethod.set(method.id, candidateProblems);
 
         for (const [candidateIndex, candidateTitle] of candidateTitles.entries()) {
           try {
+            // 不允许先截成20字再放行：被截断的模型输出很容易把句子截残，
+            // 也会掩盖“原题本来超长”的质量问题。
+            const rawTitleQuality = evaluateGrowthTitleQuality(candidateTitle, {
+              supportedFacts: supportedTitleFacts(input.account),
+            });
+            if (!rawTitleQuality.acceptable) {
+              candidateProblems.push(...rawTitleQuality.reasons.map((reason) => (
+                `${method.id}:模型候选${reason === "too_long" ? "超过20字" : "未通过标题质量门禁"}`
+              )));
+              rejectedTitles.push(candidateTitle);
+              continue;
+            }
             const candidateRow = { ...row, title: candidateTitle };
             const [normalizedTopic] = normalizeTopics([candidateRow], input.account, [method], generationMode, sources);
             const topic: TopicCandidate = directionLock ? {
@@ -995,7 +1185,10 @@ export async function generateTopicBatch(input: {
               rejectedTitles.push(candidateTitle);
               continue;
             }
-            const duplicateProblems = topicCandidateDuplicateProblems(
+            const qualityProblems = titleQualityProblems(topic, input.account);
+            const duplicateProblems = qualityProblems.length
+              ? []
+              : topicCandidateDuplicateProblems(
               topic,
               historyTitles,
               historyTopics,
@@ -1005,10 +1198,10 @@ export async function generateTopicBatch(input: {
                 businessLine: input.account.business_line ?? "executive",
               },
             );
-            const migrationProblems = duplicateProblems.length
+            const migrationProblems = qualityProblems.length || duplicateProblems.length
               ? []
               : sourceMigrationProblems([topic], sources, structureCards);
-            const problems = [...duplicateProblems, ...migrationProblems];
+            const problems = [...qualityProblems, ...duplicateProblems, ...migrationProblems];
             if (!problems.length) {
               const source = sources.get(topic.method_id);
               if (source) {
@@ -1136,6 +1329,40 @@ export async function generateTopicBatch(input: {
     } catch (error) {
       lastProblems = [(error as Error).message || "标题批次生成失败"];
       console.warn(`[growth] topic batch attempt ${attempt} failed:`, lastProblems[0]);
+    }
+  }
+
+  // 原生法没有外部来源的不确定性。若模型连续两轮没有给出可交付标题，使用
+  // 预先审过的“业务场景×方法”候选池，并重新跑质量、身份、业务隔离、历史
+  // 去重和本批去重。兜底池耗尽时才将该槽位标成失败，绝不把旧标题冒充新标题。
+  for (const method of methods.filter((item) => !item.sourceRequired && !accepted.has(item.id))) {
+    // 单槽“换个标题”要保留原来的正文承诺，不能用通用兜底把运营已锁定的
+    // 方向换掉；主批次则可以安全使用新的场景候选。
+    if (input.directionLocks?.[method.id]) continue;
+    const fallbackProblems: string[] = [];
+    for (const title of fallbackTitleOptions(input.account, method.id)) {
+      const topic = fallbackTopic(input.account, method, generationMode, undefined, title);
+      topic.hook = topic.title;
+      const problems = [
+        ...titleQualityProblems(topic, input.account),
+        ...topicCandidateDuplicateProblems(
+          topic,
+          historyTitles,
+          historyTopics,
+          [...accepted.values()],
+          { businessLine: input.account.business_line ?? "executive" },
+        ),
+      ];
+      if (!problems.length) {
+        accepted.set(method.id, topic);
+        break;
+      }
+      fallbackProblems.push(...problems);
+    }
+    if (!accepted.has(method.id)) {
+      lastProblems.push(
+        fallbackProblems[0] || `${method.id}:原生法兜底候选已耗尽，未形成新标题`,
+      );
     }
   }
 

@@ -158,6 +158,14 @@ export interface GrowthTitleFingerprint {
   title: string;
   normalized_fingerprint: string;
   semantic_fingerprint: string;
+  /** 可解释的标题语义摘要，用于跨批去重与验收排查，不保存模型推理。 */
+  semantic_signature?: {
+    audience: string;
+    scenario: string;
+    conflict: string;
+    promise: string;
+    frame: string;
+  };
   /** 仅用于后台多样性门禁，不作为内容方向或运营标签展示。 */
   sentence_frame?: string;
   /** 从标题和标题承诺归纳的开放母题键，只用于避免近期反复写同一件事。 */
@@ -716,6 +724,15 @@ export interface GrowthRun {
   generation_status?: "generating" | "completed" | "failed";
   uniqueness_status?: "passed" | "failed";
   generation_attempts?: number;
+  /** 同一次“换一批”请求的幂等键：浏览器断连后重试仍返回这一批，而不重复生成。 */
+  generation_request_id?: string;
+  /** 仅供运营排查的分段耗时与结果，不展示模型内部推理。 */
+  generation_diagnostics?: {
+    total_ms: number;
+    source_ms?: number;
+    generation_ms?: number;
+    save_ms?: number;
+  };
   structure_version?: "v3_7";
   migration_status?: "passed" | "failed";
   title_fingerprints?: GrowthTitleFingerprint[];
