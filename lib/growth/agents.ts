@@ -241,6 +241,11 @@ interface TugOfWarAngle {
   usedWhen: RegExp;
 }
 
+interface NostalgiaAngle {
+  cue: string;
+  usedWhen: RegExp;
+}
+
 /**
  * 拔河式标题最容易在历史积累后退回“回国/留海外、实习/全职、内推/海投”
  * 三四组熟悉选项。这里不是直接写标题，而是给模型轮换一组尚未使用的真实
@@ -308,6 +313,89 @@ const EXECUTIVE_TUG_OF_WAR_ANGLES: TugOfWarAngle[] = [
   { cue: "保个人品牌曝光 vs 做幕后经营角色", usedWhen: /个人品牌.*幕后|曝光.*经营角色/u },
 ];
 
+/**
+ * 怀旧法不能长期只围绕“录取信/学校排名/工牌”改写。每一项都提供一组
+ * 过去物件或场景与当下决策任务，模型只负责把关系写成当前视角的自然标题。
+ * usedWhen 用来从该方法历史中移除已经使用过的坐标。
+ */
+const OVERSEAS_NOSTALGIA_ANGLES: NostalgiaAngle[] = [
+  { cue: "过去写个人陈述，如今练面试自我介绍", usedWhen: /个人陈述.*自我介绍|自我介绍.*个人陈述/u },
+  { cue: "过去找教授写推荐信，如今准备背调联系人", usedWhen: /推荐信.*背调|背调.*推荐信/u },
+  { cue: "过去排课程表，如今排网申截止日", usedWhen: /课程表.*截止|截止.*课程表/u },
+  { cue: "过去盯成绩单，如今整理项目证据", usedWhen: /成绩单.*项目|项目证据.*成绩/u },
+  { cue: "过去看校园地图，如今算上班通勤", usedWhen: /校园地图.*通勤|通勤.*校园/u },
+  { cue: "过去签宿舍合同，如今读劳动合同", usedWhen: /宿舍.*劳动合同|劳动合同.*宿舍/u },
+  { cue: "过去交学费收据，如今比较薪资条款", usedWhen: /学费.*薪资|薪资.*学费/u },
+  { cue: "过去办学生签证，如今核对工签资格", usedWhen: /学生签证.*工签|工签.*学生签证/u },
+  { cue: "过去做答辩PPT，如今准备案例面试", usedWhen: /答辩.*案例面试|案例面试.*答辩/u },
+  { cue: "过去赶小组作业，如今讲团队项目贡献", usedWhen: /小组作业.*项目|团队项目.*小组/u },
+  { cue: "过去约教授答疑，如今约招聘经理沟通", usedWhen: /教授.*招聘经理|招聘经理.*教授/u },
+  { cue: "过去逛校园招聘会，如今写会后跟进邮件", usedWhen: /招聘会.*跟进|跟进邮件.*招聘会/u },
+  { cue: "过去刷学生邮箱，如今等招聘官回复", usedWhen: /学生邮箱.*招聘|招聘官.*邮箱/u },
+  { cue: "过去比课程排名，如今核对岗位职责", usedWhen: /课程排名.*岗位|岗位职责.*排名/u },
+  { cue: "过去写社团职位，如今证明真实工作结果", usedWhen: /社团.*工作结果|工作结果.*社团/u },
+  { cue: "过去记实习日记，如今整理项目追问", usedWhen: /实习日记.*追问|项目追问.*实习/u },
+  { cue: "过去参加校园开放日，如今参加公司开放日", usedWhen: /校园开放日.*公司|公司开放日.*校园/u },
+  { cue: "过去挑毕业礼服，如今准备面试着装", usedWhen: /毕业礼服.*面试|面试着装.*毕业/u },
+  { cue: "过去拖行李去留学，如今订回国面试机票", usedWhen: /行李.*面试机票|机票.*行李/u },
+  { cue: "过去做宿舍物品清单，如今看异地搬迁条件", usedWhen: /宿舍.*搬迁|搬迁.*宿舍/u },
+  { cue: "过去看毕业典礼日程，如今确认入职日期", usedWhen: /毕业典礼.*入职|入职日期.*毕业/u },
+  { cue: "过去加校友群，如今约行业从业者验证", usedWhen: /校友群.*从业者|行业从业者.*校友/u },
+  { cue: "过去改论文脚注，如今改简历项目要点", usedWhen: /论文.*简历|简历.*论文/u },
+  { cue: "过去整理实验数据，如今整理作品集证据", usedWhen: /实验数据.*作品集|作品集.*实验/u },
+  { cue: "过去申请奖学金，如今准备薪资沟通", usedWhen: /奖学金.*薪资|薪资沟通.*奖学金/u },
+  { cue: "过去开实习证明，如今准备背景调查", usedWhen: /实习证明.*背景|背景调查.*实习/u },
+  { cue: "过去纠结选课，如今比较两个岗位", usedWhen: /选课.*岗位|岗位.*选课/u },
+  { cue: "过去看模块分数，如今看能力匹配", usedWhen: /模块.*能力|能力匹配.*分数/u },
+  { cue: "过去请导师推荐，如今请前主管做证明", usedWhen: /导师.*主管|前主管.*导师/u },
+  { cue: "过去担心签证到期，如今担心试用期适配", usedWhen: /签证.*试用期|试用期.*签证/u },
+  { cue: "过去核对入学材料，如今核对Offer条款", usedWhen: /入学材料.*offer|offer.*入学/iu },
+  { cue: "过去选学校城市，如今选工作城市", usedWhen: /学校城市.*工作城市|工作城市.*学校/u },
+  { cue: "过去看课程师资，如今看直属经理", usedWhen: /课程师资.*经理|直属经理.*师资/u },
+  { cue: "过去参加毕业舞会，如今参加评估中心", usedWhen: /毕业舞会.*评估|评估中心.*舞会/u },
+  { cue: "过去查图书馆开放时间，如今查笔试窗口", usedWhen: /图书馆.*笔试|笔试窗口.*图书馆/u },
+  { cue: "过去打印学生证，如今准备入职证件", usedWhen: /学生证.*入职|入职证件.*学生/u },
+];
+
+const EXECUTIVE_NOSTALGIA_ANGLES: NostalgiaAngle[] = [
+  { cue: "过去递名片，如今拿外部市场报价", usedWhen: /名片.*报价|市场报价.*名片/u },
+  { cue: "过去等升职邮件，如今核对合同条款", usedWhen: /升职邮件.*合同|合同条款.*升职/u },
+  { cue: "过去拿办公室钥匙，如今盘点客户关系", usedWhen: /办公室钥匙.*客户|客户关系.*钥匙/u },
+  { cue: "过去看团队花名册，如今写能力证据", usedWhen: /花名册.*能力|能力证据.*团队/u },
+  { cue: "过去等年终奖通知，如今算家庭现金流", usedWhen: /年终奖.*现金流|现金流.*年终奖/u },
+  { cue: "过去拿绩效A，如今准备面试案例", usedWhen: /绩效.*面试案例|面试案例.*绩效/u },
+  { cue: "过去批预算，如今确认新岗位决策权", usedWhen: /预算.*决策权|决策权.*预算/u },
+  { cue: "过去写董事会纪要，如今记录市场反馈", usedWhen: /董事会.*市场反馈|市场反馈.*董事会/u },
+  { cue: "过去戴公司工牌，如今签顾问合同", usedWhen: /工牌.*顾问合同|顾问合同.*工牌/u },
+  { cue: "过去坐高管办公室，如今排外部面试", usedWhen: /高管办公室.*面试|外部面试.*办公室/u },
+  { cue: "过去领行业奖杯，如今看客户续约", usedWhen: /奖杯.*续约|客户续约.*奖/u },
+  { cue: "过去攒培训证书，如今整理项目结果", usedWhen: /培训证书.*项目|项目结果.*证书/u },
+  { cue: "过去看组织架构，如今核对真实职责", usedWhen: /组织架构.*职责|真实职责.*架构/u },
+  { cue: "过去追职位头衔，如今追岗位权限", usedWhen: /头衔.*权限|岗位权限.*职位/u },
+  { cue: "过去等调薪信，如今拿市场Offer比较", usedWhen: /调薪.*offer|offer.*调薪/iu },
+  { cue: "过去靠公司介绍，如今重写个人简历", usedWhen: /公司介绍.*简历|个人简历.*公司/u },
+  { cue: "过去赴客户饭局，如今看销售漏斗", usedWhen: /客户饭局.*漏斗|销售漏斗.*饭局/u },
+  { cue: "过去做扩编计划，如今准备接班交接", usedWhen: /扩编.*接班|接班.*扩编/u },
+  { cue: "过去写季度报告，如今写能力账本", usedWhen: /季度报告.*能力|能力账本.*季度/u },
+  { cue: "过去排出差行程，如今算新岗位通勤", usedWhen: /出差.*通勤|岗位通勤.*出差/u },
+  { cue: "过去看股权授予，如今核对归属条件", usedWhen: /股权授予.*归属|归属条件.*股权/u },
+  { cue: "过去领司龄奖，如今写离职交接", usedWhen: /司龄.*离职|离职交接.*司龄/u },
+  { cue: "过去读管理书，如今跑真实验证项目", usedWhen: /管理书.*验证项目|项目验证.*管理/u },
+  { cue: "过去站公司年会舞台，如今试个人品牌", usedWhen: /年会.*个人品牌|个人品牌.*年会/u },
+  { cue: "过去让助理排日程，如今自己排客户", usedWhen: /助理.*客户|客户.*助理/u },
+  { cue: "过去管大团队，如今独立交付项目", usedWhen: /大团队.*独立|独立交付.*团队/u },
+  { cue: "过去调用公司资源，如今测试付费咨询", usedWhen: /公司资源.*咨询|付费咨询.*资源/u },
+  { cue: "过去做年度预算，如今算转型试错金", usedWhen: /年度预算.*试错|试错金.*预算/u },
+  { cue: "过去参加战略会，如今约行业访谈", usedWhen: /战略会.*访谈|行业访谈.*战略/u },
+  { cue: "过去审核下属简历，如今修改自己简历", usedWhen: /下属简历.*自己|自己简历.*下属/u },
+  { cue: "过去签客户大单，如今验证第一笔个人收入", usedWhen: /客户.*个人收入|个人收入.*大单/u },
+  { cue: "过去做继任计划，如今安排自己的下一站", usedWhen: /继任.*下一站|下一站.*继任/u },
+  { cue: "过去谈部门目标，如今谈个人边界", usedWhen: /部门目标.*个人边界|个人边界.*部门/u },
+  { cue: "过去等猎头职位，如今主动找市场反馈", usedWhen: /猎头.*市场反馈|市场反馈.*猎头/u },
+  { cue: "过去看行业排名，如今看能力可迁移性", usedWhen: /行业排名.*迁移|可迁移.*排名/u },
+  { cue: "过去做并购方案，如今比较两条职业路", usedWhen: /并购.*职业路|职业.*并购/u },
+];
+
 function tugOfWarAngleDirective(businessLine: string | undefined, historyTitles: string[]) {
   const pool = /留学生|海外秋招|回国求职/u.test(businessLine ?? "")
     ? OVERSEAS_TUG_OF_WAR_ANGLES
@@ -318,6 +406,18 @@ function tugOfWarAngleDirective(businessLine: string | undefined, historyTitles:
   return `【本轮强制使用的未用取舍轴】三个候选分别使用以下三个取舍轴，不得再回到历史里已经出现的地区去留、实习/全职、内推/海投等旧轴：
 ${selected.map((angle, index) => `${index + 1}. ${angle.cue}`).join("\n")}
 标题仍需符合当前业务和视角；取舍轴只是决策关系，不能照抄说明句。`;
+}
+
+function nostalgiaAngleDirective(businessLine: string | undefined, historyTitles: string[]) {
+  const pool = /留学生|海外秋招|回国求职/u.test(businessLine ?? "")
+    ? OVERSEAS_NOSTALGIA_ANGLES
+    : EXECUTIVE_NOSTALGIA_ANGLES;
+  const unused = pool.filter((angle) => !historyTitles.some((title) => angle.usedWhen.test(title)));
+  if (!unused.length) return "";
+  const selected = unused.slice(0, 3);
+  return `【本轮强制使用的未用今昔坐标】三个候选分别使用以下三组过去物件/场景与当下任务，不得退回录取信、学校排名、工牌等已经反复出现的旧坐标：
+${selected.map((angle, index) => `${index + 1}. ${angle.cue}`).join("\n")}
+标题必须保持当前业务和视角，买家写亲历、专家写判断、商家写服务观察；不能照抄说明句。`;
 }
 
 export function buildTopicPoolUserPrompt(input: {
@@ -388,8 +488,12 @@ export function buildTopicPoolUserPrompt(input: {
       .filter((item) => item.method_id === method.id && item.title)
       .map((item) => item.title as string)
       .slice(0, 50);
-    const dynamicAngleDirective = method.id === "tug_of_war" && !lock
-      ? tugOfWarAngleDirective(input.context?.businessLine, methodHistoryTitles)
+    const dynamicAngleDirective = !lock
+      ? method.id === "tug_of_war"
+        ? tugOfWarAngleDirective(input.context?.businessLine, methodHistoryTitles)
+        : method.id === "nostalgia"
+          ? nostalgiaAngleDirective(input.context?.businessLine, methodHistoryTitles)
+          : ""
       : "";
     return [
       `${method.order}. method_id=${method.id}；方法=${method.label}；要求=${method.instruction}`,

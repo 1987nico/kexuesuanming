@@ -216,6 +216,36 @@ describe("来源型标题生成合同", () => {
     expect(prompt).toContain("不得再回到历史里已经出现的地区去留");
   });
 
+  it("怀旧法会排除历史已用今昔坐标并分配新的具体物件与任务", () => {
+    const prompt = buildTopicPoolUserPrompt({
+      week: 1,
+      targetUser: "关注孩子就业结果的留学生家长",
+      coreProblem: "孩子回国求职时的路径选择",
+      persona: "buyer",
+      methods: [TITLE_METHOD_BY_ID.nostalgia],
+      generationMode: "default",
+      diversityHistory: [
+        {
+          method_id: "nostalgia",
+          title: "以前写个人陈述，现在陪娃练自我介绍",
+          batch_index: 0,
+        },
+        {
+          method_id: "nostalgia",
+          title: "当年找教授写推荐信，如今帮娃备背调",
+          batch_index: 1,
+        },
+      ],
+      context: { businessLine: "留学生求职辅导" },
+    });
+
+    expect(prompt).toContain("本轮强制使用的未用今昔坐标");
+    expect(prompt).not.toContain("过去写个人陈述，如今练面试自我介绍");
+    expect(prompt).not.toContain("过去找教授写推荐信，如今准备背调联系人");
+    expect(prompt).toContain("过去排课程表，如今排网申截止日");
+    expect(prompt).toContain("过去盯成绩单，如今整理项目证据");
+  });
+
   it("来源存在但没有锁定结构卡时，明确禁止生成该方法标题", () => {
     const prompt = buildTopicPoolUserPrompt({
       week: 1,
