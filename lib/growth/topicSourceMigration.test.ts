@@ -336,6 +336,43 @@ describe("来源型标题生成合同", () => {
     expect(prompt).toContain("投递很早 → 没核对招聘批次");
   });
 
+  it("行业痛点、稀缺资料和极限词也会按历史轮换具体现场、任务与风险", () => {
+    const prompt = buildTopicPoolUserPrompt({
+      week: 1,
+      targetUser: "准备秋招的留学生与家长",
+      coreProblem: "求职方向与招聘节奏不清晰",
+      persona: "expert",
+      methods: [
+        TITLE_METHOD_BY_ID.human_pain,
+        TITLE_METHOD_BY_ID.scarce_material,
+        TITLE_METHOD_BY_ID.superlative,
+      ],
+      generationMode: "default",
+      diversityHistory: [
+        { method_id: "human_pain", title: "申请系统状态一直不更新", batch_index: 0 },
+        { method_id: "human_pain", title: "拒信到邮箱，我却不敢点开", batch_index: 1 },
+        { method_id: "human_pain", title: "室友讨论Offer时，我只想沉默", batch_index: 2 },
+        { method_id: "scarce_material", title: "跨时区面试排期表，直接用", batch_index: 0 },
+        { method_id: "scarce_material", title: "工签衔接矩阵，先筛可投岗位", batch_index: 1 },
+        { method_id: "scarce_material", title: "背调联系人可用表", batch_index: 2 },
+        { method_id: "superlative", title: "最容易错过的跨时区面试确认", batch_index: 0 },
+        { method_id: "superlative", title: "最隐蔽的工签资格误读", batch_index: 1 },
+        { method_id: "superlative", title: "最容易失效的背调联系人", batch_index: 2 },
+      ],
+      context: { businessLine: "overseas_student" },
+    });
+
+    expect(prompt).toContain("本轮强制使用的未用痛点现场");
+    expect(prompt).toContain("毕业典礼临近仍说不清去向");
+    expect(prompt).toContain("租约到期却不知道搬去哪座城");
+    expect(prompt).toContain("本轮强制使用的未用资料任务");
+    expect(prompt).toContain("异地入职成本计算页");
+    expect(prompt).toContain("学历认证材料包");
+    expect(prompt).toContain("本轮强制使用的未用高代价风险");
+    expect(prompt).toContain("最容易低估的异地搬迁成本");
+    expect(prompt).toContain("最容易拖延入职的认证材料");
+  });
+
   it("来源存在但没有锁定结构卡时，明确禁止生成该方法标题", () => {
     const prompt = buildTopicPoolUserPrompt({
       week: 1,

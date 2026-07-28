@@ -349,6 +349,204 @@ const EXECUTIVE_CONTRARIAN_ANGLES: ContrarianAngle[] = [
   { cue: "选择机会多 → 更需要先排除一条", usedWhen: /机会.*多.*排除|排除.*机会/u },
 ];
 
+const OVERSEAS_HUMAN_PAIN_ANGLES: ContrarianAngle[] = [
+  { cue: "申请系统状态一直不更新", usedWhen: /申请系统.*(?:状态|不更新)|状态.*不更新/u },
+  { cue: "拒信到邮箱却不敢点开", usedWhen: /拒信.*(?:邮箱|点开)|邮箱.*拒信/u },
+  { cue: "室友讨论Offer时选择沉默", usedWhen: /室友.*(?:Offer|录用)|(?:Offer|录用).*室友/iu },
+  { cue: "毕业典礼临近仍说不清去向", usedWhen: /毕业典礼.*去向|去向.*毕业/u },
+  { cue: "租约到期却不知道搬去哪座城", usedWhen: /租约.*(?:搬|城市)|搬.*租约/u },
+  { cue: "父母问回程票却不敢确定日期", usedWhen: /(?:父母|爸妈|家长).*回程|回程票/u },
+  { cue: "导师问毕业计划只能含糊回答", usedWhen: /导师.*(?:毕业计划|去向)|毕业计划.*导师/u },
+  { cue: "校友答应内推后一直没有下文", usedWhen: /校友.*内推.*(?:没|没有)|内推.*没.*下文/u },
+  { cue: "面试撞上答辩却不敢放弃任何一边", usedWhen: /面试.*答辩|答辩.*面试/u },
+  { cue: "签证倒计时逼近却没有岗位顺序", usedWhen: /签证.*倒计时|倒计时.*岗位/u },
+  { cue: "职业展拿了一袋资料仍不知道投谁", usedWhen: /职业展|招聘会.*资料/u },
+  { cue: "薪资期望栏反复改又不敢提交", usedWhen: /薪资.*(?:栏|提交)|期望薪资/u },
+  { cue: "招聘官追问项目数字时突然卡住", usedWhen: /招聘官.*项目.*数字|项目数字.*卡/u },
+  { cue: "背调要联系人却找不到合适的人", usedWhen: /背调.*联系人|联系人.*背调/u },
+  { cue: "家庭群里都在问秋招进展", usedWhen: /家庭群|家族群.*秋招/u },
+  { cue: "航班和面试时间冲突不敢做取舍", usedWhen: /航班.*面试|面试.*航班/u },
+  { cue: "学位证明未出却被催入职材料", usedWhen: /学位证明.*入职|入职.*学位证明/u },
+  { cue: "两版中英文简历经历对不上", usedWhen: /中英文简历|两版.*简历/u },
+  { cue: "申请了很多城市却没有一座真想去", usedWhen: /城市.*(?:很多|多).*想去|想去.*城市/u },
+  { cue: "收到笔试却发现岗位工作不对口", usedWhen: /笔试.*工作.*不对口|笔试.*岗位.*不对口/u },
+  { cue: "家里帮忙找关系反而更难拒绝", usedWhen: /家里.*关系.*拒绝|找关系.*拒绝/u },
+  { cue: "作品集改到深夜仍不知道给谁看", usedWhen: /作品集.*(?:深夜|给谁)|深夜.*作品集/u },
+  { cue: "面试复盘写满却不敢看下一场", usedWhen: /面试复盘.*下一场|复盘.*不敢.*面试/u },
+  { cue: "同学开始入职自己还在选方向", usedWhen: /同学.*入职.*方向|入职.*自己.*方向/u },
+  { cue: "招聘截止日和论文节点挤在一起", usedWhen: /截止.*论文|论文.*截止/u },
+  { cue: "被问为什么回国时答不出真理由", usedWhen: /为什么回国|回国.*理由/u },
+  { cue: "拿到保底机会却不敢告诉家里", usedWhen: /保底.*(?:家里|父母)|不敢.*保底/u },
+  { cue: "准备很多面试答案仍怕真实追问", usedWhen: /面试答案.*追问|追问.*面试答案/u },
+  { cue: "每天刷岗位却越来越不敢投", usedWhen: /刷岗位.*不敢投|每天.*岗位.*不敢/u },
+  { cue: "招聘官已读不回后反复检查消息", usedWhen: /招聘官.*已读|已读不回/u },
+];
+
+const EXECUTIVE_HUMAN_PAIN_ANGLES: ContrarianAngle[] = [
+  { cue: "猎头来电时正在主持团队会议", usedWhen: /猎头.*团队会议|会议.*猎头/u },
+  { cue: "工资到账后更不敢算离职成本", usedWhen: /工资.*离职成本|离职成本.*工资/u },
+  { cue: "合同续签摆在桌上却迟迟不签", usedWhen: /续签.*(?:桌|不签)|合同.*迟迟/u },
+  { cue: "绩效优秀却不敢打开招聘网站", usedWhen: /绩效.*招聘网站|招聘网站.*绩效/u },
+  { cue: "董事会肯定后反而更想换方向", usedWhen: /董事会.*换方向|换方向.*董事会/u },
+  { cue: "预算被冻结仍要向团队解释前景", usedWhen: /预算.*冻结.*团队|团队.*预算.*冻结/u },
+  { cue: "核心下属递辞呈时开始怀疑自己", usedWhen: /下属.*辞呈|辞呈.*下属/u },
+  { cue: "客户流失后才发现资源属于平台", usedWhen: /客户.*流失.*平台|资源.*属于平台/u },
+  { cue: "孩子学费账单让转型计划一再后退", usedWhen: /学费.*转型|转型.*学费/u },
+  { cue: "伴侣问下一站时给不出明确答案", usedWhen: /伴侣.*下一站|下一站.*伴侣/u },
+  { cue: "体检报告出来后开始重新算时间", usedWhen: /体检.*时间|时间.*体检/u },
+  { cue: "连续差旅后不敢承认身体扛不住", usedWhen: /差旅.*身体|身体.*差旅/u },
+  { cue: "旧名片还体面但市场没有新报价", usedWhen: /名片.*报价|报价.*名片/u },
+  { cue: "简历投出后第一次长时间没回应", usedWhen: /简历.*没回应|投.*简历.*没.*回/u },
+  { cue: "第一次个人方案发出去没人付费", usedWhen: /个人方案.*付费|没人付费/u },
+  { cue: "同事晋升消息让自己不敢辞职", usedWhen: /同事.*晋升.*辞职|晋升消息.*离职/u },
+  { cue: "继任名单写完却没有自己的下一步", usedWhen: /继任.*自己的.*下一|自己.*下一步.*继任/u },
+  { cue: "组织调整邮件里自己的职责被缩小", usedWhen: /组织调整.*职责|职责.*缩小/u },
+  { cue: "汇报线变化后发现决策权被拿走", usedWhen: /汇报线.*决策权|决策权.*汇报/u },
+  { cue: "大客户只认公司品牌不认个人", usedWhen: /客户.*公司品牌.*个人|品牌.*不认.*个人/u },
+  { cue: "递延奖金没到账不敢决定离开", usedWhen: /递延奖金.*离开|离开.*奖金/u },
+  { cue: "竞业条款看不懂却已经收到机会", usedWhen: /竞业.*机会|机会.*竞业/u },
+  { cue: "老板挽留时自己反而说不出条件", usedWhen: /老板.*挽留.*条件|挽留.*说不出/u },
+  { cue: "团队扩张计划获批但自己想离场", usedWhen: /团队.*扩张.*离|扩张计划.*想走/u },
+  { cue: "副业咨询很多却没有一个稳定客户", usedWhen: /副业.*稳定客户|咨询.*没有.*客户/u },
+  { cue: "创业想法写了很久仍没验证付费", usedWhen: /创业.*验证.*付费|付费.*创业/u },
+  { cue: "猎头给出职位却说不清真实权限", usedWhen: /猎头.*权限|职位.*真实权限/u },
+  { cue: "家庭现金流一算才发现窗口很短", usedWhen: /家庭.*现金流.*窗口|现金流.*窗口/u },
+  { cue: "旧团队需要自己但外部市场没回应", usedWhen: /旧团队.*外部市场|外部.*没回应/u },
+  { cue: "年终奖确定后转型又被推迟一年", usedWhen: /年终奖.*转型|转型.*年终奖/u },
+];
+
+const OVERSEAS_SCARCE_MATERIAL_ANGLES: ContrarianAngle[] = [
+  { cue: "跨时区面试排期表：避免撞时段", usedWhen: /跨时区.*排期|面试排期/u },
+  { cue: "签证工签衔接矩阵：判断可投岗位", usedWhen: /签证.*工签.*矩阵|工签衔接/u },
+  { cue: "背调联系人可用表：提前补证明", usedWhen: /背调联系人.*表|联系人可用/u },
+  { cue: "异地入职成本计算页：比较城市", usedWhen: /异地入职.*成本|城市.*成本.*页/u },
+  { cue: "学历认证材料包：核对入职文件", usedWhen: /学历认证.*材料|入职文件/u },
+  { cue: "评估中心角色卡：准备小组任务", usedWhen: /评估中心.*角色|小组任务.*卡/u },
+  { cue: "案例面试证据账本：记录数据来源", usedWhen: /案例面试.*账本|数据来源.*账本/u },
+  { cue: "岗位语言样本库：验证真实工作语境", usedWhen: /岗位语言.*(?:库|样本)|工作语境/u },
+  { cue: "学位证明节点表：协调答辩与入职", usedWhen: /学位证明.*节点|答辩.*入职.*表/u },
+  { cue: "跨境税务问题单：比较两地选择", usedWhen: /跨境税务.*(?:单|表)|税务问题/u },
+  { cue: "试用期目标确认卡：入职前对齐考核", usedWhen: /试用期目标.*卡|对齐考核/u },
+  { cue: "福利隐性成本表：核算真实总回报", usedWhen: /福利.*隐性成本|真实总回报/u },
+  { cue: "雇主担保证明清单：筛掉无效岗位", usedWhen: /雇主担保.*清单|担保证明/u },
+  { cue: "申请系统账号台账：避免资料串版", usedWhen: /申请系统.*台账|账号台账/u },
+  { cue: "招聘官触点记录页：安排跟进节奏", usedWhen: /招聘官.*触点|触点记录/u },
+  { cue: "跨境联系方式核对卡：保证能被联系", usedWhen: /跨境.*联系方式|收件地址.*卡/u },
+  { cue: "课程能力映射表：把模块变成证据", usedWhen: /课程.*能力.*映射|模块.*证据/u },
+  { cue: "研究方法迁移页：把论文变工作样本", usedWhen: /研究方法.*迁移|论文.*工作样本/u },
+  { cue: "中英文表达样本库：准备双语汇报", usedWhen: /中英文.*样本|双语汇报/u },
+  { cue: "协作故事拆解卡：补利益相关方细节", usedWhen: /协作故事.*卡|利益相关方/u },
+  { cue: "拒信原因日志：判断该改岗还是改表达", usedWhen: /拒信原因.*日志|拒信.*改岗/u },
+  { cue: "面试反问题库：核验岗位与经理", usedWhen: /面试反问.*库|反问题库/u },
+  { cue: "通勤租房成本表：比较工作城市", usedWhen: /通勤.*租房.*表|工作城市.*成本/u },
+  { cue: "薪酬条款比较尺：统一底薪奖金口径", usedWhen: /薪酬.*比较|底薪.*奖金.*口径/u },
+  { cue: "面试撞期调度表：确定取舍顺序", usedWhen: /面试撞期.*表|撞期.*顺序/u },
+  { cue: "校友访谈题单：验证岗位日常", usedWhen: /校友访谈.*题|岗位日常.*题/u },
+  { cue: "行业证书门槛图：判断补证优先级", usedWhen: /证书.*门槛.*图|补证.*优先/u },
+  { cue: "岗位释放日历：跟踪目标企业窗口", usedWhen: /岗位释放.*日历|企业.*窗口.*日历/u },
+  { cue: "部门职责对照表：避免只看公司名", usedWhen: /部门职责.*对照|公司名.*职责/u },
+  { cue: "Offer试用期核对卡：提前问清目标", usedWhen: /Offer.*试用期.*卡|试用期.*核对/iu },
+];
+
+const EXECUTIVE_SCARCE_MATERIAL_ANGLES: ContrarianAngle[] = [
+  { cue: "离职通知期计算表：安排交接窗口", usedWhen: /通知期.*计算|交接窗口/u },
+  { cue: "竞业补偿核对卡：判断可去范围", usedWhen: /竞业.*补偿.*卡|可去范围/u },
+  { cue: "递延奖金时间轴：核算离开代价", usedWhen: /递延奖金.*时间轴|离开代价.*奖金/u },
+  { cue: "股权归属清单：看清回购条款", usedWhen: /股权归属.*清单|回购条款.*清单/u },
+  { cue: "家庭现金跑道表：确定试错月份", usedWhen: /家庭.*现金.*表|试错月份/u },
+  { cue: "客户集中度看板：评估独立收入风险", usedWhen: /客户集中.*看板|独立收入.*风险/u },
+  { cue: "利益相关方地图：确认真实支持", usedWhen: /利益相关方.*地图|真实支持/u },
+  { cue: "经营结果证据账本：剥离平台贡献", usedWhen: /经营结果.*账本|平台贡献/u },
+  { cue: "危机案例拆解卡：证明个人判断", usedWhen: /危机.*拆解卡|个人判断.*卡/u },
+  { cue: "组织变革成果表：明确个人作用", usedWhen: /组织变革.*成果表|个人作用/u },
+  { cue: "团队继任清单：评估离岗影响", usedWhen: /团队继任.*清单|离岗影响/u },
+  { cue: "董事会授权图：核验职位决策权", usedWhen: /董事会.*授权图|职位.*决策权/u },
+  { cue: "新岗位汇报线卡：看清真实老板", usedWhen: /汇报线.*卡|真实老板/u },
+  { cue: "预算权限对照表：识别虚高头衔", usedWhen: /预算权限.*表|虚高头衔/u },
+  { cue: "差旅负荷记录表：算时间和身体成本", usedWhen: /差旅.*记录表|身体成本/u },
+  { cue: "异地任职家庭单：确认可承受边界", usedWhen: /异地任职.*家庭.*单|承受边界/u },
+  { cue: "行业周期位置图：判断转型窗口", usedWhen: /行业周期.*图|转型窗口/u },
+  { cue: "监管风险问题库：核验新赛道", usedWhen: /监管.*问题库|新赛道.*监管/u },
+  { cue: "个人品牌资产表：区分能带走什么", usedWhen: /个人品牌.*资产表|能带走/u },
+  { cue: "背调证明人清单：提前确认口径", usedWhen: /背调.*证明人.*清单|证明人.*口径/u },
+  { cue: "新公司任务书模板：问清首年结果", usedWhen: /任务书.*模板|首年结果/u },
+  { cue: "试用期经营指标卡：提前对齐目标", usedWhen: /试用期.*经营指标.*卡|对齐目标/u },
+  { cue: "薪酬结构比较表：统一固定浮动口径", usedWhen: /薪酬结构.*比较|固定.*浮动.*口径/u },
+  { cue: "顾问责任边界单：避免交付失控", usedWhen: /顾问.*责任边界.*单|交付失控/u },
+  { cue: "首批客户线索表：验证获客来源", usedWhen: /首批客户.*线索表|获客来源/u },
+  { cue: "创业现金跑道表：设定停止条件", usedWhen: /创业.*现金跑道.*表|停止条件/u },
+  { cue: "合伙退出机制卡：提前谈分手", usedWhen: /合伙.*退出.*卡|退出机制/u },
+  { cue: "能力缺口周期表：估算补课时间", usedWhen: /能力缺口.*周期表|补课时间/u },
+  { cue: "低成本验证实验单：先测方向再离职", usedWhen: /验证实验.*单|先测方向/u },
+  { cue: "伴侣转型共识页：对齐家庭底线", usedWhen: /伴侣.*共识.*页|家庭底线/u },
+];
+
+const OVERSEAS_SUPERLATIVE_ANGLES: ContrarianAngle[] = [
+  { cue: "最容易错过的跨时区面试确认", usedWhen: /最.*跨时区.*面试|面试.*确认/u },
+  { cue: "最隐蔽的工签资格误读", usedWhen: /最.*工签.*误读|工签.*资格/u },
+  { cue: "最容易失效的背调联系人", usedWhen: /最.*背调.*联系人|联系人.*失效/u },
+  { cue: "最容易低估的异地搬迁成本", usedWhen: /最.*(?:搬迁|异地).*成本/u },
+  { cue: "最容易拖延入职的认证材料", usedWhen: /最.*认证材料|认证.*拖.*入职/u },
+  { cue: "评估中心最容易抢错的角色", usedWhen: /评估中心.*最.*角色|最.*小组角色/u },
+  { cue: "案例面试最危险的数据空白", usedWhen: /案例面试.*最.*数据|最危险.*数据/u },
+  { cue: "双语岗位最容易忽略的表达差异", usedWhen: /双语.*最.*表达|表达差异/u },
+  { cue: "最容易撞车的答辩入职节点", usedWhen: /最.*答辩.*入职|答辩.*撞/u },
+  { cue: "跨境选择最容易漏掉的税务影响", usedWhen: /最.*税务|税务影响/u },
+  { cue: "Offer里最容易忽略的试用期目标", usedWhen: /最.*试用期目标|Offer.*试用期/iu },
+  { cue: "福利清单里最贵的隐性成本", usedWhen: /福利.*最.*隐性成本|最贵.*福利/u },
+  { cue: "雇主担保最容易误判的证明条件", usedWhen: /担保.*最.*证明|最.*担保.*条件/u },
+  { cue: "多系统申请最容易串错的资料", usedWhen: /多.*系统.*最.*资料|资料.*串错/u },
+  { cue: "招聘官沟通最容易失礼的跟进间隔", usedWhen: /招聘官.*最.*跟进|跟进间隔/u },
+  { cue: "跨境求职最容易断联的联系方式", usedWhen: /跨境.*最.*联系方式|最.*断联/u },
+  { cue: "课程经历最难迁移成证据的一步", usedWhen: /课程.*最难.*证据|迁移.*证据/u },
+  { cue: "论文项目最容易说空的工作价值", usedWhen: /论文.*最.*工作价值|最.*说空/u },
+  { cue: "中文汇报最容易暴露的业务短板", usedWhen: /中文汇报.*最.*短板|业务短板/u },
+  { cue: "协作故事最容易漏掉的利益相关方", usedWhen: /协作故事.*最.*利益相关方/u },
+  { cue: "拒信复盘最容易下错的结论", usedWhen: /拒信.*最.*结论|复盘.*下错/u },
+  { cue: "面试反问最容易问废的一题", usedWhen: /面试反问.*最|最.*反问/u },
+  { cue: "工作城市选择最容易漏的总成本", usedWhen: /城市.*最.*总成本|总成本.*城市/u },
+  { cue: "薪酬比较最容易混淆的奖金口径", usedWhen: /薪酬.*最.*奖金|奖金口径/u },
+  { cue: "多场面试最容易撞掉的优先级", usedWhen: /多场面试.*最.*优先|面试.*撞.*优先/u },
+  { cue: "校友访谈最容易浪费的一次提问", usedWhen: /校友访谈.*最.*提问|最.*校友.*问题/u },
+  { cue: "行业准入最容易漏的证书门槛", usedWhen: /行业准入.*最.*证书|证书门槛/u },
+  { cue: "目标企业最容易错过的岗位释放日", usedWhen: /企业.*最.*岗位释放|岗位释放日/u },
+  { cue: "大公司求职最容易看错的部门职责", usedWhen: /大公司.*最.*部门|部门职责/u },
+  { cue: "签约前最危险的一次试用期误判", usedWhen: /签约.*最危险.*试用期|试用期.*误判/u },
+];
+
+const EXECUTIVE_SUPERLATIVE_ANGLES: ContrarianAngle[] = [
+  { cue: "离职最容易算错的通知期", usedWhen: /离职.*最.*通知期|通知期.*算错/u },
+  { cue: "竞业里最危险的范围误读", usedWhen: /竞业.*最危险.*范围|范围.*误读/u },
+  { cue: "高管离开最容易漏的递延奖金", usedWhen: /最.*递延奖金|递延奖金.*漏/u },
+  { cue: "股权退出最容易忽略的回购条款", usedWhen: /股权.*最.*回购|回购条款/u },
+  { cue: "转型最容易高估的家庭现金跑道", usedWhen: /转型.*最.*现金|现金跑道/u },
+  { cue: "独立咨询最危险的客户集中度", usedWhen: /咨询.*最危险.*客户|客户集中度/u },
+  { cue: "离开平台最容易失去的关键支持", usedWhen: /离开平台.*最.*支持|关键支持/u },
+  { cue: "高管简历最容易说空的经营结果", usedWhen: /简历.*最.*经营结果|经营结果.*说空/u },
+  { cue: "面试最难证明的一次危机判断", usedWhen: /面试.*最难.*危机|危机判断/u },
+  { cue: "组织变革最容易抢错的个人功劳", usedWhen: /组织变革.*最.*功劳|个人功劳/u },
+  { cue: "离岗最容易低估的团队继任风险", usedWhen: /离岗.*最.*继任|团队继任/u },
+  { cue: "头衔里最容易虚高的授权范围", usedWhen: /头衔.*最.*授权|授权范围/u },
+  { cue: "新岗位最危险的一条汇报线", usedWhen: /新岗位.*最危险.*汇报|汇报线/u },
+  { cue: "职位最容易包装的预算权限", usedWhen: /职位.*最.*预算权限|预算权限/u },
+  { cue: "高位工作最容易忽略的身体成本", usedWhen: /高位.*最.*身体|身体成本/u },
+  { cue: "异地任职最容易牺牲的家庭安排", usedWhen: /异地任职.*最.*家庭|家庭安排/u },
+  { cue: "换行业最容易看错的周期位置", usedWhen: /换行业.*最.*周期|周期位置/u },
+  { cue: "新赛道最隐蔽的一项监管风险", usedWhen: /新赛道.*最.*监管|监管风险/u },
+  { cue: "个人品牌最容易误认的可带走资产", usedWhen: /个人品牌.*最.*带走|可带走资产/u },
+  { cue: "高管背调最容易失效的证明人", usedWhen: /背调.*最.*证明人|证明人.*失效/u },
+  { cue: "新公司最容易含糊的首年任务书", usedWhen: /新公司.*最.*任务书|首年任务/u },
+  { cue: "试用期最危险的一项经营指标", usedWhen: /试用期.*最危险.*经营指标/u },
+  { cue: "薪酬包最容易混淆的浮动口径", usedWhen: /薪酬.*最.*浮动|浮动.*口径/u },
+  { cue: "顾问合同最容易失控的责任边界", usedWhen: /顾问合同.*最.*边界|责任边界/u },
+  { cue: "创业最容易高估的首批客户来源", usedWhen: /创业.*最.*客户来源|首批客户/u },
+  { cue: "创业现金最容易漏算的停止条件", usedWhen: /创业.*最.*停止条件|现金.*停止/u },
+  { cue: "合伙最难开口的一项退出机制", usedWhen: /合伙.*最难.*退出|退出机制/u },
+  { cue: "转型学习最容易低估的补课周期", usedWhen: /转型.*最.*补课|学习周期/u },
+  { cue: "方向验证最容易做假的一个信号", usedWhen: /验证.*最.*信号|信号.*做假/u },
+  { cue: "家庭转型最容易忽略的一条底线", usedWhen: /家庭.*转型.*最.*底线|家庭底线/u },
+];
+
 /**
  * 拔河式标题最容易在历史积累后退回“回国/留海外、实习/全职、内推/海投”
  * 三四组熟悉选项。这里不是直接写标题，而是给模型轮换一组尚未使用的真实
@@ -661,6 +859,45 @@ ${selected.map((angle, index) => `${index + 1}. ${angle.cue}`).join("\n")}
 标题仍需符合当前业务和视角；买家写亲历或当事人处境，专家写判断，商家写服务观察，不能照抄说明句。`;
 }
 
+function humanPainAngleDirective(businessLine: string | undefined, historyTitles: string[]) {
+  const pool = isOverseasBusinessLine(businessLine)
+    ? OVERSEAS_HUMAN_PAIN_ANGLES
+    : EXECUTIVE_HUMAN_PAIN_ANGLES;
+  const unused = pool.filter((angle) => !historyTitles.some((title) => angle.usedWhen.test(title)));
+  if (!unused.length) return "";
+  const selected = unused.slice(0, 3);
+  return `【本轮强制使用的未用痛点现场】三个候选分别进入以下三个真实触发现场，不得退回“焦虑、没回音、不敢说”等没有新人物动作和场景的旧表达：
+${selected.map((angle, index) => `${index + 1}. ${angle.cue}`).join("\n")}
+候选1只写第1个现场，候选2只写第2个，候选3只写第3个；标题必须出现本现场可辨认的物件、人物或动作，并呈现当事人的真实顾虑。
+标题仍需符合当前业务和视角；不能跨编号拼接，也不能照抄说明句。`;
+}
+
+function scarceMaterialAngleDirective(businessLine: string | undefined, historyTitles: string[]) {
+  const pool = isOverseasBusinessLine(businessLine)
+    ? OVERSEAS_SCARCE_MATERIAL_ANGLES
+    : EXECUTIVE_SCARCE_MATERIAL_ANGLES;
+  const unused = pool.filter((angle) => !historyTitles.some((title) => angle.usedWhen.test(title)));
+  if (!unused.length) return "";
+  const selected = unused.slice(0, 3);
+  return `【本轮强制使用的未用资料任务】三个候选分别交付以下三种具体资料及其决策用途，不得退回泛“路线图、自查表、清单直接用”：
+${selected.map((angle, index) => `${index + 1}. ${angle.cue}`).join("\n")}
+候选1只交付第1种资料，候选2只交付第2种，候选3只交付第3种；标题必须让人看出资料载体或具体任务，title_promise 必须说明正文会实际交付什么。
+标题仍需符合当前业务和视角；不能只把“表”换成“卡”，也不能照抄说明句。`;
+}
+
+function superlativeAngleDirective(businessLine: string | undefined, historyTitles: string[]) {
+  const pool = isOverseasBusinessLine(businessLine)
+    ? OVERSEAS_SUPERLATIVE_ANGLES
+    : EXECUTIVE_SUPERLATIVE_ANGLES;
+  const unused = pool.filter((angle) => !historyTitles.some((title) => angle.usedWhen.test(title)));
+  if (!unused.length) return "";
+  const selected = unused.slice(0, 3);
+  return `【本轮强制使用的未用高代价风险】三个候选分别聚焦以下三种具体风险，不得退回“最危险的方向误判、最容易漏的一步”等空壳：
+${selected.map((angle, index) => `${index + 1}. ${angle.cue}`).join("\n")}
+候选1只写第1项风险，候选2只写第2项，候选3只写第3项；标题必须说清风险对象，title_promise 必须交代该风险成立的条件和避免方式。
+标题仍需符合当前业务和视角；极限词只能放大有事实逻辑的风险，不能承诺结果。`;
+}
+
 export function buildTopicPoolUserPrompt(input: {
   week: number;
   targetUser: string;
@@ -745,7 +982,13 @@ export function buildTopicPoolUserPrompt(input: {
             ? inventoryAngleDirective(input.context?.businessLine, methodHistoryTitles)
             : method.id === "contrarian"
               ? contrarianAngleDirective(input.context?.businessLine, methodHistoryTitles)
-            : ""
+              : method.id === "human_pain"
+                ? humanPainAngleDirective(input.context?.businessLine, methodHistoryTitles)
+                : method.id === "scarce_material"
+                  ? scarceMaterialAngleDirective(input.context?.businessLine, methodHistoryTitles)
+                  : method.id === "superlative"
+                    ? superlativeAngleDirective(input.context?.businessLine, methodHistoryTitles)
+                    : ""
       : "";
     return [
       `${method.order}. method_id=${method.id}；方法=${method.label}；要求=${method.instruction}`,
