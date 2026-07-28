@@ -2171,9 +2171,14 @@ export async function generateTopicBatch(input: {
           }
           const problems = [
             ...titleQualityProblems(topic, input.account),
+            ...(rejectedTitles.some((rejectedTitle) => (
+              normalizeTitleForComparison(rejectedTitle) === normalizeTitleForComparison(topic.title)
+            )) ? [`${method.id}:定向补题原样重复本轮失败候选`] : []),
             ...topicCandidateDuplicateProblems(
               topic,
-              [...historyTitles, ...rejectedTitles],
+              // 本轮失败候选用于提示模型换表达，但不等同于正式历史。否则
+              // “缺家长身份的初稿”会把随后补齐身份的正确版本也按同题挡掉。
+              historyTitles,
               historyTopics,
               [...accepted.values(), ...options.map((option) => option.topic)],
               {
@@ -2221,7 +2226,6 @@ export async function generateTopicBatch(input: {
           historyTopics,
           historyTitles,
           accepted: [...accepted.values()],
-          priorityTitles: rejectedTitles,
         });
         let recoveryAudit: Awaited<ReturnType<typeof auditNativeTitleBatchNovelty>>;
         try {
@@ -2268,7 +2272,7 @@ export async function generateTopicBatch(input: {
           optionsByMethod: recoveryOptionsByMethod,
           decisions: recoveryAudit.decisions,
           alreadyAccepted: [...accepted.values()],
-          historyTitles: [...historyTitles, ...rejectedTitles],
+          historyTitles,
           historyTopics,
           businessLine: input.account.business_line ?? "executive",
           directionLocks: input.directionLocks,
@@ -2668,9 +2672,12 @@ export async function generateTopicBatch(input: {
               topic.validation_checks = validateTopicCandidate(topic, input.account.persona);
               const problems = [
                 ...titleQualityProblems(topic, input.account),
+                ...(rejectedTitles.some((rejectedTitle) => (
+                  normalizeTitleForComparison(rejectedTitle) === normalizeTitleForComparison(topic.title)
+                )) ? [`${method.id}:定向补题原样重复本轮失败候选`] : []),
                 ...topicCandidateDuplicateProblems(
                   topic,
-                  [...historyTitles, ...rejectedTitles],
+                  historyTitles,
                   historyTopics,
                   [...accepted.values(), ...options.map((option) => option.topic)],
                   {
@@ -2709,7 +2716,7 @@ export async function generateTopicBatch(input: {
             const recoveryReferences = compactNativeAuditReferences({
               methods: recoveryMethods,
               historyTopics,
-              historyTitles: [...historyTitles, ...rejectedTitles],
+              historyTitles,
               accepted: [...accepted.values()],
             });
             const recoveryAudit = await auditNativeTitleBatchNovelty({
@@ -2726,7 +2733,7 @@ export async function generateTopicBatch(input: {
               optionsByMethod: recoveryOptionsByMethod,
               decisions: recoveryAudit.decisions,
               alreadyAccepted: [...accepted.values()],
-              historyTitles: [...historyTitles, ...rejectedTitles],
+              historyTitles,
               historyTopics,
               businessLine: input.account.business_line ?? "executive",
               directionLocks: input.directionLocks,
