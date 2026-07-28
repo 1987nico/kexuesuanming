@@ -410,6 +410,7 @@ function tugOfWarAngleDirective(businessLine: string | undefined, historyTitles:
   const selected = unused.slice(0, 3);
   return `【本轮强制使用的未用取舍轴】三个候选分别使用以下三个取舍轴，不得再回到历史里已经出现的地区去留、实习/全职、内推/海投等旧轴：
 ${selected.map((angle, index) => `${index + 1}. ${angle.cue}`).join("\n")}
+候选1只使用第1组的两端，候选2只使用第2组的两端，候选3只使用第3组的两端；必须保留各自两端的真实含义，严禁跨编号拆词拼接或退回旧轴。
 标题仍需符合当前业务和视角；取舍轴只是决策关系，不能照抄说明句。`;
 }
 
@@ -432,6 +433,7 @@ function nostalgiaAngleDirective(
     : selected.map((angle) => angle.cue);
   return `【本轮强制使用的未用今昔坐标】三个候选分别使用以下三组过去物件/场景与当下任务，不得退回录取信、学校排名、工牌等已经反复出现的旧坐标：
 ${cues.map((cue, index) => `${index + 1}. ${cue}`).join("\n")}
+候选1只使用第1组今昔关系，候选2只使用第2组，候选3只使用第3组；每条必须同时保留本组“过去物件/场景”和“当下任务”，严禁把不同编号的前后半句重新拼接。
 标题必须保持当前业务和视角，买家写亲历、专家写判断、商家写服务观察；不能照抄说明句。`;
 }
 
