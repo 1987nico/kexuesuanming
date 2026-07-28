@@ -126,6 +126,12 @@ describe("标题完整历史语义去重", () => {
     expect(titlesAreNearDuplicate(candidate, history)).toBe(true);
   });
 
+  it("目标岗和保底 offer 的二选一换词后仍必须拦截", () => {
+    const history = "死磕目标岗，还是先拿个offer保底？";
+    const candidate = "死磕对口岗，还是先接个offer？";
+    expect(titlesAreNearDuplicate(candidate, history)).toBe(true);
+  });
+
   it("父母压力母题换成另一种坏消息后仍必须拦截", () => {
     const history = "花爸妈钱留学，不敢说面试全挂";
     const candidate = {

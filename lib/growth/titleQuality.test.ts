@@ -135,6 +135,24 @@ describe("标题语义去重", () => {
     expect(result.right.conflict).toBe("role_mismatch");
   });
 
+  it("把目标岗与保底 offer 的二选一换词判为重复", () => {
+    const result = evaluateTitleSemanticDuplicate(
+      "死磕目标岗，还是先拿个offer保底？",
+      "死磕对口岗，还是先接个offer？",
+    );
+    expect(result.duplicate).toBe(true);
+    expect(result.reasons).toContain("目标岗位与保底 offer 的二选一母题相同");
+  });
+
+  it("把背景好却方向错的反认知判为同一母题", () => {
+    const result = evaluateTitleSemanticDuplicate(
+      "以为海归吃香，投了才知道岗没选对",
+      "背景好不顶用，方向错了白搭",
+    );
+    expect(result.duplicate).toBe(true);
+    expect(result.reasons).toContain("岗位方向错位的反认知母题相同");
+  });
+
   it("允许同一业务下材料和冲突都不同的标题", () => {
     const first = "留学生秋招前先查时间线";
     const second = "回国求职前，先做岗位筛选";
