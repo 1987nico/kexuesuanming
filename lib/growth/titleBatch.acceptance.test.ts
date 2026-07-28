@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { methodsForPersona } from "./methods";
 import {
   fallbackTitleCandidates,
-  fallbackTitleOptions,
+  titlePersonaProblems,
   topicBatchDuplicateProblems,
 } from "./runner";
 import { evaluateGrowthTitleQuality } from "./titleQuality";
@@ -29,6 +29,7 @@ function topic(
   persona: GrowthPersona,
   methodId: TitleMethodId,
   title: string,
+  options: { titlePromise?: string; premiseKey?: string } = {},
 ): TopicCandidate {
   return {
     id: `${businessLine}-${persona}-${methodId}-${title}`,
@@ -37,7 +38,8 @@ function topic(
     method_label: methodId,
     generation_mode: "default",
     title,
-    title_promise: "正文用具体场景和可执行判断兑现标题承诺。",
+    title_promise: options.titlePromise || "正文用具体场景和可执行判断兑现标题承诺。",
+    fallback_premise_key: options.premiseKey,
     target_user: businessLine === "executive" ? "转型中的中高管" : "准备秋招的留学生与家长",
     pain: businessLine === "executive" ? "职业方向与风险判断" : "求职方向与招聘节奏判断",
     hook: title,
@@ -50,17 +52,29 @@ function topic(
   };
 }
 
+function candidateTopic(
+  businessLine: GrowthBusinessLine,
+  persona: GrowthPersona,
+  methodId: TitleMethodId,
+  candidate: ReturnType<typeof fallbackTitleCandidates>[number],
+) {
+  return topic(businessLine, persona, methodId, candidate.title, {
+    titlePromise: candidate.title_promise,
+    premiseKey: candidate.premise_key,
+  });
+}
+
 describe("标题生成30批用户验收标准（确定性兜底回归）", () => {
   it("兜底候选保留自己的正文承诺和母题键", () => {
     const candidates = fallbackTitleCandidates(account("overseas_student", "buyer"), "tug_of_war");
-    const internship = candidates.find((item) => item.title === "先补实习，还是直接投递？");
-    const localOrReturn = candidates.find((item) => item.title === "留当地，还是回国求职？");
-    const returnOrLocal = candidates.find((item) => item.title === "回国求职，还是留在当地？");
+    const internship = candidates.find((item) => item.title === "我家孩子，先补实习还是直接投递？");
+    const localOrReturn = candidates.find((item) => item.title === "孩子留当地，还是回国找工作？");
+    const returnOrLocal = candidates.find((item) => item.title === "陪孩子留英，还是赶回国秋招？");
 
     expect(internship?.title_promise).toContain("先补实习");
     expect(internship?.title_promise).toContain("直接投递");
     expect(internship?.title_promise).not.toContain("留当地与回国求职");
-    expect(localOrReturn?.premise_key).toBe(returnOrLocal?.premise_key);
+    expect(localOrReturn?.premise_key).not.toBe(returnOrLocal?.premise_key);
   });
 
   it("所有内置原生兜底标题本身都能通过发布质量门禁", () => {
@@ -69,11 +83,15 @@ describe("标题生成30批用户验收标准（确定性兜底回归）", () =>
     for (const businessLine of businessLines) {
       for (const persona of personas) {
         for (const method of methodsForPersona(persona, "default").filter((item) => !item.sourceRequired)) {
-          for (const candidate of fallbackTitleOptions(account(businessLine, persona), method.id)) {
+          for (const candidate of fallbackTitleCandidates(account(businessLine, persona), method.id)) {
             expect(
-              evaluateGrowthTitleQuality(candidate).acceptable,
-              `${businessLine}/${method.id} 的兜底标题“${candidate}”不应依赖未经验证的个人事实或抽象空话`,
+              evaluateGrowthTitleQuality(candidate.title).acceptable,
+              `${businessLine}/${method.id} 的兜底标题“${candidate.title}”不应依赖未经验证的个人事实或抽象空话`,
             ).toBe(true);
+            expect(
+              titlePersonaProblems(candidateTopic(businessLine, persona, method.id, candidate), account(businessLine, persona)),
+              `${businessLine}/${persona}/${method.id} 的兜底标题“${candidate.title}”必须适配当前视角`,
+            ).toHaveLength(0);
           }
         }
       }
@@ -100,17 +118,19 @@ describe("标题生成30批用户验收标准（确定性兜底回归）", () =>
       for (let round = 0; round < 5; round += 1) {
         const batch: TopicCandidate[] = [];
         for (const method of methods) {
-          const title = fallbackTitleOptions(account(businessLine, persona), method.id).find((candidate) => {
-            if (!evaluateGrowthTitleQuality(candidate).acceptable) return false;
+          const candidate = fallbackTitleCandidates(account(businessLine, persona), method.id).find((item) => {
+            const current = candidateTopic(businessLine, persona, method.id, item);
+            if (!evaluateGrowthTitleQuality(item.title).acceptable) return false;
+            if (titlePersonaProblems(current, account(businessLine, persona)).length) return false;
             return topicBatchDuplicateProblems(
-              [...batch, topic(businessLine, persona, method.id, candidate)],
+              [...batch, current],
               historyTitles,
               historyTopics,
               businessLine,
             ).length === 0;
           });
-          expect(title, `${businessLine}/${persona}/第${round + 1}批/${method.id}缺少全新兜底标题`).toBeTruthy();
-          batch.push(topic(businessLine, persona, method.id, title!));
+          expect(candidate, `${businessLine}/${persona}/第${round + 1}批/${method.id}缺少全新兜底标题`).toBeTruthy();
+          batch.push(candidateTopic(businessLine, persona, method.id, candidate!));
         }
 
         expect(batch).toHaveLength(minimumNewTitles);
@@ -146,8 +166,12 @@ describe("标题生成30批用户验收标准（确定性兜底回归）", () =>
         for (const method of methods) {
           const eligible = fallbackTitleCandidates(account(businessLine, persona), method.id)
             .filter((candidate) => evaluateGrowthTitleQuality(candidate.title).acceptable)
+            .filter((candidate) => titlePersonaProblems(
+              candidateTopic(businessLine, persona, method.id, candidate),
+              account(businessLine, persona),
+            ).length === 0)
             .filter((candidate) => topicBatchDuplicateProblems(
-              [...batch, topic(businessLine, persona, method.id, candidate.title)],
+              [...batch, candidateTopic(businessLine, persona, method.id, candidate)],
               historyTitles,
               historyTopics,
               businessLine,
@@ -157,7 +181,7 @@ describe("标题生成30批用户验收标准（确定性兜底回归）", () =>
             eligible.length,
             `${businessLine}/${persona}/第${round + 1}批/${method.id}没有给语义审核留下两个安全兜底候选`,
           ).toBe(2);
-          batch.push(topic(businessLine, persona, method.id, eligible[0].title));
+          batch.push(candidateTopic(businessLine, persona, method.id, eligible[0]));
         }
         historyTitles.push(...batch.map((item) => item.title));
         historyTopics.push(...batch.map((item) => ({ method_id: item.method_id, title: item.title })));

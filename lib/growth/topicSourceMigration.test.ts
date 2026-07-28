@@ -55,6 +55,24 @@ const structureCard: BenchmarkStructureCard = {
 };
 
 describe("来源型标题生成合同", () => {
+  it("留学生家长标题规则要求在标题本身写出亲子关系", () => {
+    const prompt = buildTopicPoolUserPrompt({
+      week: 1,
+      targetUser: "准备秋招的留学生与家长",
+      coreProblem: "求职方向与招聘节奏不清晰",
+      persona: "buyer",
+      methods: [TITLE_METHOD_BY_ID.human_pain],
+      generationMode: "default",
+      context: {
+        businessLine: "留学生求职辅导",
+        oneLiner: "陪娃闯秋招的留学生家长真实记录",
+      },
+    });
+
+    expect(prompt).toContain("每一个标题本身都必须包含孩子/娃/家长/我家/陪孩子/陪娃/儿女");
+    expect(prompt).toContain("不能把家长身份只留给正文承诺");
+  });
+
   it("标题提示词只带最新160条历史，不会误把最旧标题当作近期禁区", () => {
     const newestFirstHistory = Array.from({ length: 161 }, (_, index) => (
       `最新历史标题${String(index + 1).padStart(3, "0")}`

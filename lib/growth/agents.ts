@@ -315,10 +315,14 @@ title_promise 必须原样返回。title 与 alternative_titles 必须属于同�
     ].join("\n");
   });
   const singleTitleRewrite = (input.directionLocks ?? []).length > 0;
+  // 留学生业务的买家账号在产品定义上就是「留学生家长」，不是留学生本人。
+  // 不能只依赖正文承诺补足这一点：运营在选题页先看见的是标题，因此标题本身
+  // 必须给出可辨认的亲子关系线索。
   const parentNarrative = input.persona === "buyer"
-    && /家长|妈妈|爸爸|父母|陪娃|陪孩子/u.test(`${input.context?.oneLiner || ""} ${input.targetUser}`);
+    && (/留学生|海外秋招|回国求职/u.test(`${input.context?.businessLine || ""} ${input.targetUser}`)
+      || /家长|妈妈|爸爸|父母|陪娃|陪孩子/u.test(`${input.context?.oneLiner || ""} ${input.targetUser}`));
   const personaContinuityRule = parentNarrative
-    ? "- 【人设连续性硬性规则】当前账号是留学生家长。标题里的“我/我们”只能是家长，涉及留学生时要明确写孩子/娃/儿女；不得把账号写成留学生本人（例如“室友都拿到面试，我还在投递”）。"
+    ? "- 【人设连续性硬性规则】当前账号是留学生家长。每一个标题本身都必须包含孩子/娃/家长/我家/陪孩子/陪娃/儿女中的至少一个亲子关系线索；标题里的“我/我们”只能是家长。不得把账号写成留学生本人，也不能把家长身份只留给正文承诺（例如“室友都拿到面试，我还在投递”“先补实习，还是直接投递？”都不合格）。"
     : "";
   return `
 请以选题官 V3.1 身份，严格按给定方法列表生成标题。

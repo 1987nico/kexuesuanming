@@ -304,6 +304,85 @@ const OVERSEAS_STUDENT_FALLBACK_TITLE_VARIANTS: Record<TitleMethodId, string[]> 
 };
 
 /**
+ * 留学生买家 = 留学生家长。该空间的标题不能借由正文承诺再补身份；
+ * 操作者在选题页首先看到标题，因此每个兜底候选都要在标题里写出亲子关系。
+ * 这套池与普通“留学生本人”表达隔离，避免跨视角复用造成看似自然、实则错位。
+ */
+const OVERSEAS_STUDENT_PARENT_BUYER_TITLE_VARIANTS: Record<TitleMethodId, string[]> = {
+  traffic: ["秋招提前，家长先陪孩子查时间", "AI筛简历，家长陪孩子先改哪处"],
+  human_pain: [
+    "孩子秋招没回音，我反而不敢问",
+    "帮孩子盯秋招，最怕他突然沉默",
+    "留学花了不少，孩子却不敢回国",
+    "孩子投得越多，我越不敢催",
+    "孩子简历改几版，家里更焦虑",
+    "孩子说不急，我却盯着面试通知",
+    "孩子想回国，我怕他走错第一步",
+    "网申没回音，孩子开始怀疑自己",
+  ],
+  tug_of_war: [
+    "我家孩子，先补实习还是直接投递？",
+    "陪孩子留英，还是赶回国秋招？",
+    "孩子先冲提前批，还是再等实习？",
+    "我该催孩子海投，还是先收窄岗位？",
+    "孩子留当地，还是回国找工作？",
+    "孩子拿保底Offer，还是等对口岗？",
+    "孩子先做项目，还是继续找实习？",
+    "陪孩子等笔试，还是先投下一家？",
+    "孩子该回国秋招，还是先留在英国？",
+  ],
+  scarce_material: [
+    "给孩子备秋招，先看这张时间表",
+    "孩子回国求职，先补这份地图",
+    "孩子网申卡住，先用这张清单",
+    "陪孩子求职，先写一页盘点",
+    "孩子毕业前，先整理这份路径表",
+  ],
+  superlative: [
+    "孩子秋招最容易错过的窗口",
+    "陪孩子海投，最浪费的一次努力",
+    "孩子求职最怕的一次误判",
+    "孩子改简历最容易漏的一步",
+    "孩子回国投递最危险的节奏错位",
+  ],
+  contrarian: [
+    "孩子简历改得越多，未必越有回音",
+    "我越催孩子投递，他越不敢点提交",
+    "孩子学校越好，越要先看岗位",
+    "陪孩子海投，不如先收窄方向",
+    "孩子实习越多，岗位未必越好选",
+    "孩子投得越勤，越要先收窄方向",
+    "孩子消息越多，越不能乱投简历",
+    "我替孩子找内推，不如先对岗位",
+    "孩子拿到面试，未必是方向对了",
+    "孩子项目越亮，越要说清岗位",
+  ],
+  nostalgia: [
+    "以前我看学校，现在陪孩子练面试",
+    "当年海归吃香，现在孩子先抢秋招",
+    "我翻旧简历，才懂孩子今天缺什么",
+    "孩子毕业照拍完，我不再只看排名",
+    "我当年只比学历，轮到孩子先看实习",
+    "翻出录取信后，我陪孩子重做求职表",
+    "以前替孩子比排名，现在先陪他改简历",
+    "孩子收行李那天，我才不盯学校名气",
+    "以前问学校，现在问孩子想做什么",
+  ],
+  inventory: [
+    "孩子秋招前，先查这5个日期",
+    "孩子投简历前，盘点这5件事",
+    "孩子回国求职前，先看这5项",
+    "孩子网申前，先补这5个信息",
+    "孩子毕业季，先排这5个优先级",
+  ],
+  same_product: ["给孩子找求职陪跑，先看适配", "孩子求职军师，先帮他排除什么"],
+  same_effect: ["孩子回国和留英，先算哪笔账？", "孩子两条秋招路线，哪条回音快？"],
+  similar_audience: ["拿面试的孩子，都先收窄岗位", "秋招有回音的孩子，都先改定位"],
+  same_outcome: ["给孩子抢大厂，不如抢成长快岗位", "孩子第一份Offer，先看什么"],
+  viral_framework: ["孩子缺的不是简历，是方向", "陪孩子秋招，缺的不是海投是反馈"],
+};
+
+/**
  * 模型偶发超时或只返回了不合格候选时的安全兜底池。
  *
  * 它只服务于无外部来源依赖的原生法：来源型方法宁可透明暂停，也不能伪造
@@ -782,11 +861,17 @@ function fallbackCandidatePremiseKey(account: GrowthAccount, methodId: TitleMeth
  */
 export function fallbackTitleCandidates(account: GrowthAccount, methodId: TitleMethodId): FallbackTitleCandidate[] {
   const [primary, primaryPromise] = fallbackTitles(account)[methodId];
-  const variants = account.business_line === "overseas_student"
-    ? OVERSEAS_STUDENT_FALLBACK_TITLE_VARIANTS[methodId]
-    : EXECUTIVE_FALLBACK_TITLE_VARIANTS[methodId];
+  const isOverseasParentBuyer = account.business_line === "overseas_student" && account.persona === "buyer";
+  const variants = isOverseasParentBuyer
+    ? OVERSEAS_STUDENT_PARENT_BUYER_TITLE_VARIANTS[methodId]
+    : account.business_line === "overseas_student"
+      ? OVERSEAS_STUDENT_FALLBACK_TITLE_VARIANTS[methodId]
+      : EXECUTIVE_FALLBACK_TITLE_VARIANTS[methodId];
   const emergency = NATIVE_EMERGENCY_TITLE_VARIANTS[account.business_line ?? "executive"][methodId] ?? [];
-  return Array.from(new Set([primary, ...variants, ...emergency])).map((title) => ({
+  // 亲子账号绝不能在兜底时退回泛“留学生本人”标题；否则模型波动会让
+  // 选题页重新出现正确正文、错误标题的视角串线。
+  const candidates = isOverseasParentBuyer ? variants : [primary, ...variants, ...emergency];
+  return Array.from(new Set(candidates)).map((title) => ({
     title,
     title_promise: fallbackCandidatePromise(methodId, title, primary, primaryPromise),
     premise_key: fallbackCandidatePremiseKey(account, methodId, title),
@@ -889,13 +974,13 @@ export function titlePersonaProblems(topic: TopicCandidate, account: GrowthAccou
   if (account.persona === "merchant" && /(?:我家孩子|陪娃秋招|作为老师)/u.test(title)) {
     problems.push(`${topic.method_id}:商家视角不能写成买家或专家第一人称口吻`);
   }
+  // 产品定义已经固定：留学生业务的买家视角就是“留学生家长”。标题本身
+  // 必须承担这个身份信息，不能留给正文承诺或后续正文去补。
   const parentNarrative = account.business_line === "overseas_student"
-    && account.persona === "buyer"
-    && /家长|妈妈|爸爸|父母|陪娃|陪孩子/u.test([
-      account.one_liner,
-      account.target_user,
-      ...Object.values(account.persona_specific ?? {}),
-    ].filter(Boolean).join(" "));
+    && account.persona === "buyer";
+  if (parentNarrative && !/(?:我家|孩子|娃|儿子|女儿|家长|爸妈|父母|陪孩子|陪娃)/u.test(title)) {
+    problems.push(`${topic.method_id}:留学生家长标题必须显式体现亲子关系，不能只在正文承诺里补身份`);
+  }
   if (parentNarrative && /室友|同学/u.test(title) && !/孩子|娃|儿子|女儿/u.test(title)) {
     problems.push(`${topic.method_id}:留学生家长人设不能写成留学生本人的同学/室友口吻`);
   }

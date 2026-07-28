@@ -169,7 +169,7 @@ describe("标题四层多样性签名", () => {
     expect(problems.some((item) => item.includes("岗位方向错位冲突"))).toBe(true);
   });
 
-  it("留学生家长账号不会把标题写成学生本人室友口吻", () => {
+  it("留学生家长账号的标题必须在标题本身写出亲子关系", () => {
     const parentAccount = {
       business_line: "overseas_student",
       persona: "buyer",
@@ -179,10 +179,17 @@ describe("标题四层多样性签名", () => {
     } as unknown as GrowthAccount;
     const candidate = topic(
       "human_pain",
-      "室友都在拿面试，我还在瞎投",
+      "先补实习，还是直接投递？",
       "讲清留学生秋招焦虑",
     );
     const problems = titlePersonaProblems(candidate, parentAccount);
-    expect(problems.some((item) => item.includes("室友口吻"))).toBe(true);
+    expect(problems.some((item) => item.includes("显式体现亲子关系"))).toBe(true);
+
+    const parentCandidate = topic(
+      "human_pain",
+      "孩子秋招没回音，我反而不敢问",
+      "讲清留学生秋招焦虑",
+    );
+    expect(titlePersonaProblems(parentCandidate, parentAccount)).toHaveLength(0);
   });
 });
