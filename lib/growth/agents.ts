@@ -408,15 +408,25 @@ ${selected.map((angle, index) => `${index + 1}. ${angle.cue}`).join("\n")}
 标题仍需符合当前业务和视角；取舍轴只是决策关系，不能照抄说明句。`;
 }
 
-function nostalgiaAngleDirective(businessLine: string | undefined, historyTitles: string[]) {
-  const pool = /留学生|海外秋招|回国求职/u.test(businessLine ?? "")
+function nostalgiaAngleDirective(
+  businessLine: string | undefined,
+  historyTitles: string[],
+  persona?: GrowthPersona,
+) {
+  const overseas = /留学生|海外秋招|回国求职/u.test(businessLine ?? "");
+  const pool = overseas
     ? OVERSEAS_NOSTALGIA_ANGLES
     : EXECUTIVE_NOSTALGIA_ANGLES;
   const unused = pool.filter((angle) => !historyTitles.some((title) => angle.usedWhen.test(title)));
   if (!unused.length) return "";
   const selected = unused.slice(0, 3);
+  const cues = overseas && persona === "buyer"
+    ? selected.map((angle) => angle.cue
+      .replace(/^过去/u, "以前陪孩子")
+      .replace(/如今/u, "现在陪他"))
+    : selected.map((angle) => angle.cue);
   return `【本轮强制使用的未用今昔坐标】三个候选分别使用以下三组过去物件/场景与当下任务，不得退回录取信、学校排名、工牌等已经反复出现的旧坐标：
-${selected.map((angle, index) => `${index + 1}. ${angle.cue}`).join("\n")}
+${cues.map((cue, index) => `${index + 1}. ${cue}`).join("\n")}
 标题必须保持当前业务和视角，买家写亲历、专家写判断、商家写服务观察；不能照抄说明句。`;
 }
 
@@ -492,7 +502,7 @@ export function buildTopicPoolUserPrompt(input: {
       ? method.id === "tug_of_war"
         ? tugOfWarAngleDirective(input.context?.businessLine, methodHistoryTitles)
         : method.id === "nostalgia"
-          ? nostalgiaAngleDirective(input.context?.businessLine, methodHistoryTitles)
+          ? nostalgiaAngleDirective(input.context?.businessLine, methodHistoryTitles, input.persona)
           : ""
       : "";
     return [
