@@ -377,7 +377,7 @@ function validateNewBatch(state, response, round) {
 
 const ledger = {
   objective: `正式部署上的6空间×${ROUNDS}批真实用户标题验收`,
-  deployment: "dpl_DiNxuRUs4tmeREECAwDhYENv6q16",
+  deployment: "dpl_7Nehd1S85mtoVDHSiAxkC34zgf55",
   started_at: new Date().toISOString(),
   status: "running",
   batches_passed: 0,
