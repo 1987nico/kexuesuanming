@@ -113,6 +113,13 @@ describe("标题完整历史语义去重", () => {
     expect(findDuplicateTitle(candidate, [history])).toBe(history);
   });
 
+  it("实习和全职的两难换词后仍必须拦截", () => {
+    const history = "先找个实习过渡，还是死磕全职？";
+    const candidate = "先做远程实习，还是冲全职岗";
+    expect(titlesAreNearDuplicate(candidate, history)).toBe(true);
+    expect(findDuplicateTitle(candidate, [history])).toBe(history);
+  });
+
   it("父母压力母题换成另一种坏消息后仍必须拦截", () => {
     const history = "花爸妈钱留学，不敢说面试全挂";
     const candidate = {

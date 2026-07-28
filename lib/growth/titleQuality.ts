@@ -112,6 +112,7 @@ const AUDIENCE_PATTERNS: Array<[string, RegExp]> = [
 
 const SCENARIO_PATTERNS: Array<[string, RegExp]> = [
   ["internship_vs_autumn_recruitment", /(?:实习|补实习).*(?:秋招|校招)|(?:秋招|校招).*(?:实习|补实习)/gu],
+  ["internship_vs_full_time", /(?:实习|补实习|项目).*(?:全职|正职|转正)|(?:全职|正职|转正).*(?:实习|补实习|项目)/gu],
   ["return_job_search", /(?:回国|回来|回沪).*(?:投简历|投递|海投)|(?:投简历|投递|海投).*(?:回国|回来|回沪)/gu],
   ["stay_or_return", /(?:留英|留海外|海外|工签).*(?:回国|回沪)|(?:回国|回沪).*(?:留英|留海外|海外|工签)/gu],
   ["career_switch_on_platform", /(?:期权|工牌|平台|总监|头衔).*(?:转行|转型|换赛道|转方向)|(?:转行|转型|换赛道|转方向).*(?:期权|工牌|平台|总监|头衔)/gu],
@@ -130,6 +131,7 @@ const CONFLICT_PATTERNS: Array<[string, RegExp]> = [
   // 无论语序是“先说爸妈”还是“先说不敢”，换词后都不能伪装成新标题。
   ["parent_job_search_pressure", /(?=[\s\S]*(?:爸妈|父母|家里|家长))(?=[\s\S]*(?:秋招|求职|投简历|面试|笔试))(?=[\s\S]*(?:不敢|没方向|方向模糊|全挂|没回音|没信|其实|以为|乱投))[\s\S]+/gu],
   ["internship_or_autumn_recruitment", /(?:实习|补实习).*(?:还是|or|vs|VS).*(?:秋招|校招)|(?:秋招|校招).*(?:还是|or|vs|VS).*(?:实习|补实习)/giu],
+  ["internship_or_full_time", /(?:实习|补实习|项目).*(?:还是|or|vs|VS).*(?:全职|正职|转正)|(?:全职|正职|转正).*(?:还是|or|vs|VS).*(?:实习|补实习|项目)/giu],
   ["misdirected_application", /瞎撞|乱投|海投|没回音|没人理|零回应/gu],
   ["stay_or_return_choice", /(?:留英|海外|工签).*(?:还是|or|vs|VS).*(?:回国|回沪)|(?:回国|回沪).*(?:还是|or|vs|VS).*(?:留英|海外|工签)/giu],
   ["career_switch_fear", /不敢.{0,6}(?:转行|转型|换赛道|离职)|怕.{0,6}(?:转行|转型|换赛道|离职)/gu],

@@ -54,6 +54,16 @@ describe("标题语义去重", () => {
     expect(result.left.scenario).toBe("internship_vs_autumn_recruitment");
   });
 
+  it("把实习还是全职的素材换词判为重复", () => {
+    const result = evaluateTitleSemanticDuplicate(
+      "先找个实习过渡，还是死磕全职？",
+      "先做远程实习，还是冲全职岗",
+    );
+    expect(result.duplicate).toBe(true);
+    expect(result.left.scenario).toBe("internship_vs_full_time");
+    expect(result.right.conflict).toBe("internship_or_full_time");
+  });
+
   it("把留洋回国后瞎撞简历的改词判为重复", () => {
     expect(titlesAreSemanticDuplicates(
       "留洋镀金回来，投简历还瞎撞",
