@@ -92,6 +92,57 @@ describe("原生标题批次语义新颖度审核", () => {
     expect(decisions[0]?.reason).toContain("缺少可复核");
   });
 
+  it("痛点、拔河和反认知等方法没有可复核同题证据时也不能被泛化误拒", () => {
+    const nativeCandidates: NativeTitleNoveltyCandidate[] = [
+      { id: "P1", methodId: "human_pain", kind: "model", title: "老板问续约，我却先看回国窗口" },
+      { id: "T1", methodId: "tug_of_war", kind: "model", title: "先守毕业论文，还是提前进岗？" },
+      { id: "C1", methodId: "contrarian", kind: "model", title: "面试越多，越要停下查方向" },
+    ];
+    const nativeReferences: NativeTitleNoveltyReference[] = [
+      { id: "H1", kind: "history", title: "秋招没回音，我开始怀疑方向" },
+    ];
+    const decisions = normalizeNativeTitleNoveltyDecisions({
+      decisions: nativeCandidates.map((candidate) => ({
+        candidate_id: candidate.id,
+        novel: false,
+        natural: true,
+        duplicate_reference_ids: [],
+        conflicting_candidate_ids: [],
+        reason: "都属于留学生求职",
+      })),
+    }, nativeCandidates, nativeReferences);
+
+    expect(decisions).toHaveLength(3);
+    expect(decisions.every((decision) => decision.eligible)).toBe(true);
+    expect(decisions.every((decision) => decision.reason.includes("缺少可复核"))).toBe(true);
+  });
+
+  it("非资料类方法指出且本地复核确认的同题仍然必须拒绝", () => {
+    const nativeCandidates: NativeTitleNoveltyCandidate[] = [
+      { id: "P1", methodId: "human_pain", kind: "model", title: "绩效越好，辞职信越难写" },
+    ];
+    const nativeReferences: NativeTitleNoveltyReference[] = [
+      { id: "H1", kind: "history", title: "绩效越高，辞职信越难写" },
+    ];
+    const decisions = normalizeNativeTitleNoveltyDecisions({
+      decisions: [{
+        candidate_id: "P1",
+        novel: false,
+        natural: true,
+        duplicate_reference_ids: ["H1"],
+        conflicting_candidate_ids: [],
+        reason: "同一绩效辞职困境",
+      }],
+    }, nativeCandidates, nativeReferences);
+
+    expect(decisions[0]).toMatchObject({
+      novel: false,
+      natural: true,
+      eligible: false,
+      duplicateReferenceIds: ["H1"],
+    });
+  });
+
   it("模型引用了并不同题的历史标题时，不把无效引用当成硬拒绝", () => {
     const inventoryCandidates: NativeTitleNoveltyCandidate[] = [
       { id: "I1", methodId: "inventory", kind: "model", title: "秋招陪跑，盘点4个投递盲区" },

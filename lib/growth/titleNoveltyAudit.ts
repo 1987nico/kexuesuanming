@@ -150,17 +150,18 @@ export function normalizeNativeTitleNoveltyDecisions(
     // natural 缺失、格式错误或明确为 false 都不能放行。否则模型漏掉字段时，
     // “半句话/病句”会被误当成可交付标题，破坏生成即交付的保证。
     const natural = row.natural === true;
-    // 资料法与盘点法的固有形式最容易触发“都是清单/都是数字”的泛化误拒。
-    // 这两种方法必须有可复核的具体同题证据才拒绝；其余方法仍保留模型的
-    // 语义否决能力，避免放过本地规则尚未覆盖的同义改写。
+    // 审核协议已经明确要求 novel=false 必须指出真正同题的对象，因此所有
+    // 方法都使用同一条证据规则。旧实现只给资料法和盘点法做证据复核，
+    // 导致痛点、拔河、极限词、反认知等方法即使没有任何可靠重复对象，也会
+    // 被模型一句“方向相似”整槽挡回。候选在进入这里前已经通过全历史精确/
+    // 近似、业务视角、批内冲突等确定性门禁；模型指出的对象还会由本地语义
+    // 比较器复核。没有可复核对象的 novel=false 只能作为软提示，不能阻断交付。
     const hasSupportedDuplicateEvidence = duplicateReferenceIds.length > 0
       || conflictingCandidateIds.length > 0;
-    const requiresConcreteDuplicateEvidence = candidate.methodId === "scarce_material"
-      || candidate.methodId === "inventory";
     const modelRejectedWithoutEvidence = row.novel === false && !hasSupportedDuplicateEvidence;
     const novel = !hasSupportedDuplicateEvidence && (
       row.novel === true
-      || (requiresConcreteDuplicateEvidence && modelRejectedWithoutEvidence)
+      || modelRejectedWithoutEvidence
     );
     const eligible = novel && natural;
     return {
@@ -170,7 +171,7 @@ export function normalizeNativeTitleNoveltyDecisions(
       eligible,
       duplicateReferenceIds,
       conflictingCandidateIds,
-      reason: requiresConcreteDuplicateEvidence && modelRejectedWithoutEvidence
+      reason: modelRejectedWithoutEvidence
         ? "模型拒绝缺少可复核的重复对象，已按本地严格门禁放行。"
         : compact(row.reason, 80)
           || (natural

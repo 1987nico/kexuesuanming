@@ -81,11 +81,11 @@ describe("原生标题语义审核二次恢复", () => {
       return modelResponse({
         decisions: candidates.map((candidate) => ({
           candidate_id: candidate.candidate_id,
-          novel: !isFirstAudit,
-          natural: true,
+          novel: true,
+          natural: !isFirstAudit,
           duplicate_reference_ids: [],
           conflicting_candidate_ids: [],
-          reason: isFirstAudit ? "模拟历史重复" : "模拟二审通过",
+          reason: isFirstAudit ? "模拟表达不自然" : "模拟二审通过",
         })),
       });
     });
@@ -145,11 +145,11 @@ describe("原生标题语义审核二次恢复", () => {
         return modelResponse({
           decisions: candidates.map((candidate) => ({
             candidate_id: candidate.candidate_id,
-            novel: false,
-            natural: true,
+            novel: true,
+            natural: false,
             duplicate_reference_ids: [],
             conflicting_candidate_ids: [],
-            reason: "模拟历史重复",
+            reason: "模拟表达不自然",
           })),
         });
       }
@@ -188,11 +188,11 @@ describe("原生标题语义审核二次恢复", () => {
         return modelResponse({
           decisions: candidates.map((candidate) => ({
             candidate_id: candidate.candidate_id,
-            novel: false,
-            natural: true,
+            novel: true,
+            natural: false,
             duplicate_reference_ids: [],
             conflicting_candidate_ids: [],
-            reason: "模拟历史重复",
+            reason: "模拟表达不自然",
           })),
         });
       }
@@ -231,11 +231,11 @@ describe("原生标题语义审核二次恢复", () => {
         return modelResponse({
           decisions: candidates.map((candidate, index) => ({
             candidate_id: candidate.candidate_id,
-            novel: false,
-            ...(index === 0 ? {} : { natural: true }),
+            novel: true,
+            ...(index === 0 ? {} : { natural: false }),
             duplicate_reference_ids: [],
             conflicting_candidate_ids: [],
-            reason: "首轮不通过",
+            reason: "首轮表达不完整",
           })),
         });
       }
@@ -368,11 +368,11 @@ describe("原生标题语义审核二次恢复", () => {
       return modelResponse({
         decisions: candidates.map((candidate) => ({
           candidate_id: candidate.candidate_id,
-          novel: candidate.title === secondTitle,
-          natural: true,
+          novel: true,
+          natural: candidate.title === secondTitle,
           duplicate_reference_ids: [],
           conflicting_candidate_ids: [],
-          reason: candidate.title === secondTitle ? "新标题" : "模拟重复",
+          reason: candidate.title === secondTitle ? "新标题" : "模拟表达不自然",
         })),
       });
     });
@@ -411,11 +411,11 @@ describe("原生标题语义审核二次恢复", () => {
       return modelResponse({
         decisions: candidates.map((candidate) => ({
           candidate_id: candidate.candidate_id,
-          novel: isRecoveryAudit,
-          natural: true,
+          novel: true,
+          natural: isRecoveryAudit,
           duplicate_reference_ids: [],
           conflicting_candidate_ids: [],
-          reason: isRecoveryAudit ? "定向补题通过" : "旧候选重复",
+          reason: isRecoveryAudit ? "定向补题通过" : "旧候选表达不自然",
         })),
       });
     });
