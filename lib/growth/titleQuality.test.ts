@@ -134,6 +134,24 @@ describe("标题语义去重", () => {
     expect(result.reasons).toContain("父母压力下的求职困境母题相同");
   });
 
+  it("把秋招不敢说只换倾诉对象的表达判为重复", () => {
+    const result = evaluateTitleSemanticDuplicate(
+      "留了学，连秋招投什么都不敢说",
+      "留了学，连秋招投啥不敢跟室友说",
+    );
+    expect(result.duplicate).toBe(true);
+    expect(result.reasons).toContain("留学求职中不敢说出口的困境母题相同");
+  });
+
+  it("把投递节奏错了白搭的开头换词判为重复", () => {
+    const result = evaluateTitleSemanticDuplicate(
+      "海归背景好？投错节奏全白搭",
+      "早投晚投都一样？节奏错了白搭",
+    );
+    expect(result.duplicate).toBe(true);
+    expect(result.reasons).toContain("招聘投递节奏错位母题相同");
+  });
+
   it("把岗没选对归为方向错位，避免反认知题换词重复", () => {
     const result = evaluateTitleSemanticDuplicate(
       "以为海归吃香，投了才知道岗没选对",

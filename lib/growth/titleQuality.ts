@@ -131,6 +131,10 @@ const CONFLICT_PATTERNS: Array<[string, RegExp]> = [
   // 家庭投入后不敢说出秋招方向问题，是同一个可识别的内容母题；
   // 无论语序是“先说爸妈”还是“先说不敢”，换词后都不能伪装成新标题。
   ["parent_job_search_pressure", /(?=[\s\S]*(?:爸妈|父母|家里|家长))(?=[\s\S]*(?:秋招|求职|投简历|面试|笔试|待业))(?=[\s\S]*(?:不敢|害怕|怕|没方向|方向模糊|方向(?:全)?错|全错|全挂|没回音|没信|其实|以为|乱投))[\s\S]+/gu],
+  // 留学/海归求职中的“怕把困境说出口”，不能只替换倾诉对象就变成新标题。
+  ["overseas_job_search_disclosure_shame", /(?=[\s\S]*(?:留(?:了)?学|留学生|海归|留英|海外))(?=[\s\S]*(?:秋招|求职|投(?:啥|什么|简历|递)|海投|待业))(?=[\s\S]*(?:不敢.{0,8}(?:说|讲|告诉|面对|接)|怕.{0,8}(?:说|讲|告诉|接)))[\s\S]+/gu],
+  // “早投晚投 / 投错节奏”指向同一个招聘节奏误判，不是新的反认知题。
+  ["recruitment_timing_mismatch", /早投|晚投|投错节奏|节奏错|招聘节奏|投递节奏/gu],
   // “死磕对口/目标岗”与“先接一个 offer 保底”是同一类职业求职两难，不能只改两个词继续交付。
   ["target_role_or_offer_safety", /(?:死磕|冲|坚持).{0,6}(?:目标|对口|理想|心仪).{0,6}(?:岗|岗位).*(?:还是|or|vs|VS).*(?:先|拿|接).{0,6}offer|(?:先|拿|接).{0,6}offer.*(?:还是|or|vs|VS).*(?:死磕|冲|坚持).{0,6}(?:目标|对口|理想|心仪).{0,6}(?:岗|岗位)/giu],
   ["internship_or_autumn_recruitment", /(?:实习|补实习).*(?:还是|or|vs|VS).*(?:秋招|校招)|(?:秋招|校招).*(?:还是|or|vs|VS).*(?:实习|补实习)/giu],
@@ -335,6 +339,10 @@ export function evaluateTitleSemanticDuplicate(leftTitle: string, rightTitle: st
     && right.conflict === "parent_job_search_pressure";
   const isSameTargetRoleOrOfferSafetyTheme = left.conflict === "target_role_or_offer_safety"
     && right.conflict === "target_role_or_offer_safety";
+  const isSameOverseasJobSearchDisclosureShameTheme = left.conflict === "overseas_job_search_disclosure_shame"
+    && right.conflict === "overseas_job_search_disclosure_shame";
+  const isSameRecruitmentTimingMismatchTheme = left.conflict === "recruitment_timing_mismatch"
+    && right.conflict === "recruitment_timing_mismatch";
   const isSameRoleMismatchTheme = left.scenario === "job_targeting"
     && right.scenario === "job_targeting"
     && left.conflict === "role_mismatch"
@@ -347,6 +355,10 @@ export function evaluateTitleSemanticDuplicate(leftTitle: string, rightTitle: st
     reasons.push("父母压力下的求职困境母题相同");
   } else if (isSameTargetRoleOrOfferSafetyTheme) {
     reasons.push("目标岗位与保底 offer 的二选一母题相同");
+  } else if (isSameOverseasJobSearchDisclosureShameTheme) {
+    reasons.push("留学求职中不敢说出口的困境母题相同");
+  } else if (isSameRecruitmentTimingMismatchTheme) {
+    reasons.push("招聘投递节奏错位母题相同");
   } else if (isSameRoleMismatchTheme) {
     reasons.push("岗位方向错位的反认知母题相同");
   } else if (coreMatches.length === 3 && (left.frame === right.frame || left.promise === right.promise || bigramScore >= 0.22)) {

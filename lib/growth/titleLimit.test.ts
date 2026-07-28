@@ -138,6 +138,18 @@ describe("标题完整历史语义去重", () => {
     expect(titlesAreNearDuplicate(candidate, history)).toBe(true);
   });
 
+  it("秋招不敢说只换倾诉对象也不能伪装成新母题", () => {
+    const history = "留了学，连秋招投什么都不敢说";
+    const candidate = "留了学，连秋招投啥不敢跟室友说";
+    expect(titlesAreNearDuplicate(candidate, history)).toBe(true);
+  });
+
+  it("投递节奏错位换了开头后仍必须拦截", () => {
+    const history = "海归背景好？投错节奏全白搭";
+    const candidate = "早投晚投都一样？节奏错了白搭";
+    expect(titlesAreNearDuplicate(candidate, history)).toBe(true);
+  });
+
   it("父母压力母题换成另一种坏消息后仍必须拦截", () => {
     const history = "花爸妈钱留学，不敢说面试全挂";
     const candidate = {
