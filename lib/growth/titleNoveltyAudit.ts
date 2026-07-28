@@ -13,9 +13,13 @@ import type {
  */
 export const TITLE_NOVELTY_AUDIT_VERSION = "v1" as const;
 
-/** 一次审核最多带入的候选和历史数，避免标题生成被第二次调用拖慢。 */
-export const TITLE_NOVELTY_AUDIT_MAX_CANDIDATES = 40;
-export const TITLE_NOVELTY_AUDIT_MAX_REFERENCES = 120;
+/**
+ * 语义终审必须比标题生成更轻：它只是挑出已通过本地硬门禁的少量候选，
+ * 不是把整部标题历史再让模型重读一遍。过大的输入和逐条长 JSON 曾经让
+ * 审核自己变成“所有原生标题都交不出来”的单点故障。
+ */
+export const TITLE_NOVELTY_AUDIT_MAX_CANDIDATES = 12;
+export const TITLE_NOVELTY_AUDIT_MAX_REFERENCES = 36;
 
 export interface NativeTitleNoveltyCandidate {
   id: string;
@@ -51,6 +55,11 @@ export interface NativeTitleNoveltyAuditInput {
 
 export interface NativeTitleNoveltyAuditResult {
   decisions: NativeTitleNoveltyDecision[];
+  coverage: {
+    /** 模型是否完整回答了本轮送审的每一个候选。 */
+    complete: boolean;
+    missingCandidateIds: string[];
+  };
   usage?: { provider: string; model: string; input_tokens?: number; output_tokens?: number };
 }
 
@@ -122,6 +131,33 @@ export function normalizeNativeTitleNoveltyDecisions(
   });
 }
 
+/**
+ * 缺 decision 与“模型明确判为重复”是两个完全不同的故障。前者代表审核
+ * 返回不完整，需要走恢复路径；不能在页面上误报成标题质量差。
+ */
+export function nativeTitleNoveltyCoverage(
+  raw: unknown,
+  candidates: NativeTitleNoveltyCandidate[],
+) {
+  const rawRows = raw && typeof raw === "object" && Array.isArray((raw as { decisions?: unknown }).decisions)
+    ? (raw as { decisions: unknown[] }).decisions
+    : [];
+  const candidateIds = new Set(candidates.map((candidate) => candidate.id));
+  const received = new Set<string>();
+  for (const value of rawRows) {
+    if (!value || typeof value !== "object") continue;
+    const candidateId = compact((value as Record<string, unknown>).candidate_id, 80);
+    if (candidateIds.has(candidateId)) received.add(candidateId);
+  }
+  const missingCandidateIds = candidates
+    .map((candidate) => candidate.id)
+    .filter((candidateId) => !received.has(candidateId));
+  return {
+    complete: missingCandidateIds.length === 0,
+    missingCandidateIds,
+  };
+}
+
 export function buildNativeTitleNoveltyAuditPrompt(input: NativeTitleNoveltyAuditInput) {
   const candidates = uniqueById(input.candidates, TITLE_NOVELTY_AUDIT_MAX_CANDIDATES)
     .map((candidate) => ({
@@ -171,7 +207,7 @@ ${JSON.stringify(candidates)}
       "novel": true,
       "duplicate_reference_ids": ["如重复，写对应 reference_id；否则 []"],
       "conflicting_candidate_ids": ["如与其他候选同题，写对应 candidate_id；否则 []"],
-      "reason": "不超过30字的判定原因"
+      "reason": "不超过12字的判定原因"
     }
   ]
 }`.trim();
@@ -186,19 +222,29 @@ export async function auditNativeTitleBatchNovelty(
 ): Promise<NativeTitleNoveltyAuditResult> {
   const candidates = uniqueById(input.candidates, TITLE_NOVELTY_AUDIT_MAX_CANDIDATES);
   const references = uniqueById(input.references, TITLE_NOVELTY_AUDIT_MAX_REFERENCES);
-  if (!candidates.length) return { decisions: [] };
+  if (!candidates.length) {
+    return {
+      decisions: [],
+      coverage: { complete: true, missingCandidateIds: [] },
+    };
+  }
 
   const result = await llmJSON<unknown>({
     system: `${GROWTH_SYSTEM_PROMPT}\n\n你只负责标题语义新颖度审核，不生成任何标题。`,
     user: buildNativeTitleNoveltyAuditPrompt({ ...input, candidates, references }),
-    maxTokens: 1800,
+    // 12 个候选 × 极短判定足够完成审核；较低输出预算避免模型在最后一项
+    // 被截断，从而把可交付的一整批标题全部挡住。
+    maxTokens: 900,
     temperature: 0,
-    timeoutMs: 12_000,
+    timeoutMs: 8_000,
     jsonRetries: 0,
-    allowFallback: false,
+    // 主模型超时时使用真正不同的备用模型快速完成同一份只读审核；审核仍然
+    // fail-closed，不会把未经审核的模型标题放行。
+    allowFallback: true,
   });
   return {
     decisions: normalizeNativeTitleNoveltyDecisions(result.data, candidates, references),
+    coverage: nativeTitleNoveltyCoverage(result.data, candidates),
     usage: {
       provider: result.raw.provider,
       model: result.raw.model,

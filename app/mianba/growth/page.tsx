@@ -627,6 +627,10 @@ export default function GrowthPage() {
 
   function switchBusiness(next: GrowthBusinessLine) {
     if (next === businessLine) return;
+    if (topicGenerationInFlight.current) {
+      setMessage("这一批标题仍在生成，请等待完成后再切换业务，避免结果串到另一条业务。");
+      return;
+    }
     const target = { type: "business", value: next } as const;
     if (transientDirtyCount) setPendingContextSwitch(target);
     else performContextSwitch(target, true);
@@ -634,6 +638,10 @@ export default function GrowthPage() {
 
   function switchPersona(next: GrowthPersona) {
     if (next === persona) return;
+    if (topicGenerationInFlight.current) {
+      setMessage("这一批标题仍在生成，请等待完成后再切换视角，避免结果串到另一条视角。");
+      return;
+    }
     const target = { type: "persona", value: next } as const;
     if (transientDirtyCount) setPendingContextSwitch(target);
     else performContextSwitch(target, true);
@@ -830,6 +838,10 @@ export default function GrowthPage() {
       return;
     }
     const account = data.account;
+    // 标题请求永远归属发起时的“业务×视角”。异步返回后若操作者已经切换，
+    // 旧结果只能留在原空间，绝不能回写到当前页面。
+    const requestWorkspace = workspaceKey(businessLine, persona);
+    const requestWorkspaceIsActive = () => activeWorkspace.current === requestWorkspace;
     const selectedIsAffected = Boolean(selectedTopic && (
       action === "regenerate_titles"
       || (action === "regenerate_single_title" && selectedTopic.topic.method_id === methodId)
@@ -871,6 +883,7 @@ export default function GrowthPage() {
           : "正在寻找新的近期母题…",
     );
     const stageTimer = window.setInterval(() => {
+      if (!requestWorkspaceIsActive()) return;
       if (action === "regenerate_single_title") {
         setTopicMessage("正在进行历史去重和方向一致性校验…");
         return;
@@ -878,7 +891,7 @@ export default function GrowthPage() {
       stageIndex = Math.min(stageIndex + 1, TOPIC_GENERATION_STAGES.length - 1);
       setTopicMessage(TOPIC_GENERATION_STAGES[stageIndex]);
     }, 8_000);
-    if (group) setExploreOpen((current) => ({ ...current, [group]: true }));
+    if (group && requestWorkspaceIsActive()) setExploreOpen((current) => ({ ...current, [group]: true }));
     // 同一操作使用同一个幂等键：浏览器偶发断连后可安全重试，不会生成第二批。
     const requestId = crypto.randomUUID();
     const performTopicRequest = () => requestJSON<{
@@ -941,15 +954,23 @@ export default function GrowthPage() {
             throw new Error("这批标题生成超过预期时间，原批次仍在服务端处理；请稍后刷新页面查看，不会重复生成。");
           }
           recoveryPolls += 1;
-          setTopicMessage(result.message || "刚才点击的标题仍在生成，正在安全恢复同一批…");
+          if (requestWorkspaceIsActive()) {
+            setTopicMessage(result.message || "刚才点击的标题仍在生成，正在安全恢复同一批…");
+          }
           await waitForRecovery(Math.max(800, Math.min(result.retryAfterMs ?? 1_500, 3_000)));
         } catch (error) {
           const message = (error as Error).message;
           if (!isRetriableTransportError(message) || transportRetries >= 2) throw error;
           transportRetries += 1;
-          setTopicMessage("网络刚刚中断，正在安全恢复同一批标题…");
+          if (requestWorkspaceIsActive()) setTopicMessage("网络刚刚中断，正在安全恢复同一批标题…");
           await waitForRecovery(900 * transportRetries);
         }
+      }
+      if (!requestWorkspaceIsActive()) {
+        // 服务端已在原空间完成安全写入。作废它的本地缓存，用户回到该空间
+        // 时会重新读取；当前业务与视角绝不被旧请求污染。
+        workspaceCache.current.delete(requestWorkspace);
+        return;
       }
       const methodDeliveries = result.methodDeliveries ?? result.run.method_deliveries ?? [];
       const selectedDelivery = selectedTopic
@@ -1030,6 +1051,7 @@ export default function GrowthPage() {
         })}`);
       }
     } catch (error) {
+      if (!requestWorkspaceIsActive()) return;
       const errorMessage = (error as Error).message;
       if (errorMessage.includes("自动更换母题")) {
         // 后端可能已经清除了与方法不匹配的旧来源，即使完整批次最终没有生成成功，
@@ -1041,7 +1063,7 @@ export default function GrowthPage() {
     } finally {
       window.clearInterval(stageTimer);
       topicGenerationInFlight.current = false;
-      setBusy(null);
+      if (requestWorkspaceIsActive()) setBusy(null);
     }
   }
 

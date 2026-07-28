@@ -757,6 +757,16 @@ export interface GrowthRun {
     source_ms?: number;
     generation_ms?: number;
     save_ms?: number;
+    /** 仅用于定位标题批次失败阶段，不展示模型内部内容。 */
+    failure_phase?: "source" | "native_generation" | "native_audit" | "unknown";
+    failed_method_ids?: TitleMethodId[];
+    native_title_audit?: {
+      status: "passed" | "fallback_recovery" | "timeout" | "incomplete" | "unavailable" | "not_needed";
+      candidate_count: number;
+      reference_count: number;
+      elapsed_ms: number;
+      missing_candidate_ids?: string[];
+    };
   };
   structure_version?: "v3_7" | "v3_8";
   migration_status?: "passed" | "failed";

@@ -639,7 +639,9 @@ export async function POST(req: Request) {
     };
     await store.saveRun(generationReservation);
   }
-  const markGenerationReservationFailed = async () => {
+  const markGenerationReservationFailed = async (
+    diagnostics?: Partial<NonNullable<GrowthRun["generation_diagnostics"]>>,
+  ) => {
     if (!generationReservation) {
       releaseInFlightGenerationRequest(generationAccountId, parsed.data.requestId);
       return;
@@ -649,6 +651,10 @@ export async function POST(req: Request) {
         ...generationReservation,
         generation_status: "failed",
         uniqueness_status: "failed",
+        generation_diagnostics: {
+          total_ms: Date.now() - requestStartedAt,
+          ...diagnostics,
+        },
         updated_at: now(),
       });
     } catch (error) {
@@ -663,7 +669,10 @@ export async function POST(req: Request) {
     // 不再在用户请求中进行“整批三轮 + 自动换源两轮”的长链重跑。
     generated = await generateTopicBatch(generationInput(true));
   } catch (error) {
-    await markGenerationReservationFailed();
+    await markGenerationReservationFailed({
+      source_ms: sourceElapsedMs,
+      failure_phase: "unknown",
+    });
     console.error("[growth] topic generation unexpectedly failed:", (error as Error).message);
     return NextResponse.json({
       error: "topic_generation_unavailable",
@@ -677,6 +686,7 @@ export async function POST(req: Request) {
     usage,
     generationAttempts,
     structureCards,
+    nativeTitleAudit,
   } = generated;
   const generationElapsedMs = Date.now() - generationStartedAt;
 
@@ -688,10 +698,25 @@ export async function POST(req: Request) {
     return method && !method.sourceRequired && delivery.status !== "ready";
   });
   if (failedNativeDeliveries.length) {
-    await markGenerationReservationFailed();
+    const nativeAuditUnavailable = nativeTitleAudit?.status === "timeout"
+      || nativeTitleAudit?.status === "incomplete"
+      || nativeTitleAudit?.status === "unavailable";
+    await markGenerationReservationFailed({
+      source_ms: sourceElapsedMs,
+      generation_ms: generationElapsedMs,
+      failure_phase: nativeAuditUnavailable ? "native_audit" : "native_generation",
+      failed_method_ids: failedNativeDeliveries.map((delivery) => delivery.method_id),
+      native_title_audit: nativeTitleAudit,
+    });
+    console.warn("[growth] native title generation incomplete", {
+      failed_method_ids: failedNativeDeliveries.map((delivery) => delivery.method_id),
+      native_title_audit: nativeTitleAudit,
+    });
     return NextResponse.json({
       error: "native_title_generation_incomplete",
-      message: `本轮有${failedNativeDeliveries.length}个原生法标题未通过质量或去重门禁，当前批次没有被替换；系统已保留原有标题。`,
+      message: nativeAuditUnavailable
+        ? "系统内部的标题新颖度复核暂未完成，当前标题没有被替换；请稍后再试。"
+        : `本轮有${failedNativeDeliveries.length}个原生法标题未通过质量或去重门禁，当前批次没有被替换；系统已保留原有标题。`,
       failedMethods: failedNativeDeliveries.map((delivery) => ({
         method_id: delivery.method_id,
         method_label: delivery.method_label,
@@ -859,6 +884,7 @@ export async function POST(req: Request) {
     source_ms: sourceElapsedMs,
     generation_ms: generationElapsedMs,
     save_ms: 0,
+    native_title_audit: nativeTitleAudit,
   };
   await store.saveRun(run);
   await store.saveAccount(account);

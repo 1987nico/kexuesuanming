@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildNativeTitleNoveltyAuditPrompt,
+  nativeTitleNoveltyCoverage,
   normalizeNativeTitleNoveltyDecisions,
   type NativeTitleNoveltyCandidate,
   type NativeTitleNoveltyReference,
@@ -52,6 +53,29 @@ describe("原生标题批次语义新颖度审核", () => {
     }, candidates, references);
     expect(decisions[0].novel).toBe(false);
     expect(decisions[1]).toMatchObject({ novel: false });
+  });
+
+  it("把审核漏项单独识别为不完整，而不是伪装成标题重复", () => {
+    const raw = {
+      decisions: [{ candidate_id: "C1", novel: true, duplicate_reference_ids: [] }],
+    };
+    expect(nativeTitleNoveltyCoverage(raw, candidates)).toEqual({
+      complete: false,
+      missingCandidateIds: ["C2"],
+    });
+  });
+
+  it("完整但明确拒绝的审核，和审核漏项保持可区分", () => {
+    const raw = {
+      decisions: [
+        { candidate_id: "C1", novel: false, duplicate_reference_ids: ["H1"] },
+        { candidate_id: "C2", novel: false, duplicate_reference_ids: [] },
+      ],
+    };
+    expect(nativeTitleNoveltyCoverage(raw, candidates)).toEqual({
+      complete: true,
+      missingCandidateIds: [],
+    });
   });
 
   it("提示词明确要求按真实母题而非词面重合审核", () => {
