@@ -3,6 +3,7 @@ import {
   buildGrowthTitleFingerprint,
   buildTopicDiversitySignature,
   classifyTitleSentenceFrame,
+  titlePersonaProblems,
   topicBatchDuplicateProblems,
 } from "./runner";
 import type { GrowthAccount, TopicCandidate } from "./types";
@@ -43,7 +44,7 @@ describe("标题四层多样性签名", () => {
     const account = {
       business_line: "executive",
       persona: "buyer",
-    } as GrowthAccount;
+    } as unknown as GrowthAccount;
     const fingerprint = buildGrowthTitleFingerprint({
       account,
       topic: topic(
@@ -166,5 +167,22 @@ describe("标题四层多样性签名", () => {
     );
     const problems = topicBatchDuplicateProblems([first, second], [], [], "overseas_student");
     expect(problems.some((item) => item.includes("岗位方向错位冲突"))).toBe(true);
+  });
+
+  it("留学生家长账号不会把标题写成学生本人室友口吻", () => {
+    const parentAccount = {
+      business_line: "overseas_student",
+      persona: "buyer",
+      one_liner: "陪娃闯秋招的留学生家长真实记录",
+      target_user: "准备秋招的留学生与家长",
+      persona_specific: { identity: "陪孩子准备秋招的家长" },
+    } as unknown as GrowthAccount;
+    const candidate = topic(
+      "human_pain",
+      "室友都在拿面试，我还在瞎投",
+      "讲清留学生秋招焦虑",
+    );
+    const problems = titlePersonaProblems(candidate, parentAccount);
+    expect(problems.some((item) => item.includes("室友口吻"))).toBe(true);
   });
 });

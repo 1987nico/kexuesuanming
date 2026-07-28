@@ -33,6 +33,7 @@ export function personaGuide(persona: GrowthPersona) {
 
 export interface AccountContext {
   businessLine?: string;
+  oneLiner?: string;
   toneStyle?: string;
   filterWords?: string[];
   avoidExpressions?: string[];
@@ -63,6 +64,7 @@ export function accountContextBlock(ctx?: AccountContext) {
   if (!ctx) return "";
   const lines: string[] = [];
   if (ctx.businessLine) lines.push(`当前业务线：${ctx.businessLine}`);
+  if (ctx.oneLiner) lines.push(`当前账号一句话人设：${ctx.oneLiner}`);
   if (ctx.toneStyle) lines.push(`语气与风格：${ctx.toneStyle}`);
   if (ctx.filterWords?.length) lines.push(`必须出现的筛选词：${ctx.filterWords.join("、")}`);
   if (ctx.avoidExpressions?.length) lines.push(`要避免的表达：${ctx.avoidExpressions.join("、")}`);
@@ -313,6 +315,11 @@ title_promise 必须原样返回。title 与 alternative_titles 必须属于同�
     ].join("\n");
   });
   const singleTitleRewrite = (input.directionLocks ?? []).length > 0;
+  const parentNarrative = input.persona === "buyer"
+    && /家长|妈妈|爸爸|父母|陪娃|陪孩子/u.test(`${input.context?.oneLiner || ""} ${input.targetUser}`);
+  const personaContinuityRule = parentNarrative
+    ? "- 【人设连续性硬性规则】当前账号是留学生家长。标题里的“我/我们”只能是家长，涉及留学生时要明确写孩子/娃/儿女；不得把账号写成留学生本人（例如“室友都拿到面试，我还在投递”）。"
+    : "";
   return `
 请以选题官 V3.1 身份，严格按给定方法列表生成标题。
 
@@ -330,6 +337,7 @@ ${methodLines.join("\n\n")}
 - 不预设正文内容方向，不输出诊断型、工具型或故事型分类。
 - 【标题硬性规则】每个 title 必须控制在 20 个字以内（含标点符号，按小红书规则），超过一律不合格；不要用「｜」「|」「——」等分隔符外挂副标题来变相加长。
 - 【语言与事实硬性规则】只写自然、口语化的简体中文。不得输出繁体字、拼音/英文碎片与中文硬拼（AI、Offer、QS 等常见术语除外）、生造黑话或无意义词组。不要把自然表达硬缩成“投岗”“蹲岗”等行业黑话，应写“投岗位”“投递”或完整动作。不得编造或暗示未经当前账号事实支持的年龄、前任身份、公司、学校、收入、营收、团队人数、Offer 数量、日期、阶段成果；没有已确认事实时，请使用“有人/不少人/这类人”等泛化表达，不能用具体数字凑冲突。
+${personaContinuityRule}
 - 【真实换题规则】本轮标题必须相对历史标题实质换题：至少更换人物、场景、冲突、正文承诺、句式中的两项。只改数字、标点、语气词、繁简体、近义词或前后顺序，都不算新标题。不要复用历史标题的核心人物+场景+冲突组合。
 - 【原力要大】标题外层必须有至少 1 个具体实在、有画面的"原力词"：目标受众生活里能看见、摸到、遇到的物件、角色、场景或动作。例：工资条、合同、老板、合伙人、客户、会议室、工位、预算表、PPT、手机消息、加班、汇报、签合同、拍板、微信对话框、面试通知、离职交接、绩效面谈。禁止只用泛虚词做标题入口，如：成长、认知、觉醒、自由、焦虑、选择、结构、位置、命运、人生、体面；这些词可以进正文解释，但不能单独承担标题入口。
 - 【冲突要大】每个选题必须有反常识、反预期或强落差，让用户一眼看到"怎么会这样"的张力。冲突可以来自：想要稳定 vs 想要自由、职位很高 vs 离开平台不值钱、努力很多 vs 结果不变、想转型 vs 家庭/收入/年龄限制、以为是机会 vs 后来发现是坑。没有冲突的平铺题、纯建议题、纯清单题不进入候选池。

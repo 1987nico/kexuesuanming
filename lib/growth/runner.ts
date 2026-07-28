@@ -101,6 +101,7 @@ function asText(value: unknown) {
 function accountContext(account: GrowthAccount): AccountContext {
   return {
     businessLine: GROWTH_BUSINESS_LINE_VALUES[account.business_line ?? "executive"],
+    oneLiner: account.one_liner,
     toneStyle: account.tone_style,
     filterWords: account.filter_words,
     avoidExpressions: account.avoid_expressions,
@@ -760,7 +761,7 @@ function supportedTitleFacts(account: GrowthAccount) {
   ].filter((value): value is string => typeof value === "string" && value.trim().length >= 4);
 }
 
-function titlePersonaProblems(topic: TopicCandidate, account: GrowthAccount) {
+export function titlePersonaProblems(topic: TopicCandidate, account: GrowthAccount) {
   const title = topic.title;
   const problems: string[] = [];
   if (!isBusinessCompatibleText(title, account.business_line ?? "executive")) {
@@ -775,6 +776,16 @@ function titlePersonaProblems(topic: TopicCandidate, account: GrowthAccount) {
   }
   if (account.persona === "merchant" && /(?:我家孩子|陪娃秋招|作为老师)/u.test(title)) {
     problems.push(`${topic.method_id}:商家视角不能写成买家或专家第一人称口吻`);
+  }
+  const parentNarrative = account.business_line === "overseas_student"
+    && account.persona === "buyer"
+    && /家长|妈妈|爸爸|父母|陪娃|陪孩子/u.test([
+      account.one_liner,
+      account.target_user,
+      ...Object.values(account.persona_specific ?? {}),
+    ].filter(Boolean).join(" "));
+  if (parentNarrative && /室友|同学/u.test(title) && !/孩子|娃|儿子|女儿/u.test(title)) {
+    problems.push(`${topic.method_id}:留学生家长人设不能写成留学生本人的同学/室友口吻`);
   }
   return problems;
 }
