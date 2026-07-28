@@ -158,6 +158,13 @@ export interface GrowthTitleFingerprint {
   title: string;
   normalized_fingerprint: string;
   semantic_fingerprint: string;
+  /** 仅用于后台多样性门禁，不作为内容方向或运营标签展示。 */
+  sentence_frame?: string;
+  /** 从标题和标题承诺归纳的开放母题键，只用于避免近期反复写同一件事。 */
+  mother_topic_key?: string;
+  /** 人物、场景和结果的组合签名，只用于生成前素材轮换。 */
+  material_signature?: string;
+  diversity_version?: "v1";
   business_line: GrowthBusinessLine;
   persona: GrowthPersona;
   method_id: TitleMethodId;

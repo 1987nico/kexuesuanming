@@ -3,7 +3,9 @@ import { z } from "zod";
 import { requireMianbaApiAuth } from "@/lib/auth/mianba";
 import {
   buildGrowthTitleFingerprint,
+  buildTopicDiversitySignature,
   generateTopicBatch,
+  normalizeTitleHistoryFingerprint,
 } from "@/lib/growth/runner";
 import { growthStore } from "@/lib/growth/store";
 import type {
@@ -349,10 +351,39 @@ export async function POST(req: Request) {
     ]),
     ...notes.map((draft) => draft.title),
   ].filter(Boolean)));
-  const historyTopics = runs.flatMap((item) => item.topic_pool.map((topic) => ({
-    method_id: topic.method_id,
-    title: topic.title,
-  })));
+  // 单槽换题和换母题会把未变化的槽位复制到新 run。这里按“方法×标题指纹”
+  // 去重，避免同一个旧标题被误算成近5批里重复使用了很多次。
+  const historyTopicMap = new Map<string, {
+    method_id: TitleMethodId;
+    title: string;
+    sentence_frame?: string;
+    mother_topic_key?: string;
+    material_signature?: string;
+    source_id?: string;
+    batch_index: number;
+  }>();
+  runs.forEach((item, batchIndex) => {
+    item.topic_pool.forEach((topic) => {
+      const historyKey = `${topic.method_id}:${normalizeTitleHistoryFingerprint(topic.title)}`;
+      if (historyTopicMap.has(historyKey)) return;
+      const stored = item.title_fingerprints?.find((fingerprint) =>
+        fingerprint.method_id === topic.method_id && fingerprint.title === topic.title
+      );
+      const diversity = stored?.sentence_frame && stored?.mother_topic_key && stored?.material_signature
+        ? stored
+        : buildTopicDiversitySignature(topic, account!.business_line ?? "executive");
+      historyTopicMap.set(historyKey, {
+        method_id: topic.method_id,
+        title: topic.title,
+        sentence_frame: diversity.sentence_frame,
+        mother_topic_key: diversity.mother_topic_key,
+        material_signature: diversity.material_signature,
+        source_id: stored?.source_id ?? topic.source_snapshot?.id,
+        batch_index: batchIndex,
+      });
+    });
+  });
+  const historyTopics = [...historyTopicMap.values()];
 
   const generationMethodIds = action === "rotate_single_source"
     ? [requestedMethod!.id]
@@ -459,7 +490,7 @@ export async function POST(req: Request) {
         console.error("[growth] atomic topic batch failed:", firstMessage);
         return NextResponse.json({
           error: "topic_batch_generation_failed",
-          message: "本轮未能生成完整的新标题，当前批次未被替换。请稍后再试。",
+          message: "本轮部分槽位与近期母题、句式或素材组合重复，系统自动重试后仍未全部通过；当前批次没有被替换。",
         }, { status: 422 });
       }
 
@@ -478,7 +509,7 @@ export async function POST(req: Request) {
         );
         return NextResponse.json({
           error: "topic_batch_generation_failed",
-          message: "系统已自动刷新并尝试多个近期母题，但仍未形成完整合格批次；当前标题没有被替换。",
+          message: "系统已自动刷新对标来源，并重新生成重复的母题、句式和素材，但仍未形成完整合格批次；当前标题没有被替换。",
         }, { status: 422 });
       }
     }

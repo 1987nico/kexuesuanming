@@ -388,10 +388,16 @@ export function buildGrowthTitleFingerprint(input: {
   generationMode: MethodGenerationMode;
 }): GrowthTitleFingerprint {
   const normalized = normalizeTitleHistoryFingerprint(input.topic.title);
+  const diversity = buildTopicDiversitySignature(
+    input.topic,
+    input.account.business_line ?? "executive",
+  );
   return {
     title: input.topic.title,
     normalized_fingerprint: normalized,
     semantic_fingerprint: [...ngrams(normalized, 2)].sort().join("|"),
+    ...diversity,
+    diversity_version: "v1",
     business_line: input.account.business_line ?? "executive",
     persona: input.account.persona,
     method_id: input.topic.method_id,
@@ -404,6 +410,118 @@ export function buildGrowthTitleFingerprint(input: {
 export interface TopicTitleHistoryEntry {
   method_id?: TitleMethodId;
   title: string;
+  sentence_frame?: string;
+  mother_topic_key?: string;
+  material_signature?: string;
+  source_id?: string;
+  /** 0 为当前上一批，数字越大越早。 */
+  batch_index?: number;
+}
+
+const EXECUTIVE_MOTHER_TOPICS: Array<[string, RegExp]> = [
+  ["platform_pricing", /平台|光环|头衔|title|工牌|名片|定价|值多少钱|议价权/i],
+  ["resignation", /裸辞|离职|辞呈|辞职|交接/],
+  ["entrepreneurship", /创业|合伙|工作室|副业/],
+  ["career_switch", /转型|换方向|转方向|转赛道|换挡|重新来/],
+  ["job_search", /投简历|海投|求职|面试|猎头|招聘/],
+  ["transferable_ability", /能力|经验|资产|迁移|胜算/],
+  ["risk_validation", /验证|风险|失败成本|试错|踩坑|排除/],
+  ["income_security", /薪资|年薪|收入|现金流|降薪|工资/],
+  ["family_pressure", /家人|父母|孩子|伴侣|家庭/],
+  ["stability_choice", /体制|稳定|大厂|国企/],
+];
+
+const OVERSEAS_MOTHER_TOPICS: Array<[string, RegExp]> = [
+  ["parent_child_conflict", /家长|妈妈|爸爸|孩子|陪跑|帮倒忙|添乱|闹僵/],
+  ["stay_or_return", /留英|留海外|留伦敦|回国|回沪|国内|工签|两个时区/],
+  ["mass_application", /海投|投了|投递|没回音|零回应|回复/],
+  ["recruiting_timeline", /秋招|提前批|截止|时间表|节奏|节点|窗口/],
+  ["job_targeting", /选岗|岗位地图|方向|收窄|定位|赛道/],
+  ["resume", /简历|网申|项目经历/],
+  ["interview", /面试|笔试|终面|自我介绍/],
+  ["offer_result", /offer|录用|入职|大厂|国企/i],
+  ["study_roi", /留学投入|百万留学|学费|回报|薪资|月薪/],
+  ["ai_screening", /AI|算法筛|机器筛/i],
+];
+
+const MATERIAL_ROLES: Array<[string, RegExp]> = [
+  ["executive", /高管|总监|中层|部门总|管理层|管过\d*人/],
+  ["parent", /家长|妈妈|爸爸|父母|陪孩子/],
+  ["student", /留学生|海归|留英|硕士|孩子|毕业生/],
+  ["advisor", /顾问|老师|导师|机构|陪跑/],
+  ["employee", /打工|员工|职场人|求职者/],
+];
+
+const MATERIAL_SCENES: Array<[string, RegExp]> = [
+  ["resignation", /裸辞|离职|辞呈|辞职|交接|工牌/],
+  ["application", /海投|投简历|投递|网申|招聘帖/],
+  ["interview", /面试|笔试|终面|猎头电话/],
+  ["workplace", /会议室|汇报|预算|团队|老板|客户|绩效/],
+  ["family", /家人|父母|孩子|书房|闹僵/],
+  ["overseas", /留英|伦敦|海外|工签|回国|回沪/],
+  ["entrepreneurship", /创业|合伙|工作室|副业/],
+  ["planning", /清单|表|地图|盘点|核对|漏斗/],
+];
+
+const MATERIAL_RESULTS: Array<[string, RegExp]> = [
+  ["no_response", /没人理|没回音|零回应|没人要|不敢要/],
+  ["pricing_loss", /不值钱|值多少钱|定价|议价|薪资砍|降薪/],
+  ["conflict", /闹僵|添乱|帮倒忙|吵架|嫌烦/],
+  ["choice", /还是|怎么选|选哪个|方向|选择权/],
+  ["risk_reduction", /避坑|风险|排除|验证|失败成本/],
+  ["progress", /面试邀请|offer|录用|入职|拿到|进展/i],
+];
+
+function matchedKeys(value: string, patterns: Array<[string, RegExp]>, limit: number) {
+  return patterns.flatMap(([key, pattern]) => pattern.test(value) ? [key] : []).slice(0, limit);
+}
+
+export function classifyTitleSentenceFrame(title: string) {
+  if (/(以前|当年|曾经).*(现在|如今)/.test(title)) return "past_present";
+  if (/不是.+(而是|是)|缺的不是|不如/.test(title)) return "contrast_reversal";
+  if (/别以为|别靠|别等|别信|千万别/.test(title)) return "warning_contrarian";
+  if (/越.+越/.test(title)) return "more_more";
+  if (/还是|vs|VS|或是/.test(title)) return "direct_choice";
+  if (/先.+再|前.+先|先查|先填|先算|先盘|先做/.test(title)) return "before_after_check";
+  if (/不敢|怕/.test(title)) return "identity_inhibition";
+  if (/最容易|最怕|最大|最亏|最危险/.test(title)) return "superlative";
+  if (/[0-9一二三四五六七八九十百千万两]+(个|项|笔|类|件|步|天|家|份)/.test(title)) {
+    return "numbered";
+  }
+  if (/[？?]$/.test(title)) return "question";
+  if (/直接|拿走|公开|照着|抄作业/.test(title)) return "imperative_delivery";
+  return "statement";
+}
+
+export function buildTopicDiversitySignature(
+  topic: Pick<TopicCandidate, "title" | "title_promise" | "origin_force" | "conflict_judgement">,
+  businessLine: GrowthBusinessLine = "executive",
+) {
+  const titleAndPromise = `${topic.title} ${topic.title_promise || ""}`;
+  const context = `${titleAndPromise} ${topic.origin_force || ""} ${topic.conflict_judgement || ""}`;
+  const motherPatterns = businessLine === "overseas_student"
+    ? OVERSEAS_MOTHER_TOPICS
+    : EXECUTIVE_MOTHER_TOPICS;
+  const motherKeys = matchedKeys(titleAndPromise, motherPatterns, 2);
+  // 优先读取标题和承诺里的真实素材；只有缺项时才用账号通用上下文兜底，
+  // 避免“中高管熟悉离职场景”之类的定位说明把每个标题误判成同一素材。
+  const roles = matchedKeys(titleAndPromise, MATERIAL_ROLES, 1);
+  const scenes = matchedKeys(titleAndPromise, MATERIAL_SCENES, 1);
+  const results = matchedKeys(titleAndPromise, MATERIAL_RESULTS, 1);
+  const fallbackRoles = roles.length ? roles : matchedKeys(context, MATERIAL_ROLES, 1);
+  const fallbackScenes = scenes.length ? scenes : matchedKeys(context, MATERIAL_SCENES, 1);
+  const fallbackResults = results.length ? results : matchedKeys(context, MATERIAL_RESULTS, 1);
+  return {
+    sentence_frame: classifyTitleSentenceFrame(topic.title),
+    mother_topic_key: motherKeys.length
+      ? motherKeys.join("+")
+      : `open:${normalizeTitleHistoryFingerprint(topic.title).slice(0, 10)}`,
+    material_signature: [
+      fallbackRoles[0] ?? "open_role",
+      fallbackScenes[0] ?? "open_scene",
+      fallbackResults[0] ?? "open_result",
+    ].join(":"),
+  };
 }
 
 function titlesHaveSameHistoryFingerprint(left: string, right: string) {
@@ -497,6 +615,7 @@ function topicCandidateDuplicateProblems(
   historyTitles: string[],
   historyTopics: TopicTitleHistoryEntry[],
   accepted: TopicCandidate[],
+  options: { preserveDirection?: boolean; businessLine?: GrowthBusinessLine } = {},
 ) {
   const problems: string[] = [];
   // 全历史禁止原样、标点微调、数字替换和语气词微调；这才是“以前没有出现过”。
@@ -510,6 +629,44 @@ function topicCandidateDuplicateProblems(
   }
   const inBatch = accepted.find((item) => titlesAreNearDuplicate(topic.title, item.title));
   if (inBatch) problems.push(`${topic.method_id}:与本批次${inBatch.method_id}标题重复或近似`);
+  if (!options.preserveDirection) {
+    const diversity = buildTopicDiversitySignature(topic, options.businessLine);
+    const sameBatchMaterial = accepted.find((item) => {
+      const other = buildTopicDiversitySignature(item, options.businessLine);
+      return other.mother_topic_key === diversity.mother_topic_key
+        && other.material_signature === diversity.material_signature;
+    });
+    if (sameBatchMaterial) {
+      problems.push(`${topic.method_id}:与本批次${sameBatchMaterial.method_id}使用同一母题和素材组合`);
+    }
+    const recentSameMethod = historyTopics.filter((item) =>
+      item.method_id === topic.method_id && (item.batch_index ?? Number.MAX_SAFE_INTEGER) < 5
+    );
+    const sameMother = recentSameMethod.filter((item) =>
+      item.mother_topic_key && item.mother_topic_key === diversity.mother_topic_key
+    );
+    const motherRepeatLimit = topic.source_snapshot ? 3 : 1;
+    if (sameMother.length >= motherRepeatLimit) {
+      problems.push(`${topic.method_id}:近期已使用母题${diversity.mother_topic_key}`);
+    }
+    if (!topic.source_snapshot) {
+      const sameFrame = recentSameMethod.filter((item) =>
+        item.sentence_frame && item.sentence_frame === diversity.sentence_frame
+      );
+      const immediatelyRepeatedFrame = sameFrame.some((item) => (item.batch_index ?? -1) === 0);
+      if (immediatelyRepeatedFrame || sameFrame.length >= 2) {
+        problems.push(`${topic.method_id}:近期句式${diversity.sentence_frame}使用过多`);
+      }
+      const sameMaterial = recentSameMethod.find((item) =>
+        (item.batch_index ?? Number.MAX_SAFE_INTEGER) < 3
+        && item.material_signature
+        && item.material_signature === diversity.material_signature
+      );
+      if (sameMaterial) {
+        problems.push(`${topic.method_id}:近期人物场景结果组合已使用`);
+      }
+    }
+  }
   return problems;
 }
 
@@ -517,11 +674,18 @@ export function topicBatchDuplicateProblems(
   topics: TopicCandidate[],
   historyTitles: string[],
   historyTopics: TopicTitleHistoryEntry[] = [],
+  businessLine: GrowthBusinessLine = "executive",
 ) {
   const problems: string[] = [];
   const accepted: TopicCandidate[] = [];
   for (const topic of topics) {
-    problems.push(...topicCandidateDuplicateProblems(topic, historyTitles, historyTopics, accepted));
+    problems.push(...topicCandidateDuplicateProblems(
+      topic,
+      historyTitles,
+      historyTopics,
+      accepted,
+      { businessLine },
+    ));
     accepted.push(topic);
   }
   return problems;
@@ -710,8 +874,9 @@ export async function generateTopicBatch(input: {
               conflict_judgement: lock.conflict_judgement,
             }] : [];
           }),
+          diversityHistory: historyTopics,
           context: accountContext(input.account),
-        }), maxTokens: 2200, temperature: Math.min(0.78, 0.58 + attempt * 0.07),
+        }), maxTokens: 3200, temperature: Math.min(0.82, 0.62 + attempt * 0.07),
         timeoutMs: 65_000, jsonRetries: 0,
       });
       usage = resultUsage(result);
@@ -735,7 +900,7 @@ export async function generateTopicBatch(input: {
         const candidateTitles = Array.from(new Set([
           asText(row.title),
           ...(Array.isArray(row.alternative_titles) ? row.alternative_titles.map(asText) : []),
-        ].map(enforceTitleLimit).filter(Boolean))).slice(0, directionLock ? 5 : 3);
+        ].map(enforceTitleLimit).filter(Boolean))).slice(0, 5);
         let acceptedTopic: TopicCandidate | undefined;
         const candidateProblems: string[] = [];
         candidateProblemsByMethod.set(method.id, candidateProblems);
@@ -776,6 +941,10 @@ export async function generateTopicBatch(input: {
               historyTitles,
               historyTopics,
               [...accepted.values()],
+              {
+                preserveDirection: Boolean(directionLock),
+                businessLine: input.account.business_line ?? "executive",
+              },
             );
             const migrationProblems = duplicateProblems.length
               ? []
@@ -851,6 +1020,7 @@ export async function generateTopicBatch(input: {
               historyTitles,
               historyTopics,
               [...accepted.values()],
+              { businessLine: input.account.business_line ?? "executive" },
             );
             if (duplicateProblems.length) {
               rejectedTitles.push(option.topic.title);

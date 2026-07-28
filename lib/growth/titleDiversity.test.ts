@@ -1,0 +1,121 @@
+import { describe, expect, it } from "vitest";
+import {
+  buildGrowthTitleFingerprint,
+  buildTopicDiversitySignature,
+  classifyTitleSentenceFrame,
+  topicBatchDuplicateProblems,
+} from "./runner";
+import type { GrowthAccount, TopicCandidate } from "./types";
+
+const topic = (
+  method_id: TopicCandidate["method_id"],
+  title: string,
+  title_promise: string,
+): TopicCandidate => ({
+  id: `${method_id}-${title}`,
+  method_group: "native",
+  method_id,
+  method_label: method_id,
+  generation_mode: "default",
+  title,
+  title_promise,
+  target_user: "35岁以上正在转型的中高管",
+  pain: "离开平台后不知道自己值多少钱",
+  hook: title,
+  origin_force: "离职交接、工牌和猎头电话",
+  conflict_judgement: "平台头衔与市场定价之间存在落差",
+  follow_reason: "持续获得职业决策判断",
+  test_variable: "标题入口",
+  expected_signal: "有效咨询",
+  repeatable_angle: "复测",
+  broad_traffic_risk: 4,
+  priority: "A",
+});
+
+describe("标题四层多样性签名", () => {
+  it("识别常见句式，而不是只看标题文字", () => {
+    expect(classifyTitleSentenceFrame("以前管20人，现在投简历没人理")).toBe("past_present");
+    expect(classifyTitleSentenceFrame("回大厂拿年薪，还是低风险创业？")).toBe("direct_choice");
+    expect(classifyTitleSentenceFrame("缺的不是机会，而是判断")).toBe("contrast_reversal");
+  });
+
+  it("保存母题、句式和素材组合，兼容现有指纹", () => {
+    const account = {
+      business_line: "executive",
+      persona: "buyer",
+    } as GrowthAccount;
+    const fingerprint = buildGrowthTitleFingerprint({
+      account,
+      topic: topic(
+        "human_pain",
+        "当了10年总监，不敢算自己值多少钱",
+        "讲清离开平台后的职业定价焦虑",
+      ),
+      generationMode: "default",
+    });
+    expect(fingerprint.normalized_fingerprint).toBeTruthy();
+    expect(fingerprint.sentence_frame).toBe("identity_inhibition");
+    expect(fingerprint.mother_topic_key).toContain("platform_pricing");
+    expect(fingerprint.material_signature).toContain("executive");
+    expect(fingerprint.diversity_version).toBe("v1");
+  });
+
+  it("文字不同但近期母题相同，仍然拦截", () => {
+    const current = topic(
+      "human_pain",
+      "工牌交回去后，我才敢问市场价",
+      "讲清离开平台后如何重新判断职业定价",
+    );
+    const signature = buildTopicDiversitySignature(
+      topic(
+        "human_pain",
+        "总监头衔离开公司还值多少钱",
+        "讲清离开平台后的市场定价变化",
+      ),
+      "executive",
+    );
+    const problems = topicBatchDuplicateProblems([current], [], [{
+      method_id: "human_pain",
+      title: "总监头衔离开公司还值多少钱",
+      ...signature,
+      batch_index: 1,
+    }], "executive");
+    expect(problems.some((item) => item.includes("近期已使用母题"))).toBe(true);
+  });
+
+  it("不同母题但连续使用同一句式，仍然拦截", () => {
+    const current = topic(
+      "human_pain",
+      "守着百万年薪，不敢递辞呈",
+      "讲清收入安全感如何阻碍离职决定",
+    );
+    const problems = topicBatchDuplicateProblems([current], [], [{
+      method_id: "human_pain",
+      title: "当着家人面，不敢说想创业",
+      sentence_frame: "identity_inhibition",
+      mother_topic_key: "entrepreneurship+family_pressure",
+      material_signature: "executive:family:conflict",
+      batch_index: 0,
+    }], "executive");
+    expect(problems.some((item) => item.includes("近期句式"))).toBe(true);
+  });
+
+  it("同一批次不接受相同母题和素材组合", () => {
+    const first = topic(
+      "human_pain",
+      "总监离职后，猎头只肯砍价",
+      "讲清离开平台后的职业定价变化",
+    );
+    const second = topic(
+      "contrarian",
+      "总监职位越高，离职后越难报价",
+      "讲清离开平台后的职业定价变化",
+    );
+    const firstSignature = buildTopicDiversitySignature(first, "executive");
+    const secondSignature = buildTopicDiversitySignature(second, "executive");
+    expect(firstSignature.mother_topic_key).toBe(secondSignature.mother_topic_key);
+    expect(firstSignature.material_signature).toBe(secondSignature.material_signature);
+    const problems = topicBatchDuplicateProblems([first, second], [], [], "executive");
+    expect(problems.some((item) => item.includes("同一母题和素材组合"))).toBe(true);
+  });
+});

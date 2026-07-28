@@ -934,7 +934,7 @@ export default function GrowthPage() {
         const rotationText = result.rotationMode === "automatic_rotation"
           ? ` 系统同时自动更新了${result.changedMethods.length}个已用满3批的母题。`
           : "";
-        setTopicMessage(`${result.sourceRefresh.message} 已生成一批全新标题，共${result.generatedCount}个，均通过锁定结构卡、独立迁移审核和全部历史去重；${result.unavailableMethods?.length || 0}个方法本轮暂停。${rotationText}旧批次仍可恢复。`);
+        setTopicMessage(`${result.sourceRefresh.message} 已换新${result.generatedCount}个标题，均通过文字、母题、句式和素材组合四层去重；${result.unavailableMethods?.length || 0}个方法本轮暂停。${rotationText}旧批次仍可恢复。`);
       }
     } catch (error) {
       const errorMessage = (error as Error).message;
