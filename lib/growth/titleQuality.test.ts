@@ -396,6 +396,11 @@ describe("标题语义去重", () => {
       "做专业岗还是转综合经营岗",
       "做专业负责人还是转经营岗",
     ],
+    [
+      "tug_of_war",
+      "岗位名好听，还是工作内容扎实好",
+      "岗位名头响还是实际内容更扎实",
+    ],
   ])("把词面不同但母题相同的线上样本判为重复", (methodId, left, right) => {
     expect(nativeTitleSemanticTopicKeys(methodId, left).length).toBeGreaterThan(0);
     expect(titlesAreMethodAwareSemanticDuplicates(methodId, left, right)).toBe(true);

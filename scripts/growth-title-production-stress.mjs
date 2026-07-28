@@ -131,6 +131,12 @@ function semanticTopicKeys(methodId, value) {
       && /(?:还是|选|转)/u.test(title),
   );
   add(
+    "decision:job_label_vs_actual_work",
+    /(?:岗位名|名头|头衔|职位名)/u.test(title)
+      && /(?:实际内容|工作内容|实际职责|具体职责|做的事)/u.test(title)
+      && /(?:还是|不如|比|反而)/u.test(title),
+  );
+  add(
     "scene:budget_freeze_team_morale",
     /预算/u.test(title)
       && /(?:冻结|砍|缩)/u.test(title)
@@ -371,7 +377,7 @@ function validateNewBatch(state, response, round) {
 
 const ledger = {
   objective: `正式部署上的6空间×${ROUNDS}批真实用户标题验收`,
-  deployment: "dpl_861hAcQDTp61s6dH6j3S6N9NA6Eh",
+  deployment: "dpl_DiNxuRUs4tmeREECAwDhYENv6q16",
   started_at: new Date().toISOString(),
   status: "running",
   batches_passed: 0,
