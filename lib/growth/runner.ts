@@ -659,7 +659,7 @@ const MAX_NATIVE_MODEL_CANDIDATES_PER_METHOD = 4;
  * 多保留几条，才能避免某一条撞到历史就让整批原生法全部空掉。
  */
 const MAX_NATIVE_FALLBACK_CANDIDATES_PER_METHOD = 6;
-/** 每个方法送入 LLM 终审的上限：两个模型候选 + 一个已过本地门禁的兜底。 */
+/** 二次审核每个方法最多保留两条模型替代题和一条静态候选。 */
 const MAX_NATIVE_AUDIT_CANDIDATES_PER_METHOD = 3;
 /**
  * 首轮终审只看“两个模型候选＋一个兜底”，避免一次审核变成性能瓶颈。
@@ -1109,9 +1109,9 @@ export function topicBatchDuplicateProblems(
 }
 
 /**
- * 语义审核只负责复核少量“本地门禁已经放行”的候选。原先把四个方法的所有
- * 模型备选和整部历史都塞进去，审核超时就会误伤整批。这里保留每法两个模型
- * 候选与一个安全兜底，并用短 id 降低 JSON 漏项率。
+ * 首轮语义审核只负责每个槽位的一条最优候选。原先把四个方法的多个候选和
+ * 整部历史都塞进去，审核偶发漏项就会误伤整批。未选中槽位才进入二审，届时
+ * 再给模型看少量替代题；两轮都使用短 id，且每一个交付标题都必须有 decision。
  */
 export function compactNativeAuditOptions(input: {
   methods: TitleMethodDefinition[];
@@ -1119,20 +1119,11 @@ export function compactNativeAuditOptions(input: {
 }) {
   const byMethod = new Map<TitleMethodId, NativeTitleCandidateOption[]>();
   let sequence = 1;
-  // 专家默认有 6 个原生方法。若仍按“每法3条”会送入18条，但审核器最多
-  // 只处理12条，后6条会因缺 decision 被误判失败。这里先按方法数均分预算。
-  const perMethodLimit = Math.max(1, Math.min(
-    MAX_NATIVE_AUDIT_CANDIDATES_PER_METHOD,
-    Math.floor(TITLE_NOVELTY_AUDIT_MAX_CANDIDATES / Math.max(1, input.methods.length)),
-  ));
   for (const method of input.methods) {
     const options = input.candidatesByMethod.get(method.id) ?? [];
-    const modelOptions = options
-      .filter((option) => option.audit.kind === "model")
-      .slice(0, Math.max(0, perMethodLimit - 1));
-    const fallbackOption = options.find((option) => option.audit.kind === "fallback");
-    const shortlist = [...modelOptions, ...(fallbackOption ? [fallbackOption] : [])]
-      .slice(0, perMethodLimit)
+    const firstOption = options.find((option) => option.audit.kind === "model")
+      ?? options.find((option) => option.audit.kind === "fallback");
+    const shortlist = (firstOption ? [firstOption] : [])
       .map((option) => ({
         ...option,
         audit: { ...option.audit, id: `N${sequence++}` },
@@ -1167,10 +1158,11 @@ export function compactNativeAuditRetryOptions(input: {
     // 额外模型候选。旧实现只拿静态候选做二审，等于把已经生成、也通过本地
     // 门禁的模型替代题直接丢掉，导致“有新题却整批失败”。二审先看未审模型
     // 候选，再看未审静态候选；每一条仍必须经过同一语义终审，绝不直接放行。
-    const shortlisted = [
-      ...unreviewed.filter((option) => option.audit.kind === "model"),
-      ...unreviewed.filter((option) => option.audit.kind === "fallback"),
-    ]
+    const modelAlternatives = unreviewed
+      .filter((option) => option.audit.kind === "model")
+      .slice(0, Math.max(1, perMethodLimit - 1));
+    const fallbackOption = unreviewed.find((option) => option.audit.kind === "fallback");
+    const shortlisted = [...modelAlternatives, ...(fallbackOption ? [fallbackOption] : [])]
       .slice(0, perMethodLimit).map((option) => ({
       ...option,
       audit: { ...option.audit, id: `R${sequence++}` },

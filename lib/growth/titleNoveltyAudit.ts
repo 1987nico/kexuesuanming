@@ -233,11 +233,11 @@ export async function auditNativeTitleBatchNovelty(
   const requestAudit = async (items: NativeTitleNoveltyCandidate[]) => llmJSON<unknown>({
       system: `${GROWTH_SYSTEM_PROMPT}\n\n你只负责标题语义新颖度审核，不生成任何标题。`,
       user: buildNativeTitleNoveltyAuditPrompt({ ...input, candidates: items, references }),
-      // 这只是极短的逐条判定。较小输出预算和 7 秒上限让一次审核在失败时
-      // 能尽快交还给调用方的单次恢复路径，而不会叠加成数十秒的重试链。
-      maxTokens: Math.max(280, Math.min(720, items.length * 54)),
+      // 这只是极短的逐条判定。首轮每槽位只审一题，二审才补替代题；较小
+      // 负载降低漏项率，同时两轮均有明确上限，不会再叠成无休止重试链。
+      maxTokens: Math.max(320, Math.min(600, items.length * 70)),
       temperature: 0,
-      timeoutMs: 7_000,
+      timeoutMs: 10_000,
       jsonRetries: 0,
       // 主模型超时时使用真正不同的备用模型快速完成同一份只读审核；审核仍然
       // fail-closed，不会把未经审核的模型标题放行。
