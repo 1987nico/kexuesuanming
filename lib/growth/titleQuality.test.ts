@@ -116,6 +116,25 @@ describe("标题语义去重", () => {
     expect(result.reasons).toContain("父母压力下的求职困境母题相同");
   });
 
+  it("把花家里钱却不敢说的表达也判为父母压力母题", () => {
+    const result = evaluateTitleSemanticDuplicate(
+      "花百万留学，不敢跟爸妈说秋招没方向",
+      "花家里钱留学，秋招方向全错不敢说",
+    );
+    expect(result.duplicate).toBe(true);
+    expect(result.reasons).toContain("父母压力下的求职困境母题相同");
+  });
+
+  it("把岗没选对归为方向错位，避免反认知题换词重复", () => {
+    const result = evaluateTitleSemanticDuplicate(
+      "以为海归吃香，投了才知道岗没选对",
+      "以为海归好投，其实方向错了白搭",
+    );
+    expect(result.duplicate).toBe(true);
+    expect(result.left.conflict).toBe("role_mismatch");
+    expect(result.right.conflict).toBe("role_mismatch");
+  });
+
   it("允许同一业务下材料和冲突都不同的标题", () => {
     const first = "留学生秋招前先查时间线";
     const second = "回国求职前，先做岗位筛选";

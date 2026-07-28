@@ -103,7 +103,7 @@ const ALLOWED_LATIN_TERMS = new Set([
 ]);
 
 const AUDIENCE_PATTERNS: Array<[string, RegExp]> = [
-  ["parent", /家长|妈妈|爸爸|爸妈|父母|我家孩子/gu],
+  ["parent", /家长|妈妈|爸爸|爸妈|父母|家里|家人|我家孩子/gu],
   ["overseas_student", /留学生|留洋|海归|留英|留学|读硕|海外|工签/gu],
   ["executive", /中高管|高管|总监|中层|管理层|部门总|老板/gu],
   ["advisor", /顾问|老师|机构|陪跑|咨询师/gu],
@@ -117,7 +117,8 @@ const SCENARIO_PATTERNS: Array<[string, RegExp]> = [
   ["stay_or_return", /(?:留英|留海外|海外|工签).*(?:回国|回沪)|(?:回国|回沪).*(?:留英|留海外|海外|工签)/gu],
   ["career_switch_on_platform", /(?:期权|工牌|平台|总监|头衔).*(?:转行|转型|换赛道|转方向)|(?:转行|转型|换赛道|转方向).*(?:期权|工牌|平台|总监|头衔)/gu],
   ["recruiting_timeline", /秋招|提前批|招聘节奏|时间线|截止|窗口|节点/gu],
-  ["job_targeting", /岗位地图|选岗|岗位|定位|方向|赛道/gu],
+  // “岗没选对”与“方向错”都属于选岗/定位问题；不把前者漏到“投递”场景里。
+  ["job_targeting", /岗位地图|选岗|岗(?:位)?|定位|方向|赛道/gu],
   ["resume_application", /简历|网申|投简历|投递|海投/gu],
   ["interview", /面试|笔试|终面|自我介绍/gu],
   ["resignation", /离职|辞职|辞呈|裸辞|交接/gu],
@@ -129,7 +130,7 @@ const SCENARIO_PATTERNS: Array<[string, RegExp]> = [
 const CONFLICT_PATTERNS: Array<[string, RegExp]> = [
   // 家庭投入后不敢说出秋招方向问题，是同一个可识别的内容母题；
   // 无论语序是“先说爸妈”还是“先说不敢”，换词后都不能伪装成新标题。
-  ["parent_job_search_pressure", /(?=[\s\S]*(?:爸妈|父母|家里|家长))(?=[\s\S]*(?:秋招|求职|投简历|面试|笔试))(?=[\s\S]*(?:不敢|没方向|方向模糊|全挂|没回音|没信|其实|以为|乱投))[\s\S]+/gu],
+  ["parent_job_search_pressure", /(?=[\s\S]*(?:爸妈|父母|家里|家长))(?=[\s\S]*(?:秋招|求职|投简历|面试|笔试))(?=[\s\S]*(?:不敢|没方向|方向模糊|方向(?:全)?错|全错|全挂|没回音|没信|其实|以为|乱投))[\s\S]+/gu],
   ["internship_or_autumn_recruitment", /(?:实习|补实习).*(?:还是|or|vs|VS).*(?:秋招|校招)|(?:秋招|校招).*(?:还是|or|vs|VS).*(?:实习|补实习)/giu],
   ["internship_or_full_time", /(?:实习|补实习|项目).*(?:还是|or|vs|VS).*(?:全职|正职|转正)|(?:全职|正职|转正).*(?:还是|or|vs|VS).*(?:实习|补实习|项目)/giu],
   ["misdirected_application", /瞎撞|乱投|海投|没回音|没人理|零回应/gu],
@@ -137,7 +138,7 @@ const CONFLICT_PATTERNS: Array<[string, RegExp]> = [
   ["career_switch_fear", /不敢.{0,6}(?:转行|转型|换赛道|离职)|怕.{0,6}(?:转行|转型|换赛道|离职)/gu],
   ["resignation_fear", /不敢.{0,6}(?:离职|辞职|裸辞)|怕.{0,6}(?:离职|辞职|裸辞)/gu],
   ["timing_risk", /赶不上|错过|来不及|提前批|截止|窗口/gu],
-  ["role_mismatch", /方向错|岗不对|不匹配|选错岗|岗位不清/gu],
+  ["role_mismatch", /方向错|岗不对|岗(?:位)?没选对|没选对岗|不匹配|选错岗|岗位不清/gu],
   ["pricing_loss", /不值钱|砍价|市场价|定价|降薪/gu],
   ["risk_validation", /风险|踩坑|验证|试错|排除|胜算/gu],
 ];

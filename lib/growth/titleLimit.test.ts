@@ -120,6 +120,12 @@ describe("标题完整历史语义去重", () => {
     expect(findDuplicateTitle(candidate, [history])).toBe(history);
   });
 
+  it("海归方向错位的反认知换词后仍必须拦截", () => {
+    const history = "以为海归吃香，投了才知道岗没选对";
+    const candidate = "以为海归好投，其实方向错了白搭";
+    expect(titlesAreNearDuplicate(candidate, history)).toBe(true);
+  });
+
   it("父母压力母题换成另一种坏消息后仍必须拦截", () => {
     const history = "花爸妈钱留学，不敢说面试全挂";
     const candidate = {
