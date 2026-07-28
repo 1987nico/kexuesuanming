@@ -2077,6 +2077,22 @@ export async function generateTopicBatch(input: {
       usage,
     };
   }
+  console.warn("[growth] native title final diagnostic", JSON.stringify({
+    business_line: input.account.business_line ?? "executive",
+    persona: input.account.persona,
+    native_title_audit: nativeTitleAudit,
+    missing_native_method_ids: missingMethods.filter((method) => !method.sourceRequired).map((method) => method.id),
+    native_candidate_counts: nativeMethods.map((method) => {
+      const candidates = nativeCandidatesByMethod.get(method.id) ?? [];
+      return {
+        method_id: method.id,
+        total: candidates.length,
+        model: candidates.filter((candidate) => candidate.audit.kind === "model").length,
+        fallback: candidates.filter((candidate) => candidate.audit.kind === "fallback").length,
+        accepted: accepted.has(method.id),
+      };
+    }),
+  }));
   if (input.allowSourcePause) {
     return {
       topics: methods.flatMap((method) => {

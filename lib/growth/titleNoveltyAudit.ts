@@ -229,27 +229,58 @@ export async function auditNativeTitleBatchNovelty(
     };
   }
 
-  const result = await llmJSON<unknown>({
-    system: `${GROWTH_SYSTEM_PROMPT}\n\n你只负责标题语义新颖度审核，不生成任何标题。`,
-    user: buildNativeTitleNoveltyAuditPrompt({ ...input, candidates, references }),
-    // 12 个候选 × 极短判定足够完成审核；较低输出预算避免模型在最后一项
-    // 被截断，从而把可交付的一整批标题全部挡住。
-    maxTokens: 900,
-    temperature: 0,
-    timeoutMs: 8_000,
-    jsonRetries: 0,
-    // 主模型超时时使用真正不同的备用模型快速完成同一份只读审核；审核仍然
-    // fail-closed，不会把未经审核的模型标题放行。
-    allowFallback: true,
-  });
+  const requestAudit = async (items: NativeTitleNoveltyCandidate[]) => llmJSON<unknown>({
+      system: `${GROWTH_SYSTEM_PROMPT}\n\n你只负责标题语义新颖度审核，不生成任何标题。`,
+      user: buildNativeTitleNoveltyAuditPrompt({ ...input, candidates: items, references }),
+      // 12 个候选 × 极短判定足够完成审核；较低输出预算避免模型在最后一项
+      // 被截断，从而把可交付的一整批标题全部挡住。响应偶发漏项时，下方只会
+      // 追问漏掉的候选，而不会整批重跑。
+      maxTokens: Math.max(360, Math.min(900, items.length * 72)),
+      temperature: 0,
+      timeoutMs: 10_000,
+      jsonRetries: 0,
+      // 主模型超时时使用真正不同的备用模型快速完成同一份只读审核；审核仍然
+      // fail-closed，不会把未经审核的模型标题放行。
+      allowFallback: true,
+    });
+  const result = await requestAudit(candidates);
+  let decisions = normalizeNativeTitleNoveltyDecisions(result.data, candidates, references);
+  let coverage = nativeTitleNoveltyCoverage(result.data, candidates);
+  let usage = {
+    provider: result.raw.provider,
+    model: result.raw.model,
+    input_tokens: result.raw.usage?.inputTokens,
+    output_tokens: result.raw.usage?.outputTokens,
+  };
+
+  // 模型偶发只返回前几项 decision 时，不能把“漏掉”误判为全部重复，更不能把
+  // 它们直接放行。只拿漏项重新做一次极短审核，成功则和首轮结果合并；仍漏项
+  // 时继续 fail-closed 交给上层的静态候选恢复路径。
+  if (!coverage.complete) {
+    const missingCandidates = candidates.filter((candidate) => coverage.missingCandidateIds.includes(candidate.id));
+    const retry = await requestAudit(missingCandidates);
+    const retryDecisions = normalizeNativeTitleNoveltyDecisions(retry.data, missingCandidates, references);
+    const retryCoverage = nativeTitleNoveltyCoverage(retry.data, missingCandidates);
+    const retryByCandidateId = new Map(retryDecisions.map((decision) => [decision.candidateId, decision]));
+    decisions = decisions.map((decision) => (
+      coverage.missingCandidateIds.includes(decision.candidateId)
+        ? retryByCandidateId.get(decision.candidateId) ?? decision
+        : decision
+    ));
+    coverage = {
+      complete: retryCoverage.complete,
+      missingCandidateIds: retryCoverage.missingCandidateIds,
+    };
+    usage = {
+      provider: retry.raw.provider,
+      model: retry.raw.model,
+      input_tokens: (usage.input_tokens ?? 0) + (retry.raw.usage?.inputTokens ?? 0),
+      output_tokens: (usage.output_tokens ?? 0) + (retry.raw.usage?.outputTokens ?? 0),
+    };
+  }
   return {
-    decisions: normalizeNativeTitleNoveltyDecisions(result.data, candidates, references),
-    coverage: nativeTitleNoveltyCoverage(result.data, candidates),
-    usage: {
-      provider: result.raw.provider,
-      model: result.raw.model,
-      input_tokens: result.raw.usage?.inputTokens,
-      output_tokens: result.raw.usage?.outputTokens,
-    },
+    decisions,
+    coverage,
+    usage,
   };
 }

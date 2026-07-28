@@ -139,9 +139,59 @@ describe("原生标题语义审核二次恢复", () => {
       allowSourcePause: true,
     });
 
-    expect(auditCalls).toBe(2);
+    // 二审自身会先追问一次漏掉的候选；仍然漏项才会 fail-closed。
+    expect(auditCalls).toBe(3);
     expect(result.topics).toHaveLength(0);
     expect(result.nativeTitleAudit?.status).toBe("incomplete");
     expect(result.methodDeliveries.every((delivery) => delivery.status === "failed")).toBe(true);
+  });
+
+  it("审核偶发漏项时，只补审漏掉的候选后即可完成交付", async () => {
+    let auditCalls = 0;
+    llmJSONMock.mockImplementation(async (input: { user: string }) => {
+      if (!input.user.includes("语义新颖度终审")) return modelResponse(generatedTopics());
+      auditCalls += 1;
+      const candidates = auditCandidates(input.user);
+      if (auditCalls === 1) {
+        return modelResponse({
+          decisions: candidates.map((candidate) => ({
+            candidate_id: candidate.candidate_id,
+            novel: false,
+            duplicate_reference_ids: [],
+            conflicting_candidate_ids: [],
+            reason: "模拟历史重复",
+          })),
+        });
+      }
+      if (auditCalls === 2) {
+        return modelResponse({
+          decisions: candidates.slice(0, -1).map((candidate) => ({
+            candidate_id: candidate.candidate_id,
+            novel: true,
+            duplicate_reference_ids: [],
+            conflicting_candidate_ids: [],
+            reason: "故意漏掉一项",
+          })),
+        });
+      }
+      return modelResponse({
+        decisions: candidates.map((candidate) => ({
+          candidate_id: candidate.candidate_id,
+          novel: true,
+          duplicate_reference_ids: [],
+          conflicting_candidate_ids: [],
+          reason: "补审通过",
+        })),
+      });
+    });
+
+    const result = await generateTopicBatch({
+      account,
+      methodIds: ["human_pain", "tug_of_war"],
+    });
+
+    expect(auditCalls).toBe(3);
+    expect(result.nativeTitleAudit?.status).toBe("passed");
+    expect(result.topics).toHaveLength(2);
   });
 });
