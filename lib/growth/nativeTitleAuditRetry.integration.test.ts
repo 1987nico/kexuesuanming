@@ -144,9 +144,9 @@ describe("原生标题语义审核二次恢复", () => {
       allowSourcePause: true,
     });
 
-    // 协议漏项会继续进入受限的后续审核波次；即使四波都漏项，也绝不
-    // 放行任何未经完整审核的标题。
-    expect(auditCalls).toBe(4);
+    // 两轮旧候选审核后会转向定向补题；此 mock 故意只返回旧题，补题会被
+    // 本地历史去重挡住。无论如何都绝不放行未经完整审核的标题。
+    expect(auditCalls).toBe(2);
     expect(result.topics.map((topic) => topic.method_id)).toEqual(["human_pain"]);
     expect(result.nativeTitleAudit?.status).toBe("incomplete");
     expect(result.methodDeliveries.find((delivery) => delivery.method_id === "human_pain")?.status).toBe("ready");
@@ -339,7 +339,7 @@ describe("原生标题语义审核二次恢复", () => {
       }
       auditCalls += 1;
       const candidates = auditCandidates(input.user);
-      const isRecoveryAudit = auditCalls === 5;
+      const isRecoveryAudit = auditCalls === 3;
       return modelResponse({
         decisions: candidates.map((candidate) => ({
           candidate_id: candidate.candidate_id,
@@ -358,8 +358,108 @@ describe("原生标题语义审核二次恢复", () => {
     });
 
     expect(generationCalls).toBe(3);
-    expect(auditCalls).toBe(5);
+    expect(auditCalls).toBe(3);
     expect(result.topics.map((topic) => topic.title)).toEqual([recoveredPain, recoveredChoice]);
+    expect(result.nativeTitleAudit?.status).toBe("passed");
+  });
+
+  it("首轮语义审核连续异常后，仍会转向定向补题并只交付已审核标题", async () => {
+    let generationCalls = 0;
+    let auditCalls = 0;
+    const recoveredPain = "年终奖到账，我更怕留错位置";
+    const recoveredChoice = "继续带团队，还是先去试水？";
+    llmJSONMock.mockImplementation(async (input: { user: string }) => {
+      if (!input.user.includes("语义新颖度终审")) {
+        generationCalls += 1;
+        return generationCalls <= 2
+          ? modelResponse(generatedTopics())
+          : modelResponse({
+            topics: [
+              { method_id: "human_pain", title: recoveredPain, alternative_titles: [] },
+              { method_id: "tug_of_war", title: recoveredChoice, alternative_titles: [] },
+            ],
+          });
+      }
+      auditCalls += 1;
+      if (auditCalls <= 2) throw new Error("audit transport timeout");
+      const candidates = auditCandidates(input.user);
+      return modelResponse({
+        decisions: candidates.map((candidate) => ({
+          candidate_id: candidate.candidate_id,
+          novel: true,
+          natural: true,
+          duplicate_reference_ids: [],
+          conflicting_candidate_ids: [],
+          reason: "定向补题通过",
+        })),
+      });
+    });
+
+    const result = await generateTopicBatch({
+      account,
+      methodIds: ["human_pain", "tug_of_war"],
+    });
+
+    expect(generationCalls).toBe(3);
+    expect(auditCalls).toBe(3);
+    expect(result.topics.map((topic) => topic.title)).toEqual([recoveredPain, recoveredChoice]);
+    expect(result.nativeTitleAudit?.status).toBe("passed");
+  });
+
+  it("首轮没有本地候选时，仍会为锁定槽位定向补题并审核交付", async () => {
+    let generationCalls = 0;
+    const lockedTitle = "升职后，我更不敢换方向";
+    const recoveredTitle = "升职后，我为何先不换方向";
+    const lockedTopic = {
+      id: "locked-human-pain",
+      method_group: "native",
+      method_id: "human_pain",
+      method_label: "行业人性痛点",
+      generation_mode: "default",
+      title: lockedTitle,
+      title_promise: "讲清升职后的职业选择焦虑。",
+      target_user: account.target_user,
+      pain: account.core_problem,
+      hook: lockedTitle,
+      origin_force: "晋升后重新判断去留",
+      conflict_judgement: "先守住平台还是验证新机会",
+      follow_reason: "获得职业判断",
+      test_variable: "标题测试",
+      expected_signal: "有效咨询",
+      repeatable_angle: "锁定方向的自然改写",
+      broad_traffic_risk: 2,
+      priority: "A",
+    } as any;
+    llmJSONMock.mockImplementation(async (input: { user: string }) => {
+      if (!input.user.includes("语义新颖度终审")) {
+        generationCalls += 1;
+        return generationCalls <= 2
+          ? modelResponse({ topics: [] })
+          : modelResponse({
+            topics: [{ method_id: "human_pain", title: recoveredTitle, alternative_titles: [] }],
+          });
+      }
+      const candidates = auditCandidates(input.user);
+      return modelResponse({
+        decisions: candidates.map((candidate) => ({
+          candidate_id: candidate.candidate_id,
+          novel: true,
+          natural: true,
+          duplicate_reference_ids: [],
+          conflicting_candidate_ids: [],
+          reason: "锁定方向补题通过",
+        })),
+      });
+    });
+
+    const result = await generateTopicBatch({
+      account,
+      methodIds: ["human_pain"],
+      directionLocks: { human_pain: lockedTopic },
+    });
+
+    expect(generationCalls).toBe(3);
+    expect(result.topics.map((topic) => topic.title)).toEqual([recoveredTitle]);
     expect(result.nativeTitleAudit?.status).toBe("passed");
   });
 });

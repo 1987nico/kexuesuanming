@@ -89,4 +89,23 @@ describe("原生标题语义审核候选预算", () => {
     expect(total.some((item) => item.audit.kind === "fallback")).toBe(true);
     expect(total.every((item) => !audited.has(normalizeTitleForComparison(item.topic.title)))).toBe(true);
   });
+
+  it("定向补题只有模型候选时，不会为不存在的兜底候选浪费审核名额", () => {
+    const methods = methodsForPersona("buyer", "default").filter((method) => !method.sourceRequired);
+    const candidatesByMethod = new Map(methods.map((method) => [method.id, [
+      option(method.id, `${method.id}补题一`, "model"),
+      option(method.id, `${method.id}补题二`, "model"),
+      option(method.id, `${method.id}补题三`, "model"),
+      option(method.id, `${method.id}补题四`, "model"),
+    ]]));
+
+    const compact = compactNativeAuditOptions({ methods, candidatesByMethod, idPrefix: "G" });
+    const total = methods.flatMap((method) => compact.get(method.id) ?? []);
+    expect(total).toHaveLength(12);
+    for (const method of methods) {
+      const options = compact.get(method.id) ?? [];
+      expect(options).toHaveLength(3);
+      expect(options.every((item) => item.audit.kind === "model")).toBe(true);
+    }
+  });
 });
