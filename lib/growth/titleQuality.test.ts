@@ -205,6 +205,34 @@ describe("标题语义去重", () => {
     expect(result.reasons).toContain("目标岗位与保底 offer 的二选一母题相同");
   });
 
+  it("把留当地和回国求职的前后换序判为重复", () => {
+    const result = evaluateTitleSemanticDuplicate(
+      "留当地，还是回国求职？",
+      "回国求职，还是留在当地？",
+    );
+    expect(result.duplicate).toBe(true);
+    expect(result.left.scenario).toBe("stay_or_return");
+    expect(result.right.conflict).toBe("stay_or_return_choice");
+  });
+
+  it("把海归光环转向岗位或简历的怀旧改写判为重复", () => {
+    const result = evaluateTitleSemanticDuplicate(
+      "海归吃香那几年，如今还要看岗位",
+      "当年海归吃香，现在先看简历匹配",
+    );
+    expect(result.duplicate).toBe(true);
+    expect(result.reasons).toContain("海归光环转向求职准备的怀旧母题相同");
+  });
+
+  it("把过去看学校或学历、现在练面试的改写判为重复", () => {
+    const result = evaluateTitleSemanticDuplicate(
+      "以前拼学校，现在练面试",
+      "以前看学历，现在练面试",
+    );
+    expect(result.duplicate).toBe(true);
+    expect(result.reasons).toContain("学历转向面试准备的怀旧母题相同");
+  });
+
   it("不同句式的岗位错位标题不被全历史语义规则过度拦截", () => {
     const result = evaluateTitleSemanticDuplicate(
       "花家里钱留学，投错岗不敢说",

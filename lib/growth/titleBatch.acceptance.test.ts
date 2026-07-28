@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { methodsForPersona } from "./methods";
 import {
+  fallbackTitleCandidates,
   fallbackTitleOptions,
   topicBatchDuplicateProblems,
 } from "./runner";
@@ -50,6 +51,18 @@ function topic(
 }
 
 describe("标题生成30批用户验收标准（确定性兜底回归）", () => {
+  it("兜底候选保留自己的正文承诺和母题键", () => {
+    const candidates = fallbackTitleCandidates(account("overseas_student", "buyer"), "tug_of_war");
+    const internship = candidates.find((item) => item.title === "先补实习，还是直接投递？");
+    const localOrReturn = candidates.find((item) => item.title === "留当地，还是回国求职？");
+    const returnOrLocal = candidates.find((item) => item.title === "回国求职，还是留在当地？");
+
+    expect(internship?.title_promise).toContain("先补实习");
+    expect(internship?.title_promise).toContain("直接投递");
+    expect(internship?.title_promise).not.toContain("留当地与回国求职");
+    expect(localOrReturn?.premise_key).toBe(returnOrLocal?.premise_key);
+  });
+
   it("所有内置原生兜底标题本身都能通过发布质量门禁", () => {
     const businessLines: GrowthBusinessLine[] = ["overseas_student", "executive"];
     const personas: GrowthPersona[] = ["buyer", "merchant", "expert"];

@@ -535,6 +535,7 @@ export function buildGrowthTitleFingerprint(input: {
       frame: quality.signature.frame,
     },
     ...diversity,
+    mother_topic_key: input.topic.fallback_premise_key ?? diversity.mother_topic_key,
     diversity_version: "v1",
     business_line: input.account.business_line ?? "executive",
     persona: input.account.persona,
@@ -686,22 +687,101 @@ export function selectFreshTitle(
 }
 
 /** 仅供原生法内部兜底与回归测试使用；来源型方法不会使用此池伪造母题。 */
-export function fallbackTitleOptions(account: GrowthAccount, methodId: TitleMethodId) {
-  const [primary] = fallbackTitles(account)[methodId];
+export interface FallbackTitleCandidate {
+  title: string;
+  /** 每个兜底标题自己的正文承诺，不能复用该方法主标题的承诺。 */
+  title_promise: string;
+  /** 用于近期批次防换皮的候选母题键。 */
+  premise_key: string;
+}
+
+function fallbackCandidatePromise(
+  methodId: TitleMethodId,
+  title: string,
+  primaryTitle: string,
+  primaryPromise: string,
+) {
+  if (title === primaryTitle) return primaryPromise;
+  const cleanTitle = title.replace(/[，。！？?！]/gu, "").trim();
+  if (methodId === "tug_of_war") {
+    const [left, right] = cleanTitle.split("还是").map((item) => item.replace(/[，、]/gu, "").trim());
+    if (left && right) return `真实比较“${left}”与“${right}”两条路径各自的条件和取舍。`;
+  }
+  if (methodId === "human_pain") {
+    return `讲清“${cleanTitle}”背后的真实压力，以及下一步应该先确认什么。`;
+  }
+  if (methodId === "contrarian") {
+    return `解释“${cleanTitle}”这个反转成立的条件，避免把表面优势当成结论。`;
+  }
+  if (methodId === "nostalgia") {
+    return `通过“${cleanTitle}”里的今昔对比，讲清今天求职应优先调整什么。`;
+  }
+  if (methodId === "inventory" || methodId === "scarce_material") {
+    return `围绕“${cleanTitle}”直接交付正文中可以照着执行的步骤或清单。`;
+  }
+  if (methodId === "superlative") {
+    return `说明“${cleanTitle}”所指风险出现的条件，以及如何提前避免。`;
+  }
+  return `围绕“${cleanTitle}”兑现标题承诺，并给出具体判断或动作。`;
+}
+
+function fallbackCandidatePremiseKey(account: GrowthAccount, methodId: TitleMethodId, title: string) {
+  const canonical = canonicalizeGrowthTitle(title);
+  if (account.business_line === "overseas_student" && methodId === "tug_of_war") {
+    if (/(?:留当地|留在当地).*(?:回国|回沪)|(?:回国|回沪).*(?:留当地|留在当地)/u.test(canonical)) {
+      return "overseas:stay_or_return:local";
+    }
+    if (/留英等工签.*秋招/u.test(canonical)) return "overseas:stay_or_return:visa_or_autumn";
+  }
+  if (account.business_line === "overseas_student" && methodId === "nostalgia") {
+    if (/海归吃香/u.test(canonical)) return "overseas:nostalgia:returnee_halo_to_job_readiness";
+    if (/(?:拼学校|看学历).*(?:练|补|准备).{0,4}面试/u.test(canonical)) {
+      return "overseas:nostalgia:credential_to_interview";
+    }
+  }
+  // 其余标题仍有稳定的候选级母题键；已知同义母题通过上面的显式归并，
+  // 不用粗粒度关键词把不同的真实场景一并挡掉。
+  return `fallback:${account.business_line ?? "executive"}:${account.persona}:${methodId}:${normalizeTitleHistoryFingerprint(title)}`;
+}
+
+/**
+ * 原生法模型异常时使用的结构化候选。每一条都带自己的承诺和母题键，
+ * 因此标题替换不会把上一条标题的正文承诺错带到新标题上。
+ */
+export function fallbackTitleCandidates(account: GrowthAccount, methodId: TitleMethodId): FallbackTitleCandidate[] {
+  const [primary, primaryPromise] = fallbackTitles(account)[methodId];
   const variants = account.business_line === "overseas_student"
     ? OVERSEAS_STUDENT_FALLBACK_TITLE_VARIANTS[methodId]
     : EXECUTIVE_FALLBACK_TITLE_VARIANTS[methodId];
   const emergency = NATIVE_EMERGENCY_TITLE_VARIANTS[account.business_line ?? "executive"][methodId] ?? [];
-  return Array.from(new Set([primary, ...variants, ...emergency]));
+  return Array.from(new Set([primary, ...variants, ...emergency])).map((title) => ({
+    title,
+    title_promise: fallbackCandidatePromise(methodId, title, primary, primaryPromise),
+    premise_key: fallbackCandidatePremiseKey(account, methodId, title),
+  }));
 }
 
-function fallbackTopic(account: GrowthAccount, method: TitleMethodDefinition, mode: MethodGenerationMode, source?: TopicSourceSnapshot, titleOverride?: string): TopicCandidate {
+export function fallbackTitleOptions(account: GrowthAccount, methodId: TitleMethodId) {
+  return fallbackTitleCandidates(account, methodId).map((candidate) => candidate.title);
+}
+
+function fallbackTopic(
+  account: GrowthAccount,
+  method: TitleMethodDefinition,
+  mode: MethodGenerationMode,
+  source?: TopicSourceSnapshot,
+  titleOverride?: string,
+  candidate?: FallbackTitleCandidate,
+): TopicCandidate {
   const [title, promise] = fallbackTitles(account)[method.id];
   const isOverseas = account.business_line === "overseas_student";
   const topic: TopicCandidate = {
     id: id(), method_group: method.group, method_id: method.id, method_label: method.label, generation_mode: mode,
-    title: enforceTitleLimit(titleOverride || title), title_promise: promise, target_user: account.target_user, pain: account.core_problem,
-    hook: title, source_snapshot: source,
+    title: enforceTitleLimit(candidate?.title || titleOverride || title),
+    title_promise: candidate?.title_promise || promise,
+    fallback_premise_key: candidate?.premise_key,
+    target_user: account.target_user, pain: account.core_problem,
+    hook: candidate?.title || title, source_snapshot: source,
     internal_insight_source: method.group === "native" && !method.sourceRequired ? account.trust_source : undefined,
     origin_force: isOverseas ? "使用留学生熟悉的毕业、投递、回国或留当地求职场景。" : "使用中高管熟悉的职位、离职、跳槽或职业路径场景。",
     conflict_judgement: isOverseas ? "把留学投入与真实岗位匹配之间的落差放到标题中。" : "把平台位置与市场定价之间的落差放到标题中。",
@@ -842,6 +922,7 @@ function topicCandidateDuplicateProblems(
   }
   if (!options.preserveDirection) {
     const diversity = buildTopicDiversitySignature(topic, options.businessLine);
+    const currentPremiseKey = topic.fallback_premise_key ?? diversity.mother_topic_key;
     // “换一批标题”不能只换词继续写同一原生法母题。只对同一原生方法的
     // 最近五批启用“母题＋人物/场景/结果素材”冷却，避免把宽泛的“离职/秋招”
     // 一概误杀；跨方法仍由语义近似门禁判断。单槽换题保留方向，不走这条规则。
@@ -854,7 +935,7 @@ function topicCandidateDuplicateProblems(
         return historicalMethod?.group === "native"
           && Boolean(item.mother_topic_key)
           && Boolean(item.material_signature)
-          && item.mother_topic_key === diversity.mother_topic_key
+          && item.mother_topic_key === currentPremiseKey
           && item.material_signature === diversity.material_signature;
       });
       if (repeatedRecentNativePremise) {
@@ -865,7 +946,8 @@ function topicCandidateDuplicateProblems(
     }
     const sameBatchMaterial = accepted.find((item) => {
       const other = buildTopicDiversitySignature(item, options.businessLine);
-      return other.mother_topic_key === diversity.mother_topic_key
+      const otherPremiseKey = item.fallback_premise_key ?? other.mother_topic_key;
+      return otherPremiseKey === currentPremiseKey
         && other.material_signature === diversity.material_signature;
     });
     if (sameBatchMaterial) {
@@ -1383,8 +1465,8 @@ export async function generateTopicBatch(input: {
     // 方向换掉；主批次则可以安全使用新的场景候选。
     if (input.directionLocks?.[method.id]) continue;
     const fallbackProblems: string[] = [];
-    for (const title of fallbackTitleOptions(input.account, method.id)) {
-      const topic = fallbackTopic(input.account, method, generationMode, undefined, title);
+    for (const candidate of fallbackTitleCandidates(input.account, method.id)) {
+      const topic = fallbackTopic(input.account, method, generationMode, undefined, candidate.title, candidate);
       topic.hook = topic.title;
       const problems = [
         ...titleQualityProblems(topic, input.account),

@@ -686,6 +686,11 @@ export interface TopicCandidate {
   generation_mode: MethodGenerationMode;
   title: string;
   title_promise: string;
+  /**
+   * 仅用于原生法的系统兜底候选：记录这个候选对应的可复用母题。
+   * 不展示给操作者，写入标题指纹后用于避免后续批次把同一件事换词重发。
+   */
+  fallback_premise_key?: string;
   /** 操作者编辑标题后，必须重新同步正文承诺，才能进入正文生成。 */
   title_promise_status?: "synced" | "stale" | "invalid";
   title_promise_validation?: string;

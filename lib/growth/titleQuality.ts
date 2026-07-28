@@ -124,7 +124,7 @@ const SCENARIO_PATTERNS: Array<[string, RegExp]> = [
   ["internship_vs_autumn_recruitment", /(?:实习|补实习).*(?:秋招|校招)|(?:秋招|校招).*(?:实习|补实习)/gu],
   ["internship_vs_full_time", /(?:实习|补实习|项目).*(?:全职|正职|转正)|(?:全职|正职|转正).*(?:实习|补实习|项目)/gu],
   ["return_job_search", /(?:回国|回来|回沪).*(?:投简历|投递|海投)|(?:投简历|投递|海投).*(?:回国|回来|回沪)/gu],
-  ["stay_or_return", /(?:留英|留海外|海外|工签).*(?:回国|回沪)|(?:回国|回沪).*(?:留英|留海外|海外|工签)/gu],
+  ["stay_or_return", /(?:留英|留海外|海外|工签|留(?:在)?当地).*(?:回国|回沪)|(?:回国|回沪).*(?:留英|留海外|海外|工签|留(?:在)?当地)/gu],
   ["career_switch_on_platform", /(?:期权|工牌|平台|总监|头衔).*(?:转行|转型|换赛道|转方向)|(?:转行|转型|换赛道|转方向).*(?:期权|工牌|平台|总监|头衔)/gu],
   ["recruiting_timeline", /秋招|提前批|招聘节奏|时间线|截止|窗口|节点/gu],
   // “岗没选对”与“方向错”都属于选岗/定位问题；不把前者漏到“投递”场景里。
@@ -152,7 +152,7 @@ const CONFLICT_PATTERNS: Array<[string, RegExp]> = [
   ["internship_or_autumn_recruitment", /(?:实习|补实习).*(?:还是|or|vs|VS).*(?:秋招|校招)|(?:秋招|校招).*(?:还是|or|vs|VS).*(?:实习|补实习)/giu],
   ["internship_or_full_time", /(?:实习|补实习|项目).*(?:还是|or|vs|VS).*(?:全职|正职|转正)|(?:全职|正职|转正).*(?:还是|or|vs|VS).*(?:实习|补实习|项目)/giu],
   ["misdirected_application", /瞎撞|乱投|海投|没回音|没人理|零回应/gu],
-  ["stay_or_return_choice", /(?:留英|海外|工签).*(?:还是|or|vs|VS).*(?:回国|回沪)|(?:回国|回沪).*(?:还是|or|vs|VS).*(?:留英|海外|工签)/giu],
+  ["stay_or_return_choice", /(?:留英|海外|工签|留(?:在)?当地).*(?:还是|or|vs|VS).*(?:回国|回沪)|(?:回国|回沪).*(?:还是|or|vs|VS).*(?:留英|海外|工签|留(?:在)?当地)/giu],
   ["career_switch_fear", /不敢.{0,6}(?:转行|转型|换赛道|离职)|怕.{0,6}(?:转行|转型|换赛道|离职)/gu],
   ["resignation_fear", /不敢.{0,6}(?:离职|辞职|裸辞)|怕.{0,6}(?:离职|辞职|裸辞)/gu],
   ["timing_risk", /赶不上|错过|来不及|提前批|截止|窗口/gu],
@@ -358,6 +358,26 @@ function isCredentialJobSearchGap(title: string) {
 }
 
 /**
+ * “海归吃香的过去”对比“今天仍要看岗位/简历”是同一条怀旧母题；
+ * 不能只把末尾的岗位、简历换掉，就作为一批新标题再次交付。
+ */
+function isReturneeHaloToJobReadinessShift(title: string) {
+  const canonical = canonicalizeGrowthTitle(title);
+  return /(?:海归|留学|海外).*(?:吃香|光环|背景)|(?:吃香|光环|背景).*(?:海归|留学|海外)/u.test(canonical)
+    && /当年|以前|过去|从前|那几年|现在|如今/u.test(canonical)
+    && /岗位|简历|面试|秋招|投递/u.test(canonical);
+}
+
+/**
+ * “过去看学校/学历、现在练面试”只替换了学历词，仍是同一条今昔反差母题。
+ * 这里限于同一个“面试准备”落点，避免把不同的求职步骤一概判重。
+ */
+function isCredentialToInterviewShift(title: string) {
+  const canonical = canonicalizeGrowthTitle(title);
+  return /(?:以前|当年|过去|从前).*(?:学校|学历|名校|背景).*(?:现在|如今).*(?:练|补|准备).{0,4}面试|(?:练|补|准备).{0,4}面试.*(?:以前|当年|过去|从前).*(?:学校|学历|名校|背景)/u.test(canonical);
+}
+
+/**
  * 判定“换一批”是否只是换了少量措辞。
  * 同时命中受众、场景、冲突时，即使词面相差较大，也属于同一标题方向。
  */
@@ -403,6 +423,10 @@ export function evaluateTitleSemanticDuplicate(leftTitle: string, rightTitle: st
   const isSameCredentialJobSearchGap = isCredentialJobSearchGap(leftTitle)
     && isCredentialJobSearchGap(rightTitle)
     && left.frame === right.frame;
+  const isSameReturneeHaloToJobReadinessShift = isReturneeHaloToJobReadinessShift(leftTitle)
+    && isReturneeHaloToJobReadinessShift(rightTitle);
+  const isSameCredentialToInterviewShift = isCredentialToInterviewShift(leftTitle)
+    && isCredentialToInterviewShift(rightTitle);
   const isSameRoleMismatchTheme = left.scenario === "job_targeting"
     && right.scenario === "job_targeting"
     && left.conflict === "role_mismatch"
@@ -433,6 +457,10 @@ export function evaluateTitleSemanticDuplicate(leftTitle: string, rightTitle: st
     reasons.push("家长催孩子先定求职方向的选择母题相同");
   } else if (isSameCredentialJobSearchGap) {
     reasons.push("学历或留学背景不等于求职顺利的反认知母题相同");
+  } else if (isSameReturneeHaloToJobReadinessShift) {
+    reasons.push("海归光环转向求职准备的怀旧母题相同");
+  } else if (isSameCredentialToInterviewShift) {
+    reasons.push("学历转向面试准备的怀旧母题相同");
   } else if (isSameRoleMismatchTheme) {
     reasons.push("岗位方向错位的反认知母题相同");
   } else if (isSameRoleMismatchWithSharedOutcome) {
