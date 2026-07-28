@@ -141,6 +141,15 @@ describe("标题语义去重", () => {
     expect(result.reasons).toContain("父母压力下的求职困境母题相同");
   });
 
+  it("把催孩子先定秋招方向的操作词替换判为重复", () => {
+    const result = evaluateTitleSemanticDuplicate(
+      "催娃定方向，还是等他自己想明白？",
+      "催娃投简历，还是先定秋招方向？",
+    );
+    expect(result.duplicate).toBe(true);
+    expect(result.reasons).toContain("家长催孩子先定求职方向的选择母题相同");
+  });
+
   it("把待业后害怕接爸妈电话的表达也判为父母压力母题", () => {
     const result = evaluateTitleSemanticDuplicate(
       "花百万留学，不敢跟爸妈说秋招没方向",
@@ -220,6 +229,22 @@ describe("标题语义去重", () => {
     );
     expect(result.duplicate).toBe(true);
     expect(result.reasons).toContain("岗位方向错位的反认知母题相同");
+  });
+
+  it("把学历背景不等于秋招顺利的换词判为重复", () => {
+    const result = evaluateTitleSemanticDuplicate(
+      "总说学历重要，找不对岗全白搭",
+      "留学背景好，未必秋招就顺",
+    );
+    expect(result.duplicate).toBe(true);
+    expect(result.reasons).toContain("学历或留学背景不等于求职顺利的反认知母题相同");
+  });
+
+  it("不会把不同的留学生求职建议误判为学历反认知重复", () => {
+    expect(titlesAreSemanticDuplicates(
+      "留学生秋招前先查时间线",
+      "回国求职前，先做岗位筛选",
+    )).toBe(false);
   });
 
   it("允许同一业务下材料和冲突都不同的标题", () => {

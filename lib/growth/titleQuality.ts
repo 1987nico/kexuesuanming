@@ -330,6 +330,34 @@ function longestCommonContiguousSegmentLength(left: string, right: string) {
 }
 
 /**
+ * 家长视角里“催孩子先把秋招方向定下来，还是等他自己想明白”是一个非常具体的
+ * 决策母题。把“定方向”替成“投简历”但仍落回“先定秋招方向”，并没有换题。
+ *
+ * 这里刻意要求同时出现「催孩子」「方向」和选择结构，避免把普通的家长求职标题
+ * 或不同阶段的秋招建议一概挡掉。
+ */
+function isParentDirectionPromptingChoice(title: string, signature: TitleSemanticSignature) {
+  const canonical = canonicalizeGrowthTitle(title);
+  return signature.audience === "parent"
+    && /催(?:娃|孩子|儿子|女儿|他|她)/u.test(canonical)
+    && /方向/u.test(canonical)
+    && /还是|等.{0,8}自己/u.test(canonical);
+}
+
+/**
+ * “学历/留学背景看起来很好，但求职并不会因此顺利”也是一个完整的反认知母题。
+ * 只有同时具备学历证据、求职场景和否定结果时才命中；例如单纯讲秋招时间线、
+ * 面试技巧或岗位选择，都不会被这个规则误判。
+ */
+function isCredentialJobSearchGap(title: string) {
+  const canonical = canonicalizeGrowthTitle(title);
+  const hasCredential = /学历|学校|背景|留学|海归|名校|读硕/u.test(canonical);
+  const hasJobSearch = /秋招|求职|投递|简历|岗位|岗|面试/u.test(canonical);
+  const hasNegativeOutcome = /白搭|未必|不(?:一定|见得)?(?:顺|顶用|好投|有用)|没用|不灵|不够/u.test(canonical);
+  return hasCredential && hasJobSearch && hasNegativeOutcome;
+}
+
+/**
  * 判定“换一批”是否只是换了少量措辞。
  * 同时命中受众、场景、冲突时，即使词面相差较大，也属于同一标题方向。
  */
@@ -370,6 +398,11 @@ export function evaluateTitleSemanticDuplicate(leftTitle: string, rightTitle: st
     && right.conflict === "recruitment_timing_mismatch";
   const isSameCredentialToEvidenceShiftTheme = left.conflict === "credential_to_evidence_shift"
     && right.conflict === "credential_to_evidence_shift";
+  const isSameParentDirectionPromptingChoice = isParentDirectionPromptingChoice(leftTitle, left)
+    && isParentDirectionPromptingChoice(rightTitle, right);
+  const isSameCredentialJobSearchGap = isCredentialJobSearchGap(leftTitle)
+    && isCredentialJobSearchGap(rightTitle)
+    && left.frame === right.frame;
   const isSameRoleMismatchTheme = left.scenario === "job_targeting"
     && right.scenario === "job_targeting"
     && left.conflict === "role_mismatch"
@@ -396,6 +429,10 @@ export function evaluateTitleSemanticDuplicate(leftTitle: string, rightTitle: st
     reasons.push("招聘投递节奏错位母题相同");
   } else if (isSameCredentialToEvidenceShiftTheme) {
     reasons.push("学历背景转向项目证据的怀旧母题相同");
+  } else if (isSameParentDirectionPromptingChoice) {
+    reasons.push("家长催孩子先定求职方向的选择母题相同");
+  } else if (isSameCredentialJobSearchGap) {
+    reasons.push("学历或留学背景不等于求职顺利的反认知母题相同");
   } else if (isSameRoleMismatchTheme) {
     reasons.push("岗位方向错位的反认知母题相同");
   } else if (isSameRoleMismatchWithSharedOutcome) {
