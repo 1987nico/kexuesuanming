@@ -252,8 +252,8 @@ interface NostalgiaAngle {
  * 决策轴，让五个候选先换“选择变量”，再由模型按当前人设写成自然标题。
  */
 const OVERSEAS_TUG_OF_WAR_ANGLES: TugOfWarAngle[] = [
-  { cue: "喜欢的城市 vs 更匹配的岗位", usedWhen: /城市.*岗位|岗位.*城市/u },
-  { cue: "热门行业 vs 更擅长的职能", usedWhen: /行业.*职能|职能.*行业/u },
+  { cue: "喜欢的城市 vs 更匹配的岗位", usedWhen: /(?:城市|城).*?(?:岗位|岗)|(?:岗位|岗).*?(?:城市|城)/u },
+  { cue: "热门行业 vs 更擅长的职能", usedWhen: /行业.*?(?:职能|擅长|对口岗)|(?:职能|擅长|对口岗).*?行业/u },
   { cue: "公司名气 vs 直属上级和带教", usedWhen: /名气|品牌.*带教|直属上级|经理质量/u },
   { cue: "起薪高低 vs 学习和成长空间", usedWhen: /起薪.*成长|成长.*起薪|工资.*学习/u },
   { cue: "轮岗管培 vs 专业职能深耕", usedWhen: /轮岗.*专业|管培.*职能|专业.*管培/u },
@@ -319,8 +319,8 @@ const EXECUTIVE_TUG_OF_WAR_ANGLES: TugOfWarAngle[] = [
  * usedWhen 用来从该方法历史中移除已经使用过的坐标。
  */
 const OVERSEAS_NOSTALGIA_ANGLES: NostalgiaAngle[] = [
-  { cue: "过去写个人陈述，如今练面试自我介绍", usedWhen: /个人陈述.*自我介绍|自我介绍.*个人陈述/u },
-  { cue: "过去找教授写推荐信，如今准备背调联系人", usedWhen: /推荐信.*背调|背调.*推荐信/u },
+  { cue: "过去写个人陈述，如今练面试自我介绍", usedWhen: /(?:个人)?陈述.*自我介绍|自我介绍.*(?:个人)?陈述|写陈述.*陪练/u },
+  { cue: "过去找教授写推荐信，如今准备背调联系人", usedWhen: /(?:推荐信|写推).*背调|背调.*(?:推荐信|写推)/u },
   { cue: "过去排课程表，如今排网申截止日", usedWhen: /课程表.*截止|截止.*课程表/u },
   { cue: "过去盯成绩单，如今整理项目证据", usedWhen: /成绩单.*项目|项目证据.*成绩/u },
   { cue: "过去看校园地图，如今算上班通勤", usedWhen: /校园地图.*通勤|通勤.*校园/u },
@@ -499,10 +499,17 @@ export function buildTopicPoolUserPrompt(input: {
     const recentMothers = Array.from(new Set(diversity.map((item) => item.mother_topic_key).filter(Boolean)));
     const recentMaterials = Array.from(new Set(diversity.map((item) => item.material_signature).filter(Boolean)));
     const diversityPlaybook = NATIVE_METHOD_DIVERSITY_PLAYBOOK[method.id];
-    const methodHistoryTitles = (input.diversityHistory ?? [])
-      .filter((item) => item.method_id === method.id && item.title)
-      .map((item) => item.title as string)
-      .slice(0, 50);
+    const methodHistoryTitles = Array.from(new Set([
+      // 成功批次保留方法归属，可用于精准轮换。
+      ...(input.diversityHistory ?? [])
+        .filter((item) => item.method_id === method.id && item.title)
+        .map((item) => item.title as string),
+      // 失败批次不会进入 diversityHistory，但服务端会把其候选放进排除池。
+      // 若这里不读取排除池，用户再次点击时角度选择器仍会分配刚失败过的
+      // 三个坐标，形成“每次都在原地重试”的错觉。
+      ...(input.priorityExcludeTitles ?? []),
+      ...(input.excludeTitles ?? []),
+    ].filter(Boolean))).slice(0, 200);
     const dynamicAngleDirective = !lock
       ? method.id === "tug_of_war"
         ? tugOfWarAngleDirective(input.context?.businessLine, methodHistoryTitles)

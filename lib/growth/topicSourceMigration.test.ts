@@ -248,6 +248,32 @@ describe("来源型标题生成合同", () => {
     expect(prompt).toContain("以前陪孩子盯成绩单，现在陪他整理项目证据");
   });
 
+  it("上一轮失败候选也会占用角度，下一次不会原路重试", () => {
+    const prompt = buildTopicPoolUserPrompt({
+      week: 1,
+      targetUser: "关注孩子就业结果的留学生家长",
+      coreProblem: "孩子回国求职时的路径选择",
+      persona: "buyer",
+      methods: [TITLE_METHOD_BY_ID.tug_of_war, TITLE_METHOD_BY_ID.nostalgia],
+      generationMode: "default",
+      excludeTitles: [
+        "娃去喜欢的城，还是选匹配的岗",
+        "娃挤热门行业，还是走擅长的职能",
+        "娃看起薪高低，还是看成长空间",
+        "以前陪娃写陈述，现在陪练自我介绍",
+        "以前找教授写推，现在备背调联系人",
+        "以前排课程表，现在排网申截止日",
+      ],
+      context: { businessLine: "overseas_student" },
+    });
+
+    expect(prompt).toContain("公司名气 vs 直属上级和带教");
+    expect(prompt).toContain("轮岗管培 vs 专业职能深耕");
+    expect(prompt).toContain("以前陪孩子盯成绩单，现在陪他整理项目证据");
+    expect(prompt).not.toContain("1. 喜欢的城市 vs 更匹配的岗位");
+    expect(prompt).not.toContain("1. 以前陪孩子写个人陈述");
+  });
+
   it("来源存在但没有锁定结构卡时，明确禁止生成该方法标题", () => {
     const prompt = buildTopicPoolUserPrompt({
       week: 1,
