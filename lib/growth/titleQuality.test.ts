@@ -27,6 +27,8 @@ describe("标题质量门禁", () => {
     expect(evaluateGrowthTitleQuality("38岁gangga离开小公司，尴尬").reasons).toContain("garbled_latin_cjk");
     expect(evaluateGrowthTitleQuality("离体制邪修六步漏斗，饭局判胜算").reasons).toContain("unnatural_jargon");
     expect(evaluateGrowthTitleQuality("花百万留学，不敢跟爸妈说投了没信").reasons).toContain("unnatural_jargon");
+    expect(evaluateGrowthTitleQuality("海归投简历没信，不敢跟爸妈说").reasons).toContain("unnatural_jargon");
+    expect(evaluateGrowthTitleQuality("求职没信心时，先收窄岗位").acceptable).toBe(true);
     expect(evaluateGrowthTitleQuality("AI筛简历后，先查岗位").acceptable).toBe(true);
   });
 
@@ -90,6 +92,15 @@ describe("标题语义去重", () => {
     const result = evaluateTitleSemanticDuplicate(
       "花爸妈钱留学，秋招不敢说没方向",
       "花爸妈钱留学，不敢说面试全挂",
+    );
+    expect(result.duplicate).toBe(true);
+    expect(result.reasons).toContain("父母压力下的求职困境母题相同");
+  });
+
+  it("把父母压力下的投简历没信也判为同一母题", () => {
+    const result = evaluateTitleSemanticDuplicate(
+      "花爸妈钱留学，不敢说面试全挂",
+      "海归投简历没信，不敢跟爸妈说",
     );
     expect(result.duplicate).toBe(true);
     expect(result.reasons).toContain("父母压力下的求职困境母题相同");
