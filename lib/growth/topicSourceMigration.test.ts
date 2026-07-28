@@ -187,6 +187,35 @@ describe("来源型标题生成合同", () => {
     expect(prompt).not.toContain('"source_usage"');
   });
 
+  it("拔河法会根据历史标题提供尚未使用的具体取舍轴", () => {
+    const prompt = buildTopicPoolUserPrompt({
+      week: 1,
+      targetUser: "关注孩子就业结果的留学生家长",
+      coreProblem: "孩子回国求职时的路径选择",
+      persona: "buyer",
+      methods: [TITLE_METHOD_BY_ID.tug_of_war],
+      generationMode: "default",
+      diversityHistory: [
+        {
+          method_id: "tug_of_war",
+          title: "孩子留英，还是回国求职？",
+          batch_index: 0,
+        },
+        {
+          method_id: "tug_of_war",
+          title: "先补实习，还是直接冲秋招？",
+          batch_index: 1,
+        },
+      ],
+      context: { businessLine: "留学生求职辅导" },
+    });
+
+    expect(prompt).toContain("本轮强制使用的未用取舍轴");
+    expect(prompt).toContain("喜欢的城市 vs 更匹配的岗位");
+    expect(prompt).toContain("热门行业 vs 更擅长的职能");
+    expect(prompt).toContain("不得再回到历史里已经出现的地区去留");
+  });
+
   it("来源存在但没有锁定结构卡时，明确禁止生成该方法标题", () => {
     const prompt = buildTopicPoolUserPrompt({
       week: 1,

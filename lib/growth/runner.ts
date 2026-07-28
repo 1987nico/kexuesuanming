@@ -2062,7 +2062,7 @@ export async function generateTopicBatch(input: {
             }] : [];
           }),
           diversityHistory: historyTopics,
-          diversityHistoryBatchLimit: 20,
+          diversityHistoryBatchLimit: 50,
           context: accountContext(input.account),
         }),
         maxTokens: 1800,
@@ -2569,7 +2569,7 @@ export async function generateTopicBatch(input: {
                 }] : [];
               }),
               diversityHistory: historyTopics,
-              diversityHistoryBatchLimit: 20,
+              diversityHistoryBatchLimit: 50,
               context: accountContext(input.account),
             }),
             maxTokens: 1800,

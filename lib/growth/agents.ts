@@ -236,6 +236,90 @@ const NATIVE_METHOD_DIVERSITY_PLAYBOOK: Partial<Record<TitleMethodId, string>> =
   inventory: "五个候选必须盘点五类不同对象或阶段，例如日期窗口、岗位红旗、简历证据、面试追问、投递漏斗、Offer条款、家庭约束、现金流、客户资源、可迁移能力；数字和“几个坑”不是新题，盘点对象与使用场景必须不同。",
 };
 
+interface TugOfWarAngle {
+  cue: string;
+  usedWhen: RegExp;
+}
+
+/**
+ * 拔河式标题最容易在历史积累后退回“回国/留海外、实习/全职、内推/海投”
+ * 三四组熟悉选项。这里不是直接写标题，而是给模型轮换一组尚未使用的真实
+ * 决策轴，让五个候选先换“选择变量”，再由模型按当前人设写成自然标题。
+ */
+const OVERSEAS_TUG_OF_WAR_ANGLES: TugOfWarAngle[] = [
+  { cue: "喜欢的城市 vs 更匹配的岗位", usedWhen: /城市.*岗位|岗位.*城市/u },
+  { cue: "热门行业 vs 更擅长的职能", usedWhen: /行业.*职能|职能.*行业/u },
+  { cue: "公司名气 vs 直属上级和带教", usedWhen: /名气|品牌.*带教|直属上级|经理质量/u },
+  { cue: "起薪高低 vs 学习和成长空间", usedWhen: /起薪.*成长|成长.*起薪|工资.*学习/u },
+  { cue: "轮岗管培 vs 专业职能深耕", usedWhen: /轮岗.*专业|管培.*职能|专业.*管培/u },
+  { cue: "长期正式岗 vs 短期合同岗", usedWhen: /正式岗.*合同|长期.*短期合同|永久.*合同/u },
+  { cue: "能办工签 vs 岗位真正对口", usedWhen: /工签.*对口|对口.*工签|签证.*岗位/u },
+  { cue: "先完成毕业论文 vs 提前进岗实习", usedWhen: /论文.*实习|实习.*论文|毕业.*提前进岗/u },
+  { cue: "先补项目作品集 vs 先约行业交流", usedWhen: /作品集.*交流|项目.*咖啡聊|行业交流.*项目/u },
+  { cue: "集中准备已有面试 vs 继续扩大投递", usedWhen: /准备.*面试.*投递|投递.*已有面试|面试.*继续投/u },
+  { cue: "只押一个城市 vs 同时跑多城面试", usedWhen: /一个城市.*多城|多城.*城市|跨城.*面试/u },
+  { cue: "成熟大公司流程 vs 小团队真实职责", usedWhen: /大公司.*小团队|成熟.*小团队|流程.*真实职责/u },
+  { cue: "体制内稳定岗 vs 市场化成长岗", usedWhen: /体制.*市场化|市场化.*体制/u },
+  { cue: "校招统一管培 vs 部门直接招聘", usedWhen: /校招.*部门|统一管培.*直招|管培.*部门/u },
+  { cue: "远程弹性办公 vs 线下团队协作", usedWhen: /远程.*线下|线下.*远程|弹性办公.*团队/u },
+  { cue: "离家近照顾家庭 vs 去外地做对口岗", usedWhen: /离家近.*外地|家庭.*对口岗|外地.*家庭/u },
+  { cue: "英文环境优势 vs 中文业务成长", usedWhen: /英文.*中文|中文.*英文|语言环境.*业务/u },
+  { cue: "尽快入职止住空窗 vs 等毕业后再找", usedWhen: /尽快入职.*毕业|空窗.*毕业|毕业后.*入职/u },
+  { cue: "固定底薪更稳 vs 浮动奖金上限高", usedWhen: /底薪.*奖金|奖金.*底薪|固定收入.*浮动/u },
+  { cue: "岗位名称好看 vs 实际工作内容扎实", usedWhen: /岗位名称.*工作内容|头衔.*职责|title.*职责/iu },
+  { cue: "追热门赛道 vs 用现有项目证据求职", usedWhen: /热门.*项目|赛道.*证据|项目证据.*热门/u },
+  { cue: "通才型岗位 vs 专才型岗位", usedWhen: /通才.*专才|综合岗.*专业岗|专业岗.*综合岗/u },
+  { cue: "先考证补门槛 vs 先练面试表达", usedWhen: /考证.*面试|证书.*表达|面试.*考证/u },
+  { cue: "保留兼职收入 vs 辞掉兼职集中求职", usedWhen: /兼职.*集中求职|辞掉兼职|保留兼职/u },
+  { cue: "先做行业调研 vs 直接找从业者验证", usedWhen: /行业调研.*从业者|从业者.*调研/u },
+  { cue: "先准备中文简历 vs 先完成英文申请", usedWhen: /中文简历.*英文|英文申请.*中文/u },
+  { cue: "接受销售入口岗 vs 等分析类岗位", usedWhen: /销售.*分析|分析.*销售/u },
+  { cue: "优先培训体系 vs 优先自主负责项目", usedWhen: /培训.*自主|自主.*培训|体系.*负责项目/u },
+];
+
+const EXECUTIVE_TUG_OF_WAR_ANGLES: TugOfWarAngle[] = [
+  { cue: "守住现有年薪 vs 接受降薪换赛道", usedWhen: /年薪.*降薪|降薪.*赛道/u },
+  { cue: "继续争职位 vs 先拿外部市场报价", usedWhen: /职位.*报价|升职.*外部|外部.*晋升/u },
+  { cue: "留大平台做一环 vs 去小公司管全盘", usedWhen: /大平台.*全盘|小公司.*全盘|平台.*小公司/u },
+  { cue: "继续带团队 vs 回到一线做业务", usedWhen: /带团队.*一线|一线.*团队|管理.*业务/u },
+  { cue: "拿竞业补偿休息 vs 放弃补偿尽快入职", usedWhen: /竞业.*入职|补偿.*入职/u },
+  { cue: "先做副业验证 vs 直接出来创业", usedWhen: /副业.*创业|创业.*副业/u },
+  { cue: "跟熟悉老板走 vs 去陌生平台重新证明", usedWhen: /老板.*陌生平台|跟.*老板.*平台/u },
+  { cue: "保核心客户关系 vs 避开原行业利益冲突", usedWhen: /客户.*利益冲突|利益冲突.*客户/u },
+  { cue: "选现金流稳定 vs 选长期股权空间", usedWhen: /现金流.*股权|股权.*现金流/u },
+  { cue: "继续做专业负责人 vs 转综合经营岗位", usedWhen: /专业负责人.*经营|经营.*专业/u },
+  { cue: "去成熟公司接盘 vs 进增长公司从零搭建", usedWhen: /成熟.*从零|接盘.*搭建|增长公司/u },
+  { cue: "先休整恢复状态 vs 趁窗口立刻面试", usedWhen: /休整.*面试|恢复.*窗口/u },
+  { cue: "留在总部资源中心 vs 去区域一线拿结果", usedWhen: /总部.*区域|资源中心.*一线/u },
+  { cue: "守行业积累 vs 换职能重新定价", usedWhen: /行业积累.*职能|职能.*行业/u },
+  { cue: "接受顾问型项目制 vs 回企业长期任职", usedWhen: /顾问.*企业|项目制.*长期任职/u },
+  { cue: "优先决策权 vs 优先团队和预算规模", usedWhen: /决策权.*预算|团队.*决策权/u },
+  { cue: "加入老同事创业 vs 自己独立验证方向", usedWhen: /老同事.*独立|同事.*创业.*自己/u },
+  { cue: "先读书补知识 vs 先用项目验证能力", usedWhen: /读书.*项目|学习.*验证能力/u },
+  { cue: "保城市和家庭稳定 vs 去异地拿更大职责", usedWhen: /城市.*异地|家庭.*异地|异地.*职责/u },
+  { cue: "接受短期合同高单价 vs 选长期岗位稳定", usedWhen: /短期合同.*长期|高单价.*稳定/u },
+  { cue: "继续服务单一大客户 vs 分散客户风险", usedWhen: /大客户.*分散|单一客户.*风险/u },
+  { cue: "先补数字化能力 vs 先发挥行业人脉", usedWhen: /数字化.*人脉|人脉.*数字化/u },
+  { cue: "选择高头衔低权限 vs 低头衔高权限", usedWhen: /头衔.*权限|title.*权限/iu },
+  { cue: "继续做国内业务 vs 接海外市场职责", usedWhen: /国内.*海外|海外.*国内/u },
+  { cue: "先拿董事会授权 vs 先确认经营指标", usedWhen: /董事会.*指标|授权.*经营指标/u },
+  { cue: "接受空降改造任务 vs 选内部接班岗位", usedWhen: /空降.*接班|接班.*空降/u },
+  { cue: "先签合伙协议 vs 先跑一轮真实订单", usedWhen: /合伙协议.*订单|订单.*协议/u },
+  { cue: "保个人品牌曝光 vs 做幕后经营角色", usedWhen: /个人品牌.*幕后|曝光.*经营角色/u },
+];
+
+function tugOfWarAngleDirective(businessLine: string | undefined, historyTitles: string[]) {
+  const pool = /留学生|海外秋招|回国求职/u.test(businessLine ?? "")
+    ? OVERSEAS_TUG_OF_WAR_ANGLES
+    : EXECUTIVE_TUG_OF_WAR_ANGLES;
+  const unused = pool.filter((angle) => !historyTitles.some((title) => angle.usedWhen.test(title)));
+  if (!unused.length) return "";
+  const selected = unused.slice(0, 5);
+  return `【本轮强制使用的未用取舍轴】五个候选分别使用以下五个取舍轴，不得再回到历史里已经出现的地区去留、实习/全职、内推/海投等旧轴：
+${selected.map((angle, index) => `${index + 1}. ${angle.cue}`).join("\n")}
+标题仍需符合当前业务和视角；取舍轴只是决策关系，不能照抄说明句。`;
+}
+
 export function buildTopicPoolUserPrompt(input: {
   week: number;
   targetUser: string;
@@ -260,6 +344,7 @@ export function buildTopicPoolUserPrompt(input: {
   }>;
   diversityHistory?: Array<{
     method_id?: TitleMethodId;
+    title?: string;
     sentence_frame?: string;
     mother_topic_key?: string;
     material_signature?: string;
@@ -299,9 +384,17 @@ export function buildTopicPoolUserPrompt(input: {
     const recentMothers = Array.from(new Set(diversity.map((item) => item.mother_topic_key).filter(Boolean)));
     const recentMaterials = Array.from(new Set(diversity.map((item) => item.material_signature).filter(Boolean)));
     const diversityPlaybook = NATIVE_METHOD_DIVERSITY_PLAYBOOK[method.id];
+    const methodHistoryTitles = (input.diversityHistory ?? [])
+      .filter((item) => item.method_id === method.id && item.title)
+      .map((item) => item.title as string)
+      .slice(0, 50);
+    const dynamicAngleDirective = method.id === "tug_of_war" && !lock
+      ? tugOfWarAngleDirective(input.context?.businessLine, methodHistoryTitles)
+      : "";
     return [
       `${method.order}. method_id=${method.id}；方法=${method.label}；要求=${method.instruction}`,
       diversityPlaybook ? `【该方法动态供题要求】${diversityPlaybook}` : "",
+      dynamicAngleDirective,
       card
         ? `已锁定结构卡=${JSON.stringify({
           id: card.id,
