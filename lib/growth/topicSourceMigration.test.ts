@@ -207,7 +207,8 @@ describe("来源型标题生成合同", () => {
           batch_index: 1,
         },
       ],
-      context: { businessLine: "留学生求职辅导" },
+      // 生产接口传入的是稳定业务编码，不是页面展示名称。
+      context: { businessLine: "overseas_student" },
     });
 
     expect(prompt).toContain("本轮强制使用的未用取舍轴");
@@ -236,7 +237,8 @@ describe("来源型标题生成合同", () => {
           batch_index: 1,
         },
       ],
-      context: { businessLine: "留学生求职辅导" },
+      // 生产接口传入的是稳定业务编码，不是页面展示名称。
+      context: { businessLine: "overseas_student" },
     });
 
     expect(prompt).toContain("本轮强制使用的未用今昔坐标");

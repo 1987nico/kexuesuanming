@@ -396,8 +396,13 @@ const EXECUTIVE_NOSTALGIA_ANGLES: NostalgiaAngle[] = [
   { cue: "过去做并购方案，如今比较两条职业路", usedWhen: /并购.*职业路|职业.*并购/u },
 ];
 
+function isOverseasBusinessLine(businessLine: string | undefined) {
+  return businessLine === "overseas_student"
+    || /留学生|海外秋招|回国求职/u.test(businessLine ?? "");
+}
+
 function tugOfWarAngleDirective(businessLine: string | undefined, historyTitles: string[]) {
-  const pool = /留学生|海外秋招|回国求职/u.test(businessLine ?? "")
+  const pool = isOverseasBusinessLine(businessLine)
     ? OVERSEAS_TUG_OF_WAR_ANGLES
     : EXECUTIVE_TUG_OF_WAR_ANGLES;
   const unused = pool.filter((angle) => !historyTitles.some((title) => angle.usedWhen.test(title)));
@@ -413,7 +418,7 @@ function nostalgiaAngleDirective(
   historyTitles: string[],
   persona?: GrowthPersona,
 ) {
-  const overseas = /留学生|海外秋招|回国求职/u.test(businessLine ?? "");
+  const overseas = isOverseasBusinessLine(businessLine);
   const pool = overseas
     ? OVERSEAS_NOSTALGIA_ANGLES
     : EXECUTIVE_NOSTALGIA_ANGLES;
@@ -550,7 +555,8 @@ export function buildTopicPoolUserPrompt(input: {
   // 不能只依赖正文承诺补足这一点：运营在选题页先看见的是标题，因此标题本身
   // 必须给出可辨认的亲子关系线索。
   const parentNarrative = input.persona === "buyer"
-    && (/留学生|海外秋招|回国求职/u.test(`${input.context?.businessLine || ""} ${input.targetUser}`)
+    && (isOverseasBusinessLine(input.context?.businessLine)
+      || /留学生|海外秋招|回国求职/u.test(input.targetUser)
       || /家长|妈妈|爸爸|父母|陪娃|陪孩子/u.test(`${input.context?.oneLiner || ""} ${input.targetUser}`));
   const personaContinuityRule = parentNarrative
     ? "- 【人设连续性硬性规则】当前账号是留学生家长。每一个标题本身都必须包含孩子/娃/家长/我家/陪孩子/陪娃/儿女中的至少一个亲子关系线索；标题里的“我/我们”只能是家长。不得把账号写成留学生本人，也不能把家长身份只留给正文承诺（例如“室友都拿到面试，我还在投递”“先补实习，还是直接投递？”都不合格）。"
