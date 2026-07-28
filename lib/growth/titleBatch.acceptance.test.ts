@@ -80,13 +80,15 @@ describe("标题生成30批用户验收标准（确定性兜底回归）", () =>
   it("留学生家长旧怀旧题耗尽后，仍有充足的家长专属恢复候选", () => {
     const parent = account("overseas_student", "buyer");
     const candidates = fallbackTitleCandidates(parent, "nostalgia");
-    const historical = candidates.slice(0, 9);
+    // 模拟长期测试账号已经连续使用过25个家长怀旧标题，候选池仍需留下
+    // 足够完成后续20批验收的不同今昔场景，不能只满足新账号的五批。
+    const historical = candidates.slice(0, 25);
     const historyTitles = historical.map((candidate) => candidate.title);
     const historyTopics = historical.map((candidate) => ({
       method_id: "nostalgia" as TitleMethodId,
       title: candidate.title,
     }));
-    const recoverable = candidates.slice(9).filter((candidate) => {
+    const recoverable = candidates.slice(25).filter((candidate) => {
       const current = candidateTopic("overseas_student", "buyer", "nostalgia", candidate);
       if (!evaluateGrowthTitleQuality(candidate.title).acceptable) return false;
       if (titlePersonaProblems(current, parent).length) return false;
@@ -98,8 +100,8 @@ describe("标题生成30批用户验收标准（确定性兜底回归）", () =>
       ).length === 0;
     });
 
-    expect(recoverable.length).toBeGreaterThanOrEqual(6);
-    expect(recoverable.every((candidate) => /孩子|陪孩子/u.test(candidate.title))).toBe(true);
+    expect(recoverable.length).toBeGreaterThanOrEqual(20);
+    expect(recoverable.every((candidate) => /孩子|陪孩子|娃|陪娃/u.test(candidate.title))).toBe(true);
   });
 
   it("所有内置原生兜底标题本身都能通过发布质量门禁", () => {
