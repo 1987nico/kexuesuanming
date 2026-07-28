@@ -641,6 +641,7 @@ export async function POST(req: Request) {
   }
   const markGenerationReservationFailed = async (
     diagnostics?: Partial<NonNullable<GrowthRun["generation_diagnostics"]>>,
+    rejectedTitles: string[] = [],
   ) => {
     if (!generationReservation) {
       releaseInFlightGenerationRequest(generationAccountId, parsed.data.requestId);
@@ -655,6 +656,12 @@ export async function POST(req: Request) {
           total_ms: Date.now() - requestStartedAt,
           ...diagnostics,
         },
+        // 即使这一批没有交付，也把已经被门禁拒绝的候选记进当前业务×视角的
+        // 历史排除池。否则用户点击“再换一批”时，模型可能原样给回同一批失败题。
+        seen_titles: Array.from(new Set([
+          ...(generationReservation.seen_titles ?? []),
+          ...rejectedTitles,
+        ])).slice(-160),
         updated_at: now(),
       });
     } catch (error) {
@@ -687,6 +694,7 @@ export async function POST(req: Request) {
     generationAttempts,
     structureCards,
     nativeTitleAudit,
+    rejectedTitles,
   } = generated;
   const generationElapsedMs = Date.now() - generationStartedAt;
 
@@ -707,7 +715,8 @@ export async function POST(req: Request) {
       failure_phase: nativeAuditUnavailable ? "native_audit" : "native_generation",
       failed_method_ids: failedNativeDeliveries.map((delivery) => delivery.method_id),
       native_title_audit: nativeTitleAudit,
-    });
+      rejected_candidate_count: rejectedTitles?.length ?? 0,
+    }, rejectedTitles ?? []);
     console.warn("[growth] native title generation incomplete", {
       failed_method_ids: failedNativeDeliveries.map((delivery) => delivery.method_id),
       native_title_audit: nativeTitleAudit,
@@ -806,6 +815,7 @@ export async function POST(req: Request) {
   };
   const nextSeen = Array.from(new Set([
     ...(latestRun?.seen_titles ?? []),
+    ...(rejectedTitles ?? []),
     ...topics.map((topic) => topic.title),
   ]));
   const reportedChangedMethodIds = action === "regenerate_single_title"

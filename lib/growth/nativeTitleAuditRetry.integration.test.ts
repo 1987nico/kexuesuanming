@@ -56,7 +56,7 @@ function generatedTopics() {
 function auditCandidates(user: string) {
   const match = user.match(/候选标题：\n([\s\S]*?)\n\n仅输出 JSON/u);
   if (!match) throw new Error("test audit prompt did not include candidates");
-  return JSON.parse(match[1]) as Array<{ candidate_id: string; title: string }>;
+  return JSON.parse(match[1]) as Array<{ candidate_id: string; method_id: string; title: string }>;
 }
 
 function modelResponse(data: unknown) {
@@ -71,8 +71,8 @@ describe("原生标题语义审核二次恢复", () => {
     llmJSONMock.mockReset();
   });
 
-  it("首审全部拒绝后，只能由二审通过的未审静态候选完成整批交付", async () => {
-    const auditBatches: Array<Array<{ candidate_id: string; title: string }>> = [];
+  it("首审全部拒绝后，二审会审核未审模型替代题并完成整批交付", async () => {
+    const auditBatches: Array<Array<{ candidate_id: string; method_id: string; title: string }>> = [];
     llmJSONMock.mockImplementation(async (input: { user: string }) => {
       if (!input.user.includes("语义新颖度终审")) return modelResponse(generatedTopics());
       const candidates = auditCandidates(input.user);
@@ -103,9 +103,11 @@ describe("原生标题语义审核二次恢复", () => {
       expect(firstAuditTitles.has(topic.title)).toBe(false);
       expect(secondAuditTitles.has(topic.title)).toBe(true);
     }
+    expect(auditBatches[1].some((candidate) => candidate.title === "团队扩张，我却想离开")).toBe(true);
+    expect(auditBatches[1].some((candidate) => candidate.title === "继续带团队，还是转回业务？")).toBe(true);
   });
 
-  it("二审漏项时不释放任何未经审核的标题", async () => {
+  it("二审漏掉一个方法的所有候选时，不释放该方法的任何未审核标题", async () => {
     let auditCalls = 0;
     llmJSONMock.mockImplementation(async (input: { user: string }) => {
       if (!input.user.includes("语义新颖度终审")) return modelResponse(generatedTopics());
@@ -123,7 +125,7 @@ describe("原生标题语义审核二次恢复", () => {
         });
       }
       return modelResponse({
-        decisions: candidates.slice(0, -1).map((candidate) => ({
+        decisions: candidates.filter((candidate) => candidate.method_id !== "tug_of_war").map((candidate) => ({
           candidate_id: candidate.candidate_id,
           novel: true,
           duplicate_reference_ids: [],
@@ -139,14 +141,15 @@ describe("原生标题语义审核二次恢复", () => {
       allowSourcePause: true,
     });
 
-    // 二审自身会先追问一次漏掉的候选；仍然漏项才会 fail-closed。
-    expect(auditCalls).toBe(3);
-    expect(result.topics).toHaveLength(0);
+    // 审核函数不再在内部叠一层补审；整条请求最多两次审核。
+    expect(auditCalls).toBe(2);
+    expect(result.topics.map((topic) => topic.method_id)).toEqual(["human_pain"]);
     expect(result.nativeTitleAudit?.status).toBe("incomplete");
-    expect(result.methodDeliveries.every((delivery) => delivery.status === "failed")).toBe(true);
+    expect(result.methodDeliveries.find((delivery) => delivery.method_id === "human_pain")?.status).toBe("ready");
+    expect(result.methodDeliveries.find((delivery) => delivery.method_id === "tug_of_war")?.status).toBe("failed");
   });
 
-  it("审核偶发漏项时，只补审漏掉的候选后即可完成交付", async () => {
+  it("审核漏掉未采用的备选时，不必再叠一层补审也能完成安全交付", async () => {
     let auditCalls = 0;
     llmJSONMock.mockImplementation(async (input: { user: string }) => {
       if (!input.user.includes("语义新颖度终审")) return modelResponse(generatedTopics());
@@ -174,13 +177,35 @@ describe("原生标题语义审核二次恢复", () => {
           })),
         });
       }
+      throw new Error("不应再发起第三次审核");
+    });
+
+    const result = await generateTopicBatch({
+      account,
+      methodIds: ["human_pain", "tug_of_war"],
+    });
+
+    expect(auditCalls).toBe(2);
+    expect(result.nativeTitleAudit?.status).toBe("passed");
+    expect(result.topics).toHaveLength(2);
+  });
+
+  it("首轮标题模型中断后，会在受限恢复轮重新生成缺失原生槽位", async () => {
+    let generationCalls = 0;
+    llmJSONMock.mockImplementation(async (input: { user: string }) => {
+      if (!input.user.includes("语义新颖度终审")) {
+        generationCalls += 1;
+        if (generationCalls === 1) throw new Error("Request was aborted");
+        return modelResponse(generatedTopics());
+      }
+      const candidates = auditCandidates(input.user);
       return modelResponse({
         decisions: candidates.map((candidate) => ({
           candidate_id: candidate.candidate_id,
           novel: true,
           duplicate_reference_ids: [],
           conflicting_candidate_ids: [],
-          reason: "补审通过",
+          reason: "新标题",
         })),
       });
     });
@@ -190,8 +215,8 @@ describe("原生标题语义审核二次恢复", () => {
       methodIds: ["human_pain", "tug_of_war"],
     });
 
-    expect(auditCalls).toBe(3);
-    expect(result.nativeTitleAudit?.status).toBe("passed");
-    expect(result.topics).toHaveLength(2);
+    expect(generationCalls).toBe(2);
+    expect(result.generationAttempts).toBe(2);
+    expect(result.topics.map((topic) => topic.method_id)).toEqual(["human_pain", "tug_of_war"]);
   });
 });

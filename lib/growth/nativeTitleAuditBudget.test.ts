@@ -60,16 +60,21 @@ describe("原生标题语义审核候选预算", () => {
     }
   });
 
-  it("二次审核只送未审过的静态候选，并始终遵守全局12条预算", () => {
-    const methods = methodsForPersona("expert", "default").filter((method) => !method.sourceRequired);
+  it("二次审核保留未审模型替代题和静态候选，并始终遵守全局12条预算", () => {
+    const methods = methodsForPersona("buyer", "default").filter((method) => !method.sourceRequired);
+    expect(methods).toHaveLength(4);
     const candidatesByMethod = new Map(methods.map((method) => [method.id, [
       option(method.id, `${method.id}模型甲`, "model"),
+      option(method.id, `${method.id}模型乙`, "model"),
+      option(method.id, `${method.id}模型丙`, "model"),
+      option(method.id, `${method.id}模型丁`, "model"),
       option(method.id, `${method.id}兜底甲`, "fallback"),
       option(method.id, `${method.id}兜底乙`, "fallback"),
       option(method.id, `${method.id}兜底丙`, "fallback"),
     ]]));
     const auditedTitles = methods.flatMap((method) => [
       `${method.id}模型甲`,
+      `${method.id}模型乙`,
       `${method.id}兜底甲`,
     ]);
     const audited = new Set(auditedTitles.map(normalizeTitleForComparison));
@@ -81,7 +86,8 @@ describe("原生标题语义审核候选预算", () => {
     });
     const total = methods.flatMap((method) => retry.get(method.id) ?? []);
     expect(total).toHaveLength(12);
-    expect(total.every((item) => item.audit.kind === "fallback")).toBe(true);
+    expect(total.some((item) => item.audit.kind === "model")).toBe(true);
+    expect(total.some((item) => item.audit.kind === "fallback")).toBe(true);
     expect(total.every((item) => !audited.has(normalizeTitleForComparison(item.topic.title)))).toBe(true);
   });
 });

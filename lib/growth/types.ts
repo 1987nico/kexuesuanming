@@ -767,6 +767,8 @@ export interface GrowthRun {
       elapsed_ms: number;
       missing_candidate_ids?: string[];
     };
+    /** 本轮被本地或语义门禁拒绝、已写入下一轮排除池的标题数。 */
+    rejected_candidate_count?: number;
   };
   structure_version?: "v3_7" | "v3_8";
   migration_status?: "passed" | "failed";

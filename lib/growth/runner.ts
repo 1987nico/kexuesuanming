@@ -1163,10 +1163,14 @@ export function compactNativeAuditRetryOptions(input: {
     const unreviewed = options.filter((option) => !input.auditedTitleFingerprints.has(
       normalizeTitleForComparison(option.topic.title),
     ));
-    // 二次只使用尚未审核过的静态安全候选：不再赌同一模型的剩余换词，
-    // 但每条仍须通过语义终审，绝不直接放行。
-    const shortlisted = unreviewed
-      .filter((option) => option.audit.kind === "fallback")
+    // 首轮容量有限：买家视角会留下模型第 3、4 个候选，专家视角也会留下
+    // 额外模型候选。旧实现只拿静态候选做二审，等于把已经生成、也通过本地
+    // 门禁的模型替代题直接丢掉，导致“有新题却整批失败”。二审先看未审模型
+    // 候选，再看未审静态候选；每一条仍必须经过同一语义终审，绝不直接放行。
+    const shortlisted = [
+      ...unreviewed.filter((option) => option.audit.kind === "model"),
+      ...unreviewed.filter((option) => option.audit.kind === "fallback"),
+    ]
       .slice(0, perMethodLimit).map((option) => ({
       ...option,
       audit: { ...option.audit, id: `R${sequence++}` },
@@ -1353,6 +1357,8 @@ export async function generateTopicBatch(input: {
   structureCards: BenchmarkStructureCard[];
   /** 仅用于路由保存排障快照；不会显示模型内部推理。 */
   nativeTitleAudit?: NativeTitleAuditDiagnostic;
+  /** 被本地或语义门禁拒绝的候选；路由会写入下一轮排除池，避免重复失败。 */
+  rejectedTitles?: string[];
   usage?: Record<string, unknown>;
 }> {
   const generationMode = input.generationMode ?? "default";
@@ -1458,10 +1464,11 @@ export async function generateTopicBatch(input: {
   // 原生标题先在一批内收集，再做一次“候选 vs 全历史”的语义审核。此前在
   // 这里逐条即时接收，确定性关键词没覆盖到的同义改写会直接进入页面。
   const nativeCandidatesByMethod = new Map<TitleMethodId, NativeTitleCandidateOption[]>();
-  // 常规“换一批”时，一个模型响应已经包含首选加四个备选。再开一轮主模型
-  // 只会把操作者等待时间叠加到 48 秒以上，却不会提升一批可交付标题的数量。
-  // 只有单槽“换个标题”需要保持方向锁定时，才允许第二次尝试。
-  const maxAttempts = input.directionLocks ? 2 : 1;
+  // 常规“换一批”原本只请求主模型一次；主模型偶发中断时会直接留下空候选，
+  // 后续严格门禁只能整批保留旧题。这里保留一次有明确上限的恢复机会：主路
+  // 由不同供应商即时兜底，若仍未形成原生候选，再只为缺失原生槽位补一轮。
+  // 对标槽位有自己的“来源暂停”语义，不在第二轮反复拉长等待。
+  const maxAttempts = 2;
   let generationAttempts = 0;
   let nativeTitleAudit: NativeTitleAuditDiagnostic | undefined;
 
@@ -1512,10 +1519,11 @@ export async function generateTopicBatch(input: {
     generationAttempts = attempt;
     const pendingMethods = methods.filter((method) => {
       if (accepted.has(method.id)) return false;
-      if (method.sourceRequired) return true;
+      if (method.sourceRequired) return attempt === 1;
       return (nativeCandidatesByMethod.get(method.id)?.length ?? 0) < MAX_NATIVE_MODEL_CANDIDATES_PER_METHOD;
     });
     if (!pendingMethods.length) break;
+    const generationAttemptStartedAt = Date.now();
     try {
       const result = await llmJSON<any>({
         system: GROWTH_SYSTEM_PROMPT,
@@ -1542,12 +1550,11 @@ export async function generateTopicBatch(input: {
           diversityHistory: historyTopics,
           context: accountContext(input.account),
         }), maxTokens: 2200, temperature: Math.min(0.82, 0.62 + attempt * 0.07),
-        // 标题批次允许在上层保留已通过的槽位；不要因主模型超时再等一次
-        // 备用模型。这样一次批次调用的时长有明确上限，局部失败也不会丢掉
-        // 已经形成的新标题。
-        timeoutMs: 24_000,
+        // 主模型中断时，由不同供应商补同一份“整批候选”请求；两条路径都有
+        // 单次上限，避免历史重复一多就把操作者困在无休止的重试里。
+        timeoutMs: 18_000,
         jsonRetries: 0,
-        allowFallback: false,
+        allowFallback: true,
       });
       usage = resultUsage(result);
       const rows = Array.isArray(result.data?.topics) ? result.data.topics : [];
@@ -1773,6 +1780,7 @@ export async function generateTopicBatch(input: {
           methodDeliveries: buildDeliveries(attempt),
           generationAttempts: attempt,
           structureCards: prepared.cards,
+          rejectedTitles: Array.from(new Set(rejectedTitles)).slice(-160),
           usage,
         };
       }
@@ -1783,7 +1791,12 @@ export async function generateTopicBatch(input: {
     } catch (error) {
       const problem = (error as Error).message || "标题批次生成失败";
       lastProblems = Array.from(new Set([...lastProblems, problem]));
-      console.warn(`[growth] topic batch attempt ${attempt} failed:`, problem);
+      console.warn("[growth] topic model generation attempt failed", JSON.stringify({
+        attempt,
+        pending_method_ids: pendingMethods.map((method) => method.id),
+        elapsed_ms: Date.now() - generationAttemptStartedAt,
+        error_kind: /abort|timeout|超时/iu.test(problem) ? "timeout" : "unavailable",
+      }));
     }
   }
 
@@ -1840,9 +1853,9 @@ export async function generateTopicBatch(input: {
       accepted: [...accepted.values()],
     });
     const auditStartedAt = Date.now();
-    const initialAuditedTitleFingerprints = new Set(auditOptions.map((option) => (
-      normalizeTitleForComparison(option.topic.title)
-    )));
+    // 只有真正拿到 decision 的候选才算“已经审核”。若模型漏回一项，它仍可
+    // 进入一次受限恢复，不能因为被送过一次就永久从候选池消失。
+    let auditedTitleFingerprints = new Set<string>();
     try {
       // 审核只复核“已通过本地质量、身份和全历史去重”的精简候选。完整历史
       // 仍由确定性门禁覆盖，第二次模型不再是整批标题交付的性能单点。
@@ -1863,7 +1876,9 @@ export async function generateTopicBatch(input: {
           ? audit.coverage.missingCandidateIds
           : undefined,
       };
-      if (!audit.coverage.complete) throw new Error("native_title_audit_incomplete");
+      auditedTitleFingerprints = new Set(auditOptions
+        .filter((option) => !audit.coverage.missingCandidateIds.includes(option.audit.id))
+        .map((option) => normalizeTitleForComparison(option.topic.title)));
 
       usage = { ...(usage ?? {}), novelty_audit: audit.usage };
       const initialSelection = selectAuditedNativeTitleOptions({
@@ -1888,7 +1903,7 @@ export async function generateTopicBatch(input: {
         const retryOptionsByMethod = compactNativeAuditRetryOptions({
           methods: retryMethods,
           candidatesByMethod: nativeCandidatesByMethod,
-          auditedTitleFingerprints: initialAuditedTitleFingerprints,
+          auditedTitleFingerprints,
         });
         const retryOptions = retryMethods.flatMap((method) => retryOptionsByMethod.get(method.id) ?? []);
         const retryCandidates = retryOptions.map((option) => option.audit);
@@ -1907,22 +1922,6 @@ export async function generateTopicBatch(input: {
             candidates: retryCandidates,
             references: retryReferences,
           });
-          if (!retryAudit.coverage.complete) {
-            nativeTitleAudit = {
-              status: "incomplete",
-              candidate_count: auditCandidates.length + retryCandidates.length,
-              reference_count: Math.max(references.length, retryReferences.length),
-              elapsed_ms: Date.now() - auditStartedAt,
-              missing_candidate_ids: retryAudit.coverage.missingCandidateIds,
-            };
-            throw new Error("native_title_audit_retry_incomplete");
-          }
-          nativeTitleAudit = {
-            status: "passed",
-            candidate_count: auditCandidates.length + retryCandidates.length,
-            reference_count: Math.max(references.length, retryReferences.length),
-            elapsed_ms: Date.now() - auditStartedAt,
-          };
           usage = { ...(usage ?? {}), novelty_audit_retry: retryAudit.usage };
           const retrySelection = selectAuditedNativeTitleOptions({
             methods: retryMethods,
@@ -1937,11 +1936,40 @@ export async function generateTopicBatch(input: {
           for (const [methodId, topic] of retrySelection.accepted) accepted.set(methodId, topic);
           rejectedTitles.push(...retrySelection.rejectedTitles);
           lastProblems.push(...retrySelection.problems);
+          // 即使本轮审核漏回了未采用的备选，只要交付的每个标题都有明确通过
+          // decision，仍可安全完成整批；任何漏项本身绝不被 select 放行。
+          nativeTitleAudit = {
+            status: nativeMethods.every((method) => accepted.has(method.id))
+              ? "passed"
+              : retryAudit.coverage.complete && audit.coverage.complete
+                ? "passed"
+                : "incomplete",
+            candidate_count: auditCandidates.length + retryCandidates.length,
+            reference_count: Math.max(references.length, retryReferences.length),
+            elapsed_ms: Date.now() - auditStartedAt,
+            missing_candidate_ids: retryAudit.coverage.missingCandidateIds.length
+              ? retryAudit.coverage.missingCandidateIds
+              : audit.coverage.missingCandidateIds.length
+                ? audit.coverage.missingCandidateIds
+                : undefined,
+          };
         } else {
           for (const method of retryMethods) {
             lastProblems.push(`${method.id}:没有剩余的本地合格候选可进入二次审核`);
           }
         }
+      }
+      if (nativeMethods.every((method) => accepted.has(method.id))) {
+        nativeTitleAudit = {
+          ...(nativeTitleAudit ?? {
+            status: "passed" as const,
+            candidate_count: auditCandidates.length,
+            reference_count: references.length,
+            elapsed_ms: Date.now() - auditStartedAt,
+          }),
+          status: "passed",
+          missing_candidate_ids: undefined,
+        };
       }
     } catch (error) {
       const message = (error as Error).message || "native_title_audit_unavailable";
@@ -1951,8 +1979,9 @@ export async function generateTopicBatch(input: {
           ? "timeout"
           : "unavailable";
       const remainingMethods = nativeMethods.filter((method) => !accepted.has(method.id));
-      // 首轮审核不可用或漏项时，只再试一次“未送审的静态候选”。任何候选都必须
-      // 拿到完整的语义审核结果后才能进入页面；不再允许本地兜底绕过审核。
+      // 首轮审核不可用时，只再试一次“尚未拿到 decision 的候选”。这些候选可能
+      // 是模型替代题，也可能是静态候选；任何一个仍必须拿到语义审核结果后才能
+      // 进入页面，绝不允许本地兜底绕过审核。
       // 如果已经执行过二审仍然报错，则直接保留旧批，防止一次点击进入重试循环。
       const canRunAuditedFallbackRecovery = remainingMethods.length > 0
         && !/native_title_audit_retry/iu.test(message);
@@ -1961,7 +1990,7 @@ export async function generateTopicBatch(input: {
           const recoveryOptionsByMethod = compactNativeAuditRetryOptions({
             methods: remainingMethods,
             candidatesByMethod: nativeCandidatesByMethod,
-            auditedTitleFingerprints: initialAuditedTitleFingerprints,
+            auditedTitleFingerprints,
           });
           const recoveryOptions = remainingMethods.flatMap((method) => (
             recoveryOptionsByMethod.get(method.id) ?? []
@@ -1982,16 +2011,6 @@ export async function generateTopicBatch(input: {
             candidates: recoveryCandidates,
             references: recoveryReferences,
           });
-          if (!recoveryAudit.coverage.complete) {
-            nativeTitleAudit = {
-              status: "incomplete",
-              candidate_count: auditCandidates.length + recoveryCandidates.length,
-              reference_count: Math.max(references.length, recoveryReferences.length),
-              elapsed_ms: Date.now() - auditStartedAt,
-              missing_candidate_ids: recoveryAudit.coverage.missingCandidateIds,
-            };
-            throw new Error("native_title_audit_recovery_incomplete");
-          }
           const recoverySelection = selectAuditedNativeTitleOptions({
             methods: remainingMethods,
             optionsByMethod: recoveryOptionsByMethod,
@@ -2007,10 +2026,17 @@ export async function generateTopicBatch(input: {
           lastProblems.push(...recoverySelection.problems);
           usage = { ...(usage ?? {}), novelty_audit_recovery: recoveryAudit.usage };
           nativeTitleAudit = {
-            status: "passed",
+            status: nativeMethods.every((method) => accepted.has(method.id))
+              ? "passed"
+              : recoveryAudit.coverage.complete
+                ? "passed"
+                : "incomplete",
             candidate_count: auditCandidates.length + recoveryCandidates.length,
             reference_count: Math.max(references.length, recoveryReferences.length),
             elapsed_ms: Date.now() - auditStartedAt,
+            missing_candidate_ids: recoveryAudit.coverage.missingCandidateIds.length
+              ? recoveryAudit.coverage.missingCandidateIds
+              : undefined,
           };
           if (recoverySelection.accepted.size === remainingMethods.length) {
             console.warn(
@@ -2074,6 +2100,7 @@ export async function generateTopicBatch(input: {
       generationAttempts,
       structureCards: prepared.cards,
       nativeTitleAudit,
+      rejectedTitles: Array.from(new Set(rejectedTitles)).slice(-160),
       usage,
     };
   }
@@ -2114,6 +2141,7 @@ export async function generateTopicBatch(input: {
       generationAttempts,
       structureCards: prepared.cards,
       nativeTitleAudit,
+      rejectedTitles: Array.from(new Set(rejectedTitles)).slice(-160),
       usage,
     };
   }
