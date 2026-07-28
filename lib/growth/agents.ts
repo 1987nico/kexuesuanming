@@ -246,6 +246,11 @@ interface NostalgiaAngle {
   usedWhen: RegExp;
 }
 
+interface InventoryAngle {
+  cue: string;
+  usedWhen: RegExp;
+}
+
 /**
  * 拔河式标题最容易在历史积累后退回“回国/留海外、实习/全职、内推/海投”
  * 三四组熟悉选项。这里不是直接写标题，而是给模型轮换一组尚未使用的真实
@@ -396,6 +401,101 @@ const EXECUTIVE_NOSTALGIA_ANGLES: NostalgiaAngle[] = [
   { cue: "过去做并购方案，如今比较两条职业路", usedWhen: /并购.*职业路|职业.*并购/u },
 ];
 
+/**
+ * 盘点法不能长期只把“简历/网申/面试/投递”轮换数字。下面的对象都是正文
+ * 可以真实逐项交付的检查对象；每次生成只分配尚未在该方法历史里出现的三类，
+ * 让模型先换盘点对象和使用场景，再决定自然标题表达。
+ */
+const OVERSEAS_INVENTORY_ANGLES: InventoryAngle[] = [
+  { cue: "跨时区面试时段冲突", usedWhen: /时区|面试时段/u },
+  { cue: "毕业签证与工签衔接节点", usedWhen: /毕业签证|工签衔接/u },
+  { cue: "背调联系人可用性", usedWhen: /背调联系人|推荐人可用/u },
+  { cue: "异地入职搬迁提前量", usedWhen: /搬迁提前|异地入职/u },
+  { cue: "入职证件与学历认证材料", usedWhen: /入职证件|学历认证/u },
+  { cue: "评估中心小组任务角色", usedWhen: /评估中心|小组任务角色/u },
+  { cue: "案例面试数据证据", usedWhen: /案例面试.*数据|数据证据/u },
+  { cue: "岗位语言使用场景", usedWhen: /语言使用|工作语言/u },
+  { cue: "学位证明出具时间", usedWhen: /学位证明|毕业证明/u },
+  { cue: "跨境税务与居留影响", usedWhen: /跨境税务|税务.*居留/u },
+  { cue: "试用期目标和考核口径", usedWhen: /试用期目标|考核口径/u },
+  { cue: "福利条款与隐性成本", usedWhen: /福利条款|隐性成本/u },
+  { cue: "雇主担保的证明要求", usedWhen: /雇主担保|担保证明/u },
+  { cue: "不同申请系统的账号资料", usedWhen: /申请系统|账号资料/u },
+  { cue: "招聘官沟通触点", usedWhen: /招聘官.*触点|沟通触点/u },
+  { cue: "跨境电话与收件地址", usedWhen: /跨境电话|收件地址/u },
+  { cue: "课程模块和岗位能力映射", usedWhen: /课程模块|能力映射/u },
+  { cue: "论文研究方法的工作证据", usedWhen: /研究方法|论文.*证据/u },
+  { cue: "英文汇报与中文表达样本", usedWhen: /英文汇报|中文表达/u },
+  { cue: "利益相关方协作故事", usedWhen: /利益相关方|协作故事/u },
+  { cue: "拒信原因记录字段", usedWhen: /拒信原因|拒信.*记录/u },
+  { cue: "面试反问题库", usedWhen: /反问.*问题|面试反问/u },
+  { cue: "通勤与租房总成本", usedWhen: /通勤.*租房|租房.*成本/u },
+  { cue: "底薪奖金和签字费口径", usedWhen: /底薪.*奖金|签字费/u },
+  { cue: "年假与最早入职日期", usedWhen: /年假.*入职|最早入职/u },
+  { cue: "知识产权与保密条款", usedWhen: /知识产权|保密条款/u },
+  { cue: "校友访谈验证问题", usedWhen: /校友访谈|校友.*验证/u },
+  { cue: "行业准入证书门槛", usedWhen: /准入证书|证书门槛/u },
+  { cue: "目标企业岗位释放节奏", usedWhen: /岗位释放|企业.*节奏/u },
+  { cue: "同公司不同部门职责差异", usedWhen: /部门职责|不同部门/u },
+  { cue: "岗位级别和汇报对象信号", usedWhen: /岗位级别|汇报对象/u },
+  { cue: "中英文岗位名称同义词", usedWhen: /岗位名称.*同义|中英文岗位/u },
+  { cue: "ATS关键词缺口", usedWhen: /ATS|关键词缺口/iu },
+  { cue: "投递后的跟进间隔", usedWhen: /跟进间隔|跟进频率/u },
+  { cue: "多场面试撞期处理", usedWhen: /面试撞期|多场面试/u },
+  { cue: "毕业答辩与入职撞期", usedWhen: /答辩.*入职|入职.*答辩/u },
+  { cue: "家庭求职预算边界", usedWhen: /求职预算|预算边界/u },
+  { cue: "过渡住宿安排", usedWhen: /过渡住宿|临时住宿/u },
+  { cue: "医疗保险衔接", usedWhen: /医疗保险|医保衔接/u },
+  { cue: "设备与远程办公条件", usedWhen: /远程办公.*条件|办公设备/u },
+  { cue: "入职前作品保密处理", usedWhen: /作品.*保密|保密处理/u },
+  { cue: "实习转正评估标准", usedWhen: /实习转正|转正标准/u },
+];
+
+const EXECUTIVE_INVENTORY_ANGLES: InventoryAngle[] = [
+  { cue: "离职通知期和交接边界", usedWhen: /通知期|交接边界/u },
+  { cue: "竞业范围和补偿条件", usedWhen: /竞业.*补偿|补偿.*竞业/u },
+  { cue: "递延奖金兑现时间", usedWhen: /递延奖金|奖金兑现/u },
+  { cue: "股权归属与回购条款", usedWhen: /股权归属|回购条款/u },
+  { cue: "家庭现金流安全月数", usedWhen: /现金流.*月|安全月数/u },
+  { cue: "客户集中度风险", usedWhen: /客户集中|集中度/u },
+  { cue: "关键利益相关方支持", usedWhen: /利益相关方.*支持|关键支持/u },
+  { cue: "可迁移的经营结果", usedWhen: /经营结果|可迁移.*结果/u },
+  { cue: "危机处理案例证据", usedWhen: /危机处理|危机案例/u },
+  { cue: "组织变革阶段成果", usedWhen: /组织变革|变革.*成果/u },
+  { cue: "团队继任与离岗风险", usedWhen: /团队继任|离岗风险/u },
+  { cue: "董事会授权范围", usedWhen: /董事会授权|授权范围/u },
+  { cue: "新岗位汇报线", usedWhen: /汇报线|汇报关系/u },
+  { cue: "预算控制权限", usedWhen: /预算控制|预算权限/u },
+  { cue: "差旅强度和时间成本", usedWhen: /差旅强度|差旅.*成本/u },
+  { cue: "异地任职与家庭安排", usedWhen: /异地任职|家庭安排/u },
+  { cue: "身体负荷和恢复周期", usedWhen: /身体负荷|恢复周期/u },
+  { cue: "行业周期位置", usedWhen: /行业周期|周期位置/u },
+  { cue: "监管变化风险", usedWhen: /监管变化|监管风险/u },
+  { cue: "保密义务和公开边界", usedWhen: /保密义务|公开边界/u },
+  { cue: "个人品牌可带走资产", usedWhen: /个人品牌.*资产|可带走资产/u },
+  { cue: "背调证明人可用性", usedWhen: /背调证明|证明人/u },
+  { cue: "新公司真实任务书", usedWhen: /任务书|真实任务/u },
+  { cue: "试用期经营指标", usedWhen: /试用期.*指标|经营指标/u },
+  { cue: "固定薪酬和浮动薪酬", usedWhen: /固定薪酬|浮动薪酬/u },
+  { cue: "顾问合同责任边界", usedWhen: /顾问合同|责任边界/u },
+  { cue: "首批客户线索来源", usedWhen: /首批客户|客户线索/u },
+  { cue: "创业现金跑道", usedWhen: /现金跑道|创业.*现金/u },
+  { cue: "合伙人退出机制", usedWhen: /退出机制|合伙人.*退出/u },
+  { cue: "客户关系归属", usedWhen: /客户关系归属|客户归属/u },
+  { cue: "知识产权归属", usedWhen: /知识产权归属|产权归属/u },
+  { cue: "社保税务衔接", usedWhen: /社保.*税务|税务.*社保/u },
+  { cue: "退休与长期保障影响", usedWhen: /退休.*保障|长期保障/u },
+  { cue: "能力缺口学习周期", usedWhen: /能力缺口|学习周期/u },
+  { cue: "数字化工具熟练度", usedWhen: /数字化工具|工具熟练/u },
+  { cue: "跨文化管理证据", usedWhen: /跨文化管理|跨文化.*证据/u },
+  { cue: "低成本方向验证实验", usedWhen: /验证实验|低成本验证/u },
+  { cue: "伴侣对转型的共识", usedWhen: /伴侣.*共识|转型共识/u },
+  { cue: "子女教育安排", usedWhen: /子女教育|教育安排/u },
+  { cue: "原团队挽留条件", usedWhen: /团队挽留|挽留条件/u },
+  { cue: "猎头职位信息真实性", usedWhen: /职位信息.*真实|猎头.*真实性/u },
+  { cue: "岗位决策权与责任匹配", usedWhen: /决策权.*责任|责任.*决策权/u },
+];
+
 function isOverseasBusinessLine(businessLine: string | undefined) {
   return businessLine === "overseas_student"
     || /留学生|海外秋招|回国求职/u.test(businessLine ?? "");
@@ -435,6 +535,19 @@ function nostalgiaAngleDirective(
 ${cues.map((cue, index) => `${index + 1}. ${cue}`).join("\n")}
 候选1只使用第1组今昔关系，候选2只使用第2组，候选3只使用第3组；每条必须同时保留本组“过去物件/场景”和“当下任务”，严禁把不同编号的前后半句重新拼接。
 标题必须保持当前业务和视角，买家写亲历、专家写判断、商家写服务观察；不能照抄说明句。`;
+}
+
+function inventoryAngleDirective(businessLine: string | undefined, historyTitles: string[]) {
+  const pool = isOverseasBusinessLine(businessLine)
+    ? OVERSEAS_INVENTORY_ANGLES
+    : EXECUTIVE_INVENTORY_ANGLES;
+  const unused = pool.filter((angle) => !historyTitles.some((title) => angle.usedWhen.test(title)));
+  if (!unused.length) return "";
+  const selected = unused.slice(0, 3);
+  return `【本轮强制使用的未用盘点对象】三个候选分别盘点以下三类具体对象，不得退回简历、网申、投递、面试等已经反复出现的旧对象：
+${selected.map((angle, index) => `${index + 1}. ${angle.cue}`).join("\n")}
+候选1只盘点第1项，候选2只盘点第2项，候选3只盘点第3项；标题必须让人看出盘点的具体对象或使用场景，不能只写“这5项/几个坑”。
+标题仍需符合当前业务和视角；数字只是结构，换数字不算换题。`;
 }
 
 export function buildTopicPoolUserPrompt(input: {
@@ -517,7 +630,9 @@ export function buildTopicPoolUserPrompt(input: {
         ? tugOfWarAngleDirective(input.context?.businessLine, methodHistoryTitles)
         : method.id === "nostalgia"
           ? nostalgiaAngleDirective(input.context?.businessLine, methodHistoryTitles, input.persona)
-          : ""
+          : method.id === "inventory"
+            ? inventoryAngleDirective(input.context?.businessLine, methodHistoryTitles)
+            : ""
       : "";
     return [
       `${method.order}. method_id=${method.id}；方法=${method.label}；要求=${method.instruction}`,

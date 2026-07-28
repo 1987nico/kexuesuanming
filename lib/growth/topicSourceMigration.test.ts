@@ -274,6 +274,31 @@ describe("来源型标题生成合同", () => {
     expect(prompt).not.toContain("1. 以前陪孩子写个人陈述");
   });
 
+  it("盘点法会跳过失败批次用过的对象，分配新的具体盘点对象", () => {
+    const prompt = buildTopicPoolUserPrompt({
+      week: 1,
+      targetUser: "准备秋招的留学生与家长",
+      coreProblem: "求职方向与招聘节奏不清晰",
+      persona: "merchant",
+      methods: [TITLE_METHOD_BY_ID.inventory],
+      generationMode: "default",
+      excludeTitles: [
+        "留学生求职，盘点3类跨时区面试冲突",
+        "秋招陪跑，盘点4个工签衔接节点",
+        "留学生求职，盘点3类背调联系人风险",
+      ],
+      context: { businessLine: "overseas_student" },
+    });
+
+    expect(prompt).toContain("本轮强制使用的未用盘点对象");
+    expect(prompt).not.toContain("1. 跨时区面试时段冲突");
+    expect(prompt).not.toContain("1. 毕业签证与工签衔接节点");
+    expect(prompt).not.toContain("1. 背调联系人可用性");
+    expect(prompt).toContain("异地入职搬迁提前量");
+    expect(prompt).toContain("入职证件与学历认证材料");
+    expect(prompt).toContain("评估中心小组任务角色");
+  });
+
   it("来源存在但没有锁定结构卡时，明确禁止生成该方法标题", () => {
     const prompt = buildTopicPoolUserPrompt({
       week: 1,
