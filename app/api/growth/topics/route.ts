@@ -721,11 +721,17 @@ export async function POST(req: Request) {
       failed_method_ids: failedNativeDeliveries.map((delivery) => delivery.method_id),
       native_title_audit: nativeTitleAudit,
     });
+    // 操作者不需要看模型或服务端细节，但需要知道哪一个标题槽位没有通过，
+    // 否则只看到“有1个未通过”无法判断是系统故障还是自己操作有误。
+    const failedNativeSummary = failedNativeDeliveries.map((delivery) => {
+      const label = delivery.method_label || TITLE_METHOD_BY_ID[delivery.method_id]?.label || delivery.method_id;
+      return `${label}：${delivery.reason || "未生成新的合格标题"}`;
+    }).join("；");
     return NextResponse.json({
       error: "native_title_generation_incomplete",
       message: nativeAuditUnavailable
         ? "系统内部的标题新颖度复核暂未完成，当前标题没有被替换；请稍后再试。"
-        : `本轮有${failedNativeDeliveries.length}个原生法标题未通过质量或去重门禁，当前批次没有被替换；系统已保留原有标题。`,
+        : `本轮有${failedNativeDeliveries.length}个原生法标题未通过质量或去重门禁，当前批次没有被替换；系统已保留原有标题。未通过槽位：${failedNativeSummary}`,
       failedMethods: failedNativeDeliveries.map((delivery) => ({
         method_id: delivery.method_id,
         method_label: delivery.method_label,
