@@ -570,11 +570,11 @@ const EXECUTIVE_MOTHER_TOPICS: Array<[string, RegExp]> = [
 ];
 
 const OVERSEAS_MOTHER_TOPICS: Array<[string, RegExp]> = [
-  ["parent_child_conflict", /家长|妈妈|爸爸|爸妈|父母|家里|孩子|陪跑|帮倒忙|添乱|闹僵/],
+  ["parent_child_conflict", /家长|妈妈|爸爸|爸妈|父母|家里|孩子|娃|儿子|女儿|陪跑|帮倒忙|添乱|闹僵/],
   ["stay_or_return", /留英|留海外|留伦敦|回国|回沪|国内|工签|两个时区/],
   ["mass_application", /海投|投了|投递|没回音|零回应|回复/],
   ["recruiting_timeline", /秋招|提前批|截止|时间表|节奏|节点|窗口/],
-  ["job_targeting", /选岗|投错岗(?:位)?|岗不对|岗(?:位)?没选对|选错岗|岗位地图|方向|收窄|定位|赛道/],
+  ["job_targeting", /选岗|投错岗(?:位)?|找不对岗(?:位)?|岗不对|岗(?:位)?没选对|选错岗|岗位地图|方向|收窄|定位|赛道/],
   ["resume", /简历|网申|项目经历/],
   ["interview", /面试|笔试|终面|自我介绍/],
   ["offer_result", /offer|录用|入职|大厂|国企/i],
@@ -584,7 +584,7 @@ const OVERSEAS_MOTHER_TOPICS: Array<[string, RegExp]> = [
 
 const MATERIAL_ROLES: Array<[string, RegExp]> = [
   ["executive", /高管|总监|中层|部门总|管理层|管过\d*人/],
-  ["parent", /家长|妈妈|爸爸|父母|陪孩子/],
+  ["parent", /家长|妈妈|爸爸|父母|陪孩子|陪娃|孩子|娃|儿子|女儿/],
   ["student", /留学生|海归|留英|硕士|孩子|毕业生/],
   ["advisor", /顾问|老师|导师|机构|陪跑/],
   ["employee", /打工|员工|职场人|求职者/],
@@ -595,7 +595,7 @@ const MATERIAL_SCENES: Array<[string, RegExp]> = [
   ["application", /海投|投简历|投递|网申|招聘帖/],
   ["interview", /面试|笔试|终面|猎头电话/],
   ["workplace", /会议室|汇报|预算|团队|老板|客户|绩效/],
-  ["family", /家人|父母|孩子|书房|闹僵/],
+  ["family", /家人|父母|孩子|娃|儿子|女儿|书房|闹僵/],
   ["overseas", /留英|伦敦|海外|工签|回国|回沪/],
   ["entrepreneurship", /创业|合伙|工作室|副业/],
   ["planning", /清单|表|地图|盘点|核对|漏斗/],

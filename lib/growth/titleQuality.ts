@@ -113,7 +113,7 @@ const ALLOWED_LATIN_TERMS = new Set([
 ]);
 
 const AUDIENCE_PATTERNS: Array<[string, RegExp]> = [
-  ["parent", /家长|妈妈|爸爸|爸妈|父母|家里|家人|我家孩子/gu],
+  ["parent", /家长|妈妈|爸爸|爸妈|父母|家里|家人|我家孩子|孩子|娃|儿子|女儿/gu],
   ["overseas_student", /留学生|留洋|海归|留英|留学|读硕|海外|工签/gu],
   ["executive", /中高管|高管|总监|中层|管理层|部门总|老板/gu],
   ["advisor", /顾问|老师|机构|陪跑|咨询师/gu],
@@ -140,7 +140,7 @@ const SCENARIO_PATTERNS: Array<[string, RegExp]> = [
 const CONFLICT_PATTERNS: Array<[string, RegExp]> = [
   // 家庭投入后不敢说出秋招方向问题，是同一个可识别的内容母题；
   // 无论语序是“先说爸妈”还是“先说不敢”，换词后都不能伪装成新标题。
-  ["parent_job_search_pressure", /(?=[\s\S]*(?:爸妈|父母|家里|家长))(?=[\s\S]*(?:秋招|求职|投简历|面试|笔试|待业))(?=[\s\S]*(?:不敢|害怕|怕|没方向|方向模糊|方向(?:全)?错|全错|全挂|没回音|没信|其实|以为|乱投))[\s\S]+/gu],
+  ["parent_job_search_pressure", /(?=[\s\S]*(?:爸妈|父母|家里|家长|孩子|娃|儿子|女儿))(?=[\s\S]*(?:秋招|求职|投简历|面试|笔试|待业))(?=[\s\S]*(?:不敢|害怕|怕|没方向|方向模糊|方向(?:全)?错|全错|全挂|没回音|没信|其实|以为|乱投))[\s\S]+/gu],
   // 留学/海归求职中的“怕把困境说出口”，不能只替换倾诉对象就变成新标题。
   ["overseas_job_search_disclosure_shame", /(?=[\s\S]*(?:留(?:了)?学|留学生|海归|留英|海外))(?=[\s\S]*(?:秋招|求职|投(?:啥|什么|简历|递)|海投|待业))(?=[\s\S]*(?:不敢.{0,8}(?:说|讲|告诉|面对|接)|怕.{0,8}(?:说|讲|告诉|接)))[\s\S]+/gu],
   // “早投晚投 / 投错节奏”指向同一个招聘节奏误判，不是新的反认知题。
@@ -156,7 +156,7 @@ const CONFLICT_PATTERNS: Array<[string, RegExp]> = [
   ["career_switch_fear", /不敢.{0,6}(?:转行|转型|换赛道|离职)|怕.{0,6}(?:转行|转型|换赛道|离职)/gu],
   ["resignation_fear", /不敢.{0,6}(?:离职|辞职|裸辞)|怕.{0,6}(?:离职|辞职|裸辞)/gu],
   ["timing_risk", /赶不上|错过|来不及|提前批|截止|窗口/gu],
-  ["role_mismatch", /方向错|岗不对|岗(?:位)?没选对|没选对岗|投错岗(?:位)?|不匹配|选错岗|岗位不清/gu],
+  ["role_mismatch", /方向错|岗不对|找不对岗(?:位)?|岗(?:位)?没选对|没选对岗|投错岗(?:位)?|不匹配|选错岗|岗位不清/gu],
   ["pricing_loss", /不值钱|砍价|市场价|定价|降薪/gu],
   ["risk_validation", /风险|踩坑|验证|试错|排除|胜算/gu],
 ];
@@ -375,6 +375,14 @@ export function evaluateTitleSemanticDuplicate(leftTitle: string, rightTitle: st
     && left.conflict === "role_mismatch"
     && right.conflict === "role_mismatch"
     && left.frame === right.frame;
+  // “投错岗/找不对岗 + 白搭”已经是足够具体的母题结果，不能仅替换前半句
+  // 的优势来源（内推、学历、背景）就重新交付。只收紧这个共享结果，不把
+  // 所有不同材料的选岗标题一概拦截。
+  const isSameRoleMismatchWithSharedOutcome = left.scenario === "job_targeting"
+    && right.scenario === "job_targeting"
+    && left.conflict === "role_mismatch"
+    && right.conflict === "role_mismatch"
+    && ["白搭", "全白搭"].some((outcome) => leftTitle.includes(outcome) && rightTitle.includes(outcome));
 
   if (commonSegmentLength >= 9) {
     reasons.push(`连续核心短语重复（${commonSegmentLength}字）`);
@@ -390,6 +398,8 @@ export function evaluateTitleSemanticDuplicate(leftTitle: string, rightTitle: st
     reasons.push("学历背景转向项目证据的怀旧母题相同");
   } else if (isSameRoleMismatchTheme) {
     reasons.push("岗位方向错位的反认知母题相同");
+  } else if (isSameRoleMismatchWithSharedOutcome) {
+    reasons.push("岗位方向错位且结果表达相同");
   } else if (coreMatches.length === 3 && (left.frame === right.frame || left.promise === right.promise || bigramScore >= 0.22)) {
     reasons.push("受众、场景和冲突相同");
   } else if (matched.length >= 4 && bigramScore >= 0.18) {

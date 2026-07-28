@@ -132,6 +132,15 @@ describe("标题语义去重", () => {
     expect(result.reasons).toContain("父母压力下的求职困境母题相同");
   });
 
+  it("把家长怕给娃添压力、因此不敢多问秋招的改写判为同一母题", () => {
+    const result = evaluateTitleSemanticDuplicate(
+      "帮孩子盯秋招，不敢多问怕吵架",
+      "怕给娃添压力，秋招的事不敢多问",
+    );
+    expect(result.duplicate).toBe(true);
+    expect(result.reasons).toContain("父母压力下的求职困境母题相同");
+  });
+
   it("把待业后害怕接爸妈电话的表达也判为父母压力母题", () => {
     const result = evaluateTitleSemanticDuplicate(
       "花百万留学，不敢跟爸妈说秋招没方向",
@@ -193,6 +202,15 @@ describe("标题语义去重", () => {
       "内推不是捷径，投错岗白搭",
     );
     expect(result.duplicate).toBe(false);
+  });
+
+  it("岗位错位且共享“白搭”结果时，不允许只替换优势来源重新交付", () => {
+    const result = evaluateTitleSemanticDuplicate(
+      "内推不是捷径，投错岗白搭",
+      "找不对岗，努力越多越白搭",
+    );
+    expect(result.duplicate).toBe(true);
+    expect(result.reasons).toContain("岗位方向错位且结果表达相同");
   });
 
   it("把背景好却方向错的反认知判为同一母题", () => {
