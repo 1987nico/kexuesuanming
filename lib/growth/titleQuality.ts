@@ -341,7 +341,20 @@ function isParentDirectionPromptingChoice(title: string, signature: TitleSemanti
   return signature.audience === "parent"
     && /催(?:娃|孩子|儿子|女儿|他|她)/u.test(canonical)
     && /方向/u.test(canonical)
-    && /还是|等.{0,8}自己/u.test(canonical);
+    && /还是|不如|等.{0,8}自己/u.test(canonical);
+}
+
+/**
+ * “孩子留完学，秋招到底投什么/往哪个方向走”是家长视角的一个具体焦虑母题。
+ * 它必须同时有亲子关系、留学经历、秋招，以及“投什么/方向/犹豫/懵”等方向不确定
+ * 信号才会命中；因此不会误挡住秋招时间线、实习选择等其它内容。
+ */
+function isParentOverseasJobDirectionUncertainty(title: string, signature: TitleSemanticSignature) {
+  const canonical = canonicalizeGrowthTitle(title);
+  return signature.audience === "parent"
+    && /留完学|留学|留英|海外|读硕/u.test(canonical)
+    && /秋招|校招/u.test(canonical)
+    && /投(?:什么|啥)|方向|犹豫|迷茫|发懵|懵|拿不准/u.test(canonical);
 }
 
 /**
@@ -375,6 +388,17 @@ function isReturneeHaloToJobReadinessShift(title: string) {
 function isCredentialToInterviewShift(title: string) {
   const canonical = canonicalizeGrowthTitle(title);
   return /(?:以前|当年|过去|从前).*(?:学校|学历|名校|背景).*(?:现在|如今).*(?:练|补|准备).{0,4}面试|(?:练|补|准备).{0,4}面试.*(?:以前|当年|过去|从前).*(?:学校|学历|名校|背景)/u.test(canonical);
+}
+
+/**
+ * “当年收到录取通知，如今等面试消息”以同一条人生阶段反差为卖点，
+ * 不能仅替换“通知/信”或“开心/揪心”后作为新标题交付。
+ * 这里要求现在仍是「等面试」而非「练面试」，避免挡住后续方法或行动类内容。
+ */
+function isAdmissionToInterviewWaitingContrast(title: string) {
+  const canonical = canonicalizeGrowthTitle(title);
+  return /(?:当年|以前|那年).{0,8}(?:收|收到|拿到|等到)?(?:录取(?:通知|信)?)/u.test(canonical)
+    && /(?:现在|如今).{0,12}等.{0,6}面试/u.test(canonical);
 }
 
 /**
@@ -420,6 +444,8 @@ export function evaluateTitleSemanticDuplicate(leftTitle: string, rightTitle: st
     && right.conflict === "credential_to_evidence_shift";
   const isSameParentDirectionPromptingChoice = isParentDirectionPromptingChoice(leftTitle, left)
     && isParentDirectionPromptingChoice(rightTitle, right);
+  const isSameParentOverseasJobDirectionUncertainty = isParentOverseasJobDirectionUncertainty(leftTitle, left)
+    && isParentOverseasJobDirectionUncertainty(rightTitle, right);
   const isSameCredentialJobSearchGap = isCredentialJobSearchGap(leftTitle)
     && isCredentialJobSearchGap(rightTitle)
     && left.frame === right.frame;
@@ -427,6 +453,8 @@ export function evaluateTitleSemanticDuplicate(leftTitle: string, rightTitle: st
     && isReturneeHaloToJobReadinessShift(rightTitle);
   const isSameCredentialToInterviewShift = isCredentialToInterviewShift(leftTitle)
     && isCredentialToInterviewShift(rightTitle);
+  const isSameAdmissionToInterviewWaitingContrast = isAdmissionToInterviewWaitingContrast(leftTitle)
+    && isAdmissionToInterviewWaitingContrast(rightTitle);
   const isSameRoleMismatchTheme = left.scenario === "job_targeting"
     && right.scenario === "job_targeting"
     && left.conflict === "role_mismatch"
@@ -455,12 +483,16 @@ export function evaluateTitleSemanticDuplicate(leftTitle: string, rightTitle: st
     reasons.push("学历背景转向项目证据的怀旧母题相同");
   } else if (isSameParentDirectionPromptingChoice) {
     reasons.push("家长催孩子先定求职方向的选择母题相同");
+  } else if (isSameParentOverseasJobDirectionUncertainty) {
+    reasons.push("家长视角下留学后秋招方向焦虑的母题相同");
   } else if (isSameCredentialJobSearchGap) {
     reasons.push("学历或留学背景不等于求职顺利的反认知母题相同");
   } else if (isSameReturneeHaloToJobReadinessShift) {
     reasons.push("海归光环转向求职准备的怀旧母题相同");
   } else if (isSameCredentialToInterviewShift) {
     reasons.push("学历转向面试准备的怀旧母题相同");
+  } else if (isSameAdmissionToInterviewWaitingContrast) {
+    reasons.push("当年录取、如今等面试的怀旧反差母题相同");
   } else if (isSameRoleMismatchTheme) {
     reasons.push("岗位方向错位的反认知母题相同");
   } else if (isSameRoleMismatchWithSharedOutcome) {

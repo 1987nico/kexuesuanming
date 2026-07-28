@@ -126,6 +126,45 @@ describe("标题生成30批用户验收标准（确定性兜底回归）", () =>
     expect(batches).toBe(30);
   });
 
+  it("语义审核最多只看两个合格兜底候选时，五批里每个原生槽位仍有可替代项", () => {
+    const spaces: Array<[GrowthBusinessLine, GrowthPersona]> = [
+      ["overseas_student", "buyer"],
+      ["overseas_student", "merchant"],
+      ["overseas_student", "expert"],
+      ["executive", "buyer"],
+      ["executive", "merchant"],
+      ["executive", "expert"],
+    ];
+
+    for (const [businessLine, persona] of spaces) {
+      const methods = methodsForPersona(persona, "default").filter((method) => !method.sourceRequired);
+      const historyTitles: string[] = [];
+      const historyTopics: Array<{ method_id: TitleMethodId; title: string }> = [];
+
+      for (let round = 0; round < 5; round += 1) {
+        const batch: TopicCandidate[] = [];
+        for (const method of methods) {
+          const eligible = fallbackTitleCandidates(account(businessLine, persona), method.id)
+            .filter((candidate) => evaluateGrowthTitleQuality(candidate.title).acceptable)
+            .filter((candidate) => topicBatchDuplicateProblems(
+              [...batch, topic(businessLine, persona, method.id, candidate.title)],
+              historyTitles,
+              historyTopics,
+              businessLine,
+            ).length === 0)
+            .slice(0, 2);
+          expect(
+            eligible.length,
+            `${businessLine}/${persona}/第${round + 1}批/${method.id}没有给语义审核留下两个安全兜底候选`,
+          ).toBe(2);
+          batch.push(topic(businessLine, persona, method.id, eligible[0].title));
+        }
+        historyTitles.push(...batch.map((item) => item.title));
+        historyTopics.push(...batch.map((item) => ({ method_id: item.method_id, title: item.title })));
+      }
+    }
+  });
+
   it("繁体、乱码、虚构事实和换词重复都不能进入成功批次", () => {
     for (const value of [
       "留學當下別衝動轉職",

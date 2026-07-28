@@ -1,0 +1,70 @@
+import { describe, expect, it } from "vitest";
+import {
+  buildNativeTitleNoveltyAuditPrompt,
+  normalizeNativeTitleNoveltyDecisions,
+  type NativeTitleNoveltyCandidate,
+  type NativeTitleNoveltyReference,
+} from "./titleNoveltyAudit";
+
+const candidates: NativeTitleNoveltyCandidate[] = [
+  { id: "C1", methodId: "human_pain", kind: "model", title: "供娃留完学，秋招方向他自己都懵" },
+  { id: "C2", methodId: "nostalgia", kind: "fallback", title: "以前拼学校，现在练面试" },
+];
+
+const references: NativeTitleNoveltyReference[] = [
+  { id: "H1", kind: "history", title: "娃留完学，连秋招投什么都犹豫" },
+  { id: "S1", kind: "selected", title: "留学生秋招前先查时间线" },
+];
+
+describe("原生标题批次语义新颖度审核", () => {
+  it("把同义改写的历史标题标成不通过，并保留批内冲突信息", () => {
+    const decisions = normalizeNativeTitleNoveltyDecisions({
+      decisions: [
+        {
+          candidate_id: "C1",
+          novel: false,
+          duplicate_reference_ids: ["H1"],
+          conflicting_candidate_ids: ["C2"],
+          reason: "与历史同一亲子秋招困境",
+        },
+        {
+          candidate_id: "C2",
+          novel: true,
+          duplicate_reference_ids: [],
+          conflicting_candidate_ids: ["C1"],
+          reason: "素材不同",
+        },
+      ],
+    }, candidates, references);
+
+    expect(decisions[0]).toMatchObject({
+      candidateId: "C1",
+      novel: false,
+      duplicateReferenceIds: ["H1"],
+      conflictingCandidateIds: ["C2"],
+    });
+    expect(decisions[1]).toMatchObject({ candidateId: "C2", novel: true });
+  });
+
+  it("缺失候选或自相矛盾的审核结果默认不放行", () => {
+    const decisions = normalizeNativeTitleNoveltyDecisions({
+      decisions: [{ candidate_id: "C1", novel: true, duplicate_reference_ids: ["H1"] }],
+    }, candidates, references);
+    expect(decisions[0].novel).toBe(false);
+    expect(decisions[1]).toMatchObject({ novel: false });
+  });
+
+  it("提示词明确要求按真实母题而非词面重合审核", () => {
+    const prompt = buildNativeTitleNoveltyAuditPrompt({
+      businessLine: "overseas_student",
+      persona: "buyer",
+      targetUser: "留学生家长",
+      coreProblem: "秋招方向与家庭沟通",
+      candidates,
+      references,
+    });
+    expect(prompt).toContain("同一个“具体人物/阶段 + 场景或动作 + 核心冲突/结果”");
+    expect(prompt).toContain("供娃留完学，秋招方向他自己都懵");
+    expect(prompt).toContain("娃留完学，连秋招投什么都犹豫");
+  });
+});

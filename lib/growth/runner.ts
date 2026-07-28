@@ -87,6 +87,11 @@ import {
   normalizeTitleForComparison,
   titlesAreSemanticDuplicates,
 } from "./titleQuality";
+import {
+  auditNativeTitleBatchNovelty,
+  type NativeTitleNoveltyCandidate,
+  type NativeTitleNoveltyReference,
+} from "./titleNoveltyAudit";
 
 const DEFAULT_TENANT_ID = "mianbajun";
 const now = () => new Date().toISOString();
@@ -374,6 +379,7 @@ const NATIVE_EMERGENCY_TITLE_VARIANTS: Record<
       "回国求职，还是留在当地？",
       "先收窄岗位，还是继续海投？",
       "冲提前批，还是先改简历？",
+      "先接保底offer，还是等对口岗？",
     ],
     scarce_material: [
       "秋招前，先看这张时间表",
@@ -556,6 +562,18 @@ export interface TopicTitleHistoryEntry {
   /** 0 为当前上一批，数字越大越早。 */
   batch_index?: number;
 }
+
+interface NativeTitleCandidateOption {
+  audit: NativeTitleNoveltyCandidate;
+  topic: TopicCandidate;
+}
+
+/**
+ * 原模型会为一个槽位给出 1 个首选和 4 个备选。语义审核只需要看最靠前的
+ * 少量合格候选；再多会挤占响应时间，却不会提升运营可选范围。
+ */
+const MAX_NATIVE_MODEL_CANDIDATES_PER_METHOD = 4;
+const MAX_NATIVE_FALLBACK_CANDIDATES_PER_METHOD = 2;
 
 const EXECUTIVE_MOTHER_TOPICS: Array<[string, RegExp]> = [
   ["platform_pricing", /平台|光环|头衔|title|工牌|名片|定价|值多少钱|议价权/i],
@@ -1159,9 +1177,13 @@ export async function generateTopicBatch(input: {
   let lastProblems: string[] = [];
   let usage: Record<string, unknown> | undefined;
   const accepted = new Map<TitleMethodId, TopicCandidate>();
+  // 原生标题先在一批内收集，再做一次“候选 vs 全历史”的语义审核。此前在
+  // 这里逐条即时接收，确定性关键词没覆盖到的同义改写会直接进入页面。
+  const nativeCandidatesByMethod = new Map<TitleMethodId, NativeTitleCandidateOption[]>();
   // 两轮模型尝试后，原生法会从经过同一门禁的场景化兜底池中挑一个全新标题；
   // 来源型方法仍只允许透明暂停。这样一次点击不会因模型偶发输出拖到分钟级。
   const maxAttempts = 2;
+  let generationAttempts = 0;
 
   const operatorReason = (method: TitleMethodDefinition, raw?: string) => {
     const unavailable = unavailableMethods.find((item) => item.method_id === method.id);
@@ -1207,7 +1229,13 @@ export async function generateTopicBatch(input: {
   });
 
   for (let attempt = 1; attempt <= maxAttempts && accepted.size < methods.length; attempt += 1) {
-    const pendingMethods = methods.filter((method) => !accepted.has(method.id));
+    generationAttempts = attempt;
+    const pendingMethods = methods.filter((method) => {
+      if (accepted.has(method.id)) return false;
+      if (method.sourceRequired) return true;
+      return (nativeCandidatesByMethod.get(method.id)?.length ?? 0) < MAX_NATIVE_MODEL_CANDIDATES_PER_METHOD;
+    });
+    if (!pendingMethods.length) break;
     try {
       const result = await llmJSON<any>({
         system: GROWTH_SYSTEM_PROMPT,
@@ -1264,6 +1292,7 @@ export async function generateTopicBatch(input: {
           ...(Array.isArray(row.alternative_titles) ? row.alternative_titles.map(asText) : []),
         ].map((value) => value.trim()).filter(Boolean))).slice(0, 5);
         let acceptedTopic: TopicCandidate | undefined;
+        let capturedNativeCandidate = false;
         const candidateProblems: string[] = [];
         candidateProblemsByMethod.set(method.id, candidateProblems);
 
@@ -1352,9 +1381,23 @@ export async function generateTopicBatch(input: {
                   },
                 });
               } else {
-                acceptedTopic = topic;
-                accepted.set(method.id, acceptedTopic);
-                break;
+                // 原生法不能在这里即时放行。先把确定性合格的候选收进同一
+                // 批次，等所有槽位都有候选后，再用一次 LLM 按“历史母题”
+                // 审核，拦住“供娃留完学/秋招方向都懵”这种整句换皮。
+                const nativeCandidates = nativeCandidatesByMethod.get(method.id) ?? [];
+                if (nativeCandidates.length < MAX_NATIVE_MODEL_CANDIDATES_PER_METHOD) {
+                  nativeCandidates.push({
+                    audit: {
+                      id: `model:${attempt}:${method.id}:${candidateIndex}`,
+                      methodId: method.id,
+                      title: topic.title,
+                      kind: "model",
+                    },
+                    topic,
+                  });
+                  nativeCandidatesByMethod.set(method.id, nativeCandidates);
+                  capturedNativeCandidate = true;
+                }
               }
             }
             if (problems.length) {
@@ -1365,7 +1408,11 @@ export async function generateTopicBatch(input: {
             candidateProblems.push(`${method.id}:${(error as Error).message}`);
           }
         }
-        if (!acceptedTopic && !sourceCandidates.some((candidate) => candidate.method.id === method.id)) {
+        if (
+          !acceptedTopic
+          && !capturedNativeCandidate
+          && !sourceCandidates.some((candidate) => candidate.method.id === method.id)
+        ) {
           attemptProblems.push(candidateProblems[0] ?? `${method.id}:未返回可用的新标题候选`);
         }
       }
@@ -1457,15 +1504,15 @@ export async function generateTopicBatch(input: {
     }
   }
 
-  // 原生法没有外部来源的不确定性。若模型连续两轮没有给出可交付标题，使用
-  // 预先审过的“业务场景×方法”候选池，并重新跑质量、身份、业务隔离、历史
-  // 去重和本批去重。兜底池耗尽时才将该槽位标成失败，绝不把旧标题冒充新标题。
-  for (const method of methods.filter((item) => !item.sourceRequired && !accepted.has(item.id))) {
-    // 单槽“换个标题”要保留原来的正文承诺，不能用通用兜底把运营已锁定的
-    // 方向换掉；主批次则可以安全使用新的场景候选。
+  const nativeMethods = methods.filter((method) => !method.sourceRequired && !accepted.has(method.id));
+  // 把静态兜底也一并交给同一个审核器。这样模型异常时不会绕开“和历史实质
+  // 换题”的要求；审核器不可用时宁可保留原批，也绝不把可能换皮的标题写进去。
+  for (const method of nativeMethods) {
     if (input.directionLocks?.[method.id]) continue;
-    const fallbackProblems: string[] = [];
+    const candidates = nativeCandidatesByMethod.get(method.id) ?? [];
+    let fallbackCount = 0;
     for (const candidate of fallbackTitleCandidates(input.account, method.id)) {
+      if (fallbackCount >= MAX_NATIVE_FALLBACK_CANDIDATES_PER_METHOD) break;
       const topic = fallbackTopic(input.account, method, generationMode, undefined, candidate.title, candidate);
       topic.hook = topic.title;
       const problems = [
@@ -1478,20 +1525,125 @@ export async function generateTopicBatch(input: {
           { businessLine: input.account.business_line ?? "executive" },
         ),
       ];
-      if (!problems.length) {
-        accepted.set(method.id, topic);
-        break;
+      if (problems.length) continue;
+      if (candidates.some((item) => normalizeTitleForComparison(item.topic.title) === normalizeTitleForComparison(topic.title))) {
+        continue;
       }
-      fallbackProblems.push(...problems);
+      candidates.push({
+        audit: {
+          id: `fallback:${method.id}:${fallbackCount}`,
+          methodId: method.id,
+          title: topic.title,
+          kind: "fallback",
+        },
+        topic,
+      });
+      fallbackCount += 1;
     }
-    if (!accepted.has(method.id)) {
-      lastProblems.push(
-        fallbackProblems[0] || `${method.id}:原生法兜底候选已耗尽，未形成新标题`,
-      );
+    nativeCandidatesByMethod.set(method.id, candidates);
+  }
+
+  const auditCandidates = nativeMethods.flatMap((method) => nativeCandidatesByMethod.get(method.id) ?? []);
+  if (auditCandidates.length) {
+    const references: NativeTitleNoveltyReference[] = [];
+    const referenceTitles = new Set<string>();
+    const addReference = (id: string, title: string, kind: NativeTitleNoveltyReference["kind"]) => {
+      const fingerprint = normalizeTitleForComparison(title);
+      if (!fingerprint || referenceTitles.has(fingerprint)) return;
+      referenceTitles.add(fingerprint);
+      references.push({ id, title, kind });
+    };
+    for (const item of historyTopics) addReference(`H${references.length + 1}`, item.title, "history");
+    for (const title of historyTitles) addReference(`H${references.length + 1}`, title, "history");
+    for (const topic of accepted.values()) addReference(`S${references.length + 1}`, topic.title, "selected");
+
+    try {
+      // 只增加一次、9 秒上限的批次审核。它只负责拒绝同义重复，候选选择和
+      // 事实/来源/身份等硬门禁仍由本地确定性规则负责。
+      const audit = await auditNativeTitleBatchNovelty({
+        businessLine: input.account.business_line ?? "executive",
+        persona: input.account.persona,
+        targetUser: input.account.target_user,
+        coreProblem: input.account.core_problem,
+        candidates: auditCandidates.map((candidate) => candidate.audit),
+        references,
+      });
+      usage = { ...(usage ?? {}), novelty_audit: audit.usage };
+      const decisionByCandidate = new Map(audit.decisions.map((decision) => [decision.candidateId, decision]));
+      const selectedNativeIds = new Set<string>();
+
+      for (const method of nativeMethods) {
+        const options = nativeCandidatesByMethod.get(method.id) ?? [];
+        let selected = false;
+        for (const option of options) {
+          const decision = decisionByCandidate.get(option.audit.id);
+          if (!decision?.novel) {
+            rejectedTitles.push(option.topic.title);
+            continue;
+          }
+          const conflictsWithSelected = decision.conflictingCandidateIds.some((id) => selectedNativeIds.has(id))
+            || [...selectedNativeIds].some((id) => (
+              decisionByCandidate.get(id)?.conflictingCandidateIds.includes(option.audit.id)
+            ));
+          if (conflictsWithSelected) {
+            rejectedTitles.push(option.topic.title);
+            continue;
+          }
+          const duplicateProblems = topicCandidateDuplicateProblems(
+            option.topic,
+            historyTitles,
+            historyTopics,
+            [...accepted.values()],
+            {
+              preserveDirection: Boolean(input.directionLocks?.[method.id]),
+              businessLine: input.account.business_line ?? "executive",
+            },
+          );
+          if (duplicateProblems.length) {
+            rejectedTitles.push(option.topic.title);
+            continue;
+          }
+          accepted.set(method.id, option.topic);
+          selectedNativeIds.add(option.audit.id);
+          selected = true;
+          break;
+        }
+        if (!selected) {
+          const firstRejected = options
+            .map((option) => decisionByCandidate.get(option.audit.id))
+            .find((decision) => decision && !decision.novel);
+          lastProblems.push(
+            `${method.id}:新候选与历史标题语义重复或批内过近${firstRejected?.reason ? `（${firstRejected.reason}）` : ""}`,
+          );
+        }
+      }
+    } catch (error) {
+      // 安全降级：审核超时/不可用时不放行任何未经这道门禁的原生标题。前端会
+      // 保留上一批标题，下一次点击可重新尝试，而不会把语义重复伪装成新标题。
+      console.warn("[growth] native title novelty audit unavailable:", (error as Error).message);
+      for (const method of nativeMethods) {
+        lastProblems.push(`${method.id}:语义新颖度审核暂不可用，本轮没有替换标题`);
+      }
+    }
+  }
+
+  for (const method of nativeMethods) {
+    if (!accepted.has(method.id) && !lastProblems.some((problem) => problem.startsWith(`${method.id}:`))) {
+      lastProblems.push(`${method.id}:没有形成可通过语义新颖度审核的新标题`);
     }
   }
 
   const missingMethods = methods.filter((method) => !accepted.has(method.id));
+  if (!missingMethods.length) {
+    return {
+      topics: methods.map((method) => accepted.get(method.id)!),
+      unavailableMethods,
+      methodDeliveries: buildDeliveries(generationAttempts),
+      generationAttempts,
+      structureCards: prepared.cards,
+      usage,
+    };
+  }
   if (input.allowSourcePause) {
     return {
       topics: methods.flatMap((method) => {
@@ -1509,8 +1661,8 @@ export async function generateTopicBatch(input: {
           ),
         })),
       ],
-      methodDeliveries: buildDeliveries(maxAttempts),
-      generationAttempts: maxAttempts,
+      methodDeliveries: buildDeliveries(generationAttempts),
+      generationAttempts,
       structureCards: prepared.cards,
       usage,
     };

@@ -150,6 +150,31 @@ describe("标题语义去重", () => {
     expect(result.reasons).toContain("家长催孩子先定求职方向的选择母题相同");
   });
 
+  it("把催孩子投简历前先捋秋招方向的不同句式判为重复", () => {
+    const result = evaluateTitleSemanticDuplicate(
+      "催娃投简历，还是先定秋招方向？",
+      "总催娃投简历，不如先捋秋招方向",
+    );
+    expect(result.duplicate).toBe(true);
+    expect(result.reasons).toContain("家长催孩子先定求职方向的选择母题相同");
+  });
+
+  it("把孩子留学后秋招投什么的焦虑换词判为重复", () => {
+    const result = evaluateTitleSemanticDuplicate(
+      "娃留完学，连秋招投什么都犹豫",
+      "供娃留完学，秋招方向他自己都懵",
+    );
+    expect(result.duplicate).toBe(true);
+    expect(result.reasons).toContain("家长视角下留学后秋招方向焦虑的母题相同");
+  });
+
+  it("不会把留学家庭的秋招时间建议误判为方向焦虑重复", () => {
+    expect(titlesAreSemanticDuplicates(
+      "娃留完学，秋招前先理清时间线",
+      "供娃留学回来，校招先补一段实习",
+    )).toBe(false);
+  });
+
   it("把待业后害怕接爸妈电话的表达也判为父母压力母题", () => {
     const result = evaluateTitleSemanticDuplicate(
       "花百万留学，不敢跟爸妈说秋招没方向",
@@ -231,6 +256,22 @@ describe("标题语义去重", () => {
     );
     expect(result.duplicate).toBe(true);
     expect(result.reasons).toContain("学历转向面试准备的怀旧母题相同");
+  });
+
+  it("把当年录取、如今等面试的怀旧对照换词判为重复", () => {
+    const result = evaluateTitleSemanticDuplicate(
+      "当年收录取通知，现在等面试信",
+      "当年收录取信多开心，现在等面试多揪心",
+    );
+    expect(result.duplicate).toBe(true);
+    expect(result.reasons).toContain("当年录取、如今等面试的怀旧反差母题相同");
+  });
+
+  it("不会把录取后的面试准备误判为等面试消息的怀旧对照", () => {
+    expect(titlesAreSemanticDuplicates(
+      "当年收录取通知，现在等面试信",
+      "当年收到录取通知，现在开始练面试",
+    )).toBe(false);
   });
 
   it("不同句式的岗位错位标题不被全历史语义规则过度拦截", () => {
