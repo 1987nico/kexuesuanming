@@ -590,6 +590,20 @@ export function nativeTitleSemanticTopicKeys(methodId: string, value: string) {
       && /(?:没下文|没了下文|没回应|不回复|失联|等了好久)/u.test(title),
   );
   add(
+    "scene:many_alumni_but_role_unknown",
+    /(?:校友|人脉)/u.test(title)
+      && /(?:多|认识|广)/u.test(title)
+      && /(?:不清楚|不了解|不知道|没弄清)/u.test(title)
+      && /(?:岗位|岗|工作|职责)/u.test(title)
+      && /(?:日常|内容|具体|实际)/u.test(title),
+  );
+  add(
+    "scene:family_connection_hard_to_refuse",
+    /(?:家里|父母|爸妈)/u.test(title)
+      && /(?:托关系|找关系|介绍|内推)/u.test(title)
+      && /(?:不敢说不|难拒绝|不好拒绝|不敢拒绝)/u.test(title),
+  );
+  add(
     "nostalgia:parent_club_to_job_evidence",
     /(?:孩子|娃|儿子|女儿)/u.test(title)
       && /社团/u.test(title)
@@ -616,6 +630,12 @@ export function nativeTitleSemanticTopicKeys(methodId: string, value: string) {
     "decision:offer_direct_manager",
     /(?:offer|录用|机会)/iu.test(title)
       && /(?:直属经理|直接上级|汇报对象)/u.test(title),
+  );
+  add(
+    "decision:specialist_vs_general_management",
+    /(?:专业岗|专业负责人|专业线|专家岗|专家线)/u.test(title)
+      && /(?:经营岗|综合经营|综合管理|管理岗|经营线)/u.test(title)
+      && /(?:还是|选|转)/u.test(title),
   );
   add(
     "scene:budget_freeze_team_morale",

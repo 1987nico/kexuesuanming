@@ -381,6 +381,21 @@ describe("标题语义去重", () => {
       "盘点中英表达样本，适配不同岗",
       "盘点4类中英汇报表达样本",
     ],
+    [
+      "contrarian",
+      "校友认识多，反而不清楚岗日常",
+      "认识校友多，反倒不清楚岗位日常",
+    ],
+    [
+      "human_pain",
+      "家里托关系，我更不敢说不",
+      "家里托关系，反而更难拒绝",
+    ],
+    [
+      "tug_of_war",
+      "做专业岗还是转综合经营岗",
+      "做专业负责人还是转经营岗",
+    ],
   ])("把词面不同但母题相同的线上样本判为重复", (methodId, left, right) => {
     expect(nativeTitleSemanticTopicKeys(methodId, left).length).toBeGreaterThan(0);
     expect(titlesAreMethodAwareSemanticDuplicates(methodId, left, right)).toBe(true);
