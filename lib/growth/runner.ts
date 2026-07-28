@@ -761,8 +761,14 @@ const MAX_NATIVE_MODEL_CANDIDATES_PER_METHOD = 5;
  * 多保留几条，才能避免某一条撞到历史就让整批原生法全部空掉。
  */
 const MAX_NATIVE_FALLBACK_CANDIDATES_PER_METHOD = 6;
-/** 每波每个方法最多保留两条模型候选和一条静态候选。 */
-const MAX_NATIVE_AUDIT_CANDIDATES_PER_METHOD = 3;
+/**
+ * 语义终审首轮每个方法只看一条候选。
+ *
+ * 旧实现会一次送审 12 条候选和 30 多条历史，线上已经出现审核模型连续
+ * 20 秒超时、把“已经生成好的 12 条标题”整批挡回的真实故障。候选池仍
+ * 完整保留；首选被明确判重后，下一波再取该方法尚未审核的下一条。
+ */
+const MAX_NATIVE_AUDIT_CANDIDATES_PER_METHOD = 1;
 /**
  * 常规审核只做首审与一次剩余候选审；仍未交付时转向不同角度的定向补题。
  * 这样避免把同一批旧候选反复送审，拖慢一次“换一批标题”。
@@ -1353,6 +1359,66 @@ export function selectAuditedNativeTitleOptions(input: {
     }
   }
   return { accepted, rejectedTitles, problems };
+}
+
+/**
+ * 语义审核属于质量增强层，不能成为整批标题交付的远程单点故障。
+ *
+ * 只有在审核请求本身超时或不可用、没有产生任何“明确拒绝”结论时才使用
+ * 这条恢复路径。候选仍必须重新通过标题质量、业务/视角、全历史近似、近
+ * 五批母题素材与批内冲突等全部确定性门禁；模型明确判重的标题不会走这里。
+ * 优先选择本轮模型动态生成的候选，静态安全候选只作为最后补位。
+ */
+export function selectLocallyVerifiedNativeTitleOptions(input: {
+  methods: TitleMethodDefinition[];
+  candidatesByMethod: Map<TitleMethodId, NativeTitleCandidateOption[]>;
+  alreadyAccepted: TopicCandidate[];
+  historyTitles: string[];
+  historyTopics: TopicTitleHistoryEntry[];
+  account: GrowthAccount;
+  businessLine: GrowthBusinessLine;
+  directionLocks?: Partial<Record<TitleMethodId, TopicCandidate>>;
+}) {
+  const accepted = new Map<TitleMethodId, TopicCandidate>();
+  const rejectedTitles: string[] = [];
+  const problems: string[] = [];
+  let fallbackCount = 0;
+
+  for (const method of input.methods) {
+    const options = [...(input.candidatesByMethod.get(method.id) ?? [])].sort((left, right) => {
+      if (left.audit.kind === right.audit.kind) return 0;
+      return left.audit.kind === "model" ? -1 : 1;
+    });
+    let selected = false;
+    for (const option of options) {
+      const optionProblems = [
+        ...titleQualityProblems(option.topic, input.account),
+        ...topicCandidateDuplicateProblems(
+          option.topic,
+          input.historyTitles,
+          input.historyTopics,
+          [...input.alreadyAccepted, ...accepted.values()],
+          {
+            preserveDirection: Boolean(input.directionLocks?.[method.id]),
+            businessLine: input.businessLine,
+          },
+        ),
+      ];
+      if (optionProblems.length) {
+        rejectedTitles.push(option.topic.title);
+        continue;
+      }
+      accepted.set(method.id, option.topic);
+      if (option.audit.kind === "fallback") fallbackCount += 1;
+      selected = true;
+      break;
+    }
+    if (!selected) {
+      problems.push(`${method.id}:语义审核不可用，且没有候选通过本地严格恢复门禁`);
+    }
+  }
+
+  return { accepted, rejectedTitles, problems, fallbackCount };
 }
 
 /**
@@ -2542,14 +2608,57 @@ export async function generateTopicBatch(input: {
         : /abort|timeout|超时/iu.test(message)
           ? "timeout"
           : "unavailable";
-      const remainingMethods = nativeMethods.filter((method) => !accepted.has(method.id));
+      let remainingMethods = nativeMethods.filter((method) => !accepted.has(method.id));
+      // 审核请求本身没有返回任何结论时，不把已经通过全部确定性门禁的动态
+      // 标题整批丢弃。这里不是放宽重复标准：候选会再次通过质量、身份、
+      // 全历史近似、近五批母题素材和批内冲突检查；模型明确拒绝的候选不会
+      // 进入本 catch，也就不会被这条恢复路径覆盖。
+      const localRecovery = selectLocallyVerifiedNativeTitleOptions({
+        methods: remainingMethods,
+        candidatesByMethod: nativeCandidatesByMethod,
+        alreadyAccepted: [...accepted.values()],
+        historyTitles,
+        historyTopics,
+        account: input.account,
+        businessLine: input.account.business_line ?? "executive",
+        directionLocks: input.directionLocks,
+      });
+      for (const [methodId, topic] of localRecovery.accepted) accepted.set(methodId, topic);
+      rejectedTitles.push(...localRecovery.rejectedTitles);
+      lastProblems.push(...localRecovery.problems);
+      remainingMethods = nativeMethods.filter((method) => !accepted.has(method.id));
+      if (localRecovery.accepted.size) {
+        usage = {
+          ...(usage ?? {}),
+          novelty_audit_local_recovery: {
+            reason: auditStatus,
+            accepted_count: localRecovery.accepted.size,
+            fallback_count: localRecovery.fallbackCount,
+          },
+        };
+        nativeTitleAudit = {
+          status: remainingMethods.length ? auditStatus : "fallback_recovery",
+          candidate_count: auditCandidates.length,
+          reference_count: references.length,
+          elapsed_ms: Date.now() - auditStartedAt,
+        };
+        console.warn("[growth] native title novelty audit unavailable; recovered with deterministic gates", {
+          audit_status: auditStatus,
+          accepted_method_ids: [...localRecovery.accepted.keys()],
+          fallback_count: localRecovery.fallbackCount,
+          remaining_method_ids: remainingMethods.map((method) => method.id),
+        });
+      }
       // 首轮审核不可用时，只再试一次“尚未拿到 decision 的候选”。这些候选可能
       // 是模型替代题，也可能是静态候选；任何一个仍必须拿到语义审核结果后才能
       // 进入页面，绝不允许本地兜底绕过审核。
       // 如果已经执行过二审仍然报错，则直接保留旧批，防止一次点击进入重试循环。
       const canRunAuditedFallbackRecovery = remainingMethods.length > 0
         && !/native_title_audit_retry/iu.test(message);
-      if (canRunAuditedFallbackRecovery) {
+      if (!remainingMethods.length) {
+        // 本地严格恢复已经完整交付，保留 fallback_recovery 诊断，不再把
+        // 成功恢复覆盖回 timeout/unavailable。
+      } else if (canRunAuditedFallbackRecovery) {
         try {
           const recoveryOptionsByMethod = compactNativeAuditRetryOptions({
             methods: remainingMethods,

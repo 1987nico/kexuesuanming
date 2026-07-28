@@ -104,8 +104,35 @@ describe("原生标题语义审核二次恢复", () => {
       expect(firstAuditTitles.has(topic.title)).toBe(false);
       expect(secondAuditTitles.has(topic.title)).toBe(true);
     }
-    expect(auditBatches[1].some((candidate) => candidate.title === "团队扩张，我却想离开")).toBe(true);
-    expect(auditBatches[1].some((candidate) => candidate.title === "继续带团队，还是转回业务？")).toBe(true);
+    expect(auditBatches[1].some((candidate) => candidate.title === "职位升了，反而不敢换公司")).toBe(true);
+    expect(auditBatches[1].some((candidate) => candidate.title === "留在原岗，还是出去面试？")).toBe(true);
+  });
+
+  it("语义审核传输超时时，用严格本地门禁交付动态候选而不整批失败", async () => {
+    let generationCalls = 0;
+    let auditCalls = 0;
+    llmJSONMock.mockImplementation(async (input: { user: string }) => {
+      if (!input.user.includes("语义新颖度终审")) {
+        generationCalls += 1;
+        return modelResponse(generatedTopics());
+      }
+      auditCalls += 1;
+      throw new Error("audit transport timeout");
+    });
+
+    const result = await generateTopicBatch({
+      account,
+      methodIds: ["human_pain", "tug_of_war"],
+    });
+
+    expect(generationCalls).toBe(2);
+    expect(auditCalls).toBe(1);
+    expect(result.nativeTitleAudit?.status).toBe("fallback_recovery");
+    expect(result.topics.map((topic) => topic.method_id)).toEqual(["human_pain", "tug_of_war"]);
+    expect(result.topics.map((topic) => topic.title)).toEqual([
+      "绩效不错，我却越来越想走",
+      "等晋升，还是先看新机会？",
+    ]);
   });
 
   it("二审漏掉一个方法的所有候选时，不释放该方法的任何未审核标题", async () => {
@@ -146,14 +173,14 @@ describe("原生标题语义审核二次恢复", () => {
 
     // 两轮旧候选审核后会转向定向补题；此 mock 故意只返回旧题，补题会被
     // 本地历史去重挡住。无论如何都绝不放行未经完整审核的标题。
-    expect(auditCalls).toBe(2);
+    expect(auditCalls).toBe(4);
     expect(result.topics.map((topic) => topic.method_id)).toEqual(["human_pain"]);
     expect(result.nativeTitleAudit?.status).toBe("incomplete");
     expect(result.methodDeliveries.find((delivery) => delivery.method_id === "human_pain")?.status).toBe("ready");
     expect(result.methodDeliveries.find((delivery) => delivery.method_id === "tug_of_war")?.status).toBe("failed");
   });
 
-  it("审核漏掉未采用的备选时，不必再叠一层补审也能完成安全交付", async () => {
+  it("首审拒绝后，二审完整返回每个方法即可完成安全交付", async () => {
     let auditCalls = 0;
     llmJSONMock.mockImplementation(async (input: { user: string }) => {
       if (!input.user.includes("语义新颖度终审")) return modelResponse(generatedTopics());
@@ -173,13 +200,13 @@ describe("原生标题语义审核二次恢复", () => {
       }
       if (auditCalls === 2) {
         return modelResponse({
-          decisions: candidates.slice(0, -1).map((candidate) => ({
+          decisions: candidates.map((candidate) => ({
             candidate_id: candidate.candidate_id,
             novel: true,
             natural: true,
             duplicate_reference_ids: [],
             conflicting_candidate_ids: [],
-            reason: "故意漏掉一项",
+            reason: "二审通过",
           })),
         });
       }
@@ -405,7 +432,7 @@ describe("原生标题语义审核二次恢复", () => {
     expect(result.nativeTitleAudit?.status).toBe("passed");
   });
 
-  it("首轮语义审核连续异常后，仍会转向定向补题并只交付已审核标题", async () => {
+  it("语义审核传输异常后，直接用严格本地门禁恢复而不再请求操作者", async () => {
     let generationCalls = 0;
     let auditCalls = 0;
     const recoveredPain = "年终奖到账，我更怕留错位置";
@@ -442,10 +469,13 @@ describe("原生标题语义审核二次恢复", () => {
       methodIds: ["human_pain", "tug_of_war"],
     });
 
-    expect(generationCalls).toBe(3);
-    expect(auditCalls).toBe(3);
-    expect(result.topics.map((topic) => topic.title)).toEqual([recoveredPain, recoveredChoice]);
-    expect(result.nativeTitleAudit?.status).toBe("passed");
+    expect(generationCalls).toBe(2);
+    expect(auditCalls).toBe(1);
+    expect(result.topics.map((topic) => topic.title)).toEqual([
+      "绩效不错，我却越来越想走",
+      "等晋升，还是先看新机会？",
+    ]);
+    expect(result.nativeTitleAudit?.status).toBe("fallback_recovery");
   });
 
   it("首轮没有本地候选时，仍会为锁定槽位定向补题并审核交付", async () => {

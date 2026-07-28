@@ -39,7 +39,7 @@ function option(
 }
 
 describe("原生标题语义审核候选预算", () => {
-  it("六个原生方法首轮每法审核两条候选，兼顾交付率与12条全局预算", () => {
+  it("六个原生方法首轮每法只审核一条候选，避免终审成为超时单点", () => {
     const methods = methodsForPersona("expert", "default").filter((method) => !method.sourceRequired);
     expect(methods).toHaveLength(6);
     const candidatesByMethod = new Map(methods.map((method) => [method.id, [
@@ -51,15 +51,15 @@ describe("原生标题语义审核候选预算", () => {
 
     const compact = compactNativeAuditOptions({ methods, candidatesByMethod });
     const total = methods.flatMap((method) => compact.get(method.id) ?? []);
-    expect(total).toHaveLength(12);
+    expect(total).toHaveLength(methods.length);
     for (const method of methods) {
       const options = compact.get(method.id) ?? [];
-      expect(options).toHaveLength(2);
+      expect(options).toHaveLength(1);
       expect(options.some((item) => item.audit.kind === "model")).toBe(true);
     }
   });
 
-  it("二次审核保留未审模型替代题和静态候选，并始终遵守全局12条预算", () => {
+  it("二次审核逐法取下一条未审候选，并始终保持轻量", () => {
     const methods = methodsForPersona("buyer", "default").filter((method) => !method.sourceRequired);
     expect(methods).toHaveLength(4);
     const candidatesByMethod = new Map(methods.map((method) => [method.id, [
@@ -84,9 +84,8 @@ describe("原生标题语义审核候选预算", () => {
       auditedTitleFingerprints: audited,
     });
     const total = methods.flatMap((method) => retry.get(method.id) ?? []);
-    expect(total).toHaveLength(12);
+    expect(total).toHaveLength(4);
     expect(total.some((item) => item.audit.kind === "model")).toBe(true);
-    expect(total.some((item) => item.audit.kind === "fallback")).toBe(true);
     expect(total.every((item) => !audited.has(normalizeTitleForComparison(item.topic.title)))).toBe(true);
   });
 
@@ -101,10 +100,10 @@ describe("原生标题语义审核候选预算", () => {
 
     const compact = compactNativeAuditOptions({ methods, candidatesByMethod, idPrefix: "G" });
     const total = methods.flatMap((method) => compact.get(method.id) ?? []);
-    expect(total).toHaveLength(12);
+    expect(total).toHaveLength(methods.length);
     for (const method of methods) {
       const options = compact.get(method.id) ?? [];
-      expect(options).toHaveLength(3);
+      expect(options).toHaveLength(1);
       expect(options.every((item) => item.audit.kind === "model")).toBe(true);
     }
   });
