@@ -44,6 +44,94 @@ function similarity(left, right) {
   return union ? intersection / union : 0;
 }
 
+/**
+ * 与服务端一致的“强语义母题”验收层。这里故意只覆盖对象和冲突都很明确的
+ * 同题改写，不用宽泛的“都在讲秋招/离职”误杀真正的新选题。
+ */
+function semanticTopicKeys(methodId, value) {
+  const title = String(value || "").normalize("NFKC");
+  const comparable = methodId === "inventory" || methodId === "scarce_material"
+    ? title
+      .replace(/^(?:留学生求职|海归求职|秋招陪跑|高管转型|中高管转型|职业转型)[，,:：]*/u, "")
+      .replace(/(?:盘点|梳理|核对|检查|查清)[数0-9一二三四五六七八九十百千万两这]*(?:项|类|种|个|份|笔|条|件|步)?/gu, "")
+    : title;
+  const keys = [];
+  const add = (key, condition) => {
+    if (condition && !keys.includes(key)) keys.push(key);
+  };
+  add(
+    "resume:bilingual_version_mismatch",
+    /(?:中英|双语|两版|中文版|英文版).{0,4}简历|简历.{0,4}(?:中英|双语|两版|中文版|英文版)/u.test(title)
+      && /(?:对不上|不一致|不匹配|冲突|串版|乱|白投|心虚)/u.test(title),
+  );
+  add(
+    "scene:headhunter_call_during_meeting",
+    /猎头/u.test(title)
+      && /(?:电话|来电|找|消息|联系)/u.test(title)
+      && /(?:开会|会议|团队会|主持)/u.test(title),
+  );
+  add(
+    "scene:board_praise_then_exit",
+    /董事会/u.test(title)
+      && /(?:夸|认可|表扬)/u.test(title)
+      && /(?:想走|离职|换方向|转型)/u.test(title),
+  );
+  add(
+    "scene:alumni_referral_no_reply",
+    /校友/u.test(title)
+      && /内推/u.test(title)
+      && /(?:没下文|没了下文|没回应|不回复|失联|等了好久)/u.test(title),
+  );
+  add(
+    "nostalgia:parent_club_to_job_evidence",
+    /(?:孩子|娃|儿子|女儿)/u.test(title)
+      && /社团/u.test(title)
+      && /(?:工作|求职|能力|结果|胜任|证明|证)/u.test(title),
+  );
+  add(
+    "material:cross_border_contact_check",
+    /(?:跨境|海外|国外|境外|时差)/u.test(title)
+      && /(?:联系|电话|手机|地址|邮箱|邮件)/u.test(title)
+      && /(?:卡|清单|核对|检查|保证|确保|找到|联系到)/u.test(title),
+  );
+  add(
+    "material:cross_border_tax_choice",
+    /(?:跨境|海外|国外|境外|回国|两地)/u.test(title)
+      && /(?:税务|税收|纳税|个税)/u.test(title),
+  );
+  add(
+    "inventory:bilingual_expression_samples",
+    /(?:中英|双语|中文版|英文版)/u.test(comparable)
+      && /(?:表达|汇报|话术)/u.test(comparable)
+      && /(?:样本|案例|范例)/u.test(comparable),
+  );
+  add(
+    "decision:offer_direct_manager",
+    /(?:offer|录用|机会)/iu.test(title)
+      && /(?:直属经理|直接上级|汇报对象)/u.test(title),
+  );
+  add(
+    "scene:budget_freeze_team_morale",
+    /预算/u.test(title)
+      && /(?:冻结|砍|缩)/u.test(title)
+      && /团队/u.test(title)
+      && /(?:画饼|前景|信心|士气)/u.test(title),
+  );
+  add(
+    "scene:client_loss_platform_resource",
+    /客户/u.test(title)
+      && /(?:走|流失|没了)/u.test(title)
+      && /平台/u.test(title)
+      && /资源/u.test(title),
+  );
+  return keys;
+}
+
+function sharedSemanticTopic(leftMethodId, leftTitle, rightMethodId, rightTitle) {
+  const rightKeys = new Set(semanticTopicKeys(rightMethodId, rightTitle));
+  return semanticTopicKeys(leftMethodId, leftTitle).find((key) => rightKeys.has(key));
+}
+
 function parseSessionCookie(raw) {
   const line = raw.split(/\r?\n/u).find((item) => (
     item.split(/\t/u)[5] === "mianba_session"
@@ -207,30 +295,52 @@ function validateNewBatch(state, response, round) {
     const near = state.history
       .map((item) => ({ ...item, score: similarity(item.title, title) }))
       .sort((a, b) => b.score - a.score)[0];
-    if (exact || (near && near.score >= 0.78)) {
+    const semanticDuplicate = state.history.find((item) => (
+      sharedSemanticTopic(topic.method_id, title, item.method_id, item.title)
+    ));
+    if (exact || semanticDuplicate || (near && near.score >= 0.78)) {
       throw Object.assign(new Error("标题与历史标题重复或高度近似"), {
         evidence: {
           space: state.key,
           round,
           method_id: topic.method_id,
           title,
-          duplicate_title: exact?.title ?? near.title,
-          similarity: exact ? 1 : near.score,
+          duplicate_title: exact?.title ?? semanticDuplicate?.title ?? near.title,
+          semantic_topic_key: semanticDuplicate
+            ? sharedSemanticTopic(
+              topic.method_id,
+              title,
+              semanticDuplicate.method_id,
+              semanticDuplicate.title,
+            )
+            : undefined,
+          similarity: exact ? 1 : semanticDuplicate ? undefined : near.score,
         },
       });
     }
     const batchNear = acceptedInBatch
       .map((item) => ({ ...item, score: similarity(item.title, title) }))
       .sort((a, b) => b.score - a.score)[0];
-    if (batchNear && batchNear.score >= 0.78) {
+    const batchSemanticDuplicate = acceptedInBatch.find((item) => (
+      sharedSemanticTopic(topic.method_id, title, item.method_id, item.title)
+    ));
+    if (batchSemanticDuplicate || (batchNear && batchNear.score >= 0.78)) {
       throw Object.assign(new Error("同一批标题彼此高度近似"), {
         evidence: {
           space: state.key,
           round,
           method_id: topic.method_id,
           title,
-          duplicate_title: batchNear.title,
-          similarity: batchNear.score,
+          duplicate_title: batchSemanticDuplicate?.title ?? batchNear.title,
+          semantic_topic_key: batchSemanticDuplicate
+            ? sharedSemanticTopic(
+              topic.method_id,
+              title,
+              batchSemanticDuplicate.method_id,
+              batchSemanticDuplicate.title,
+            )
+            : undefined,
+          similarity: batchSemanticDuplicate ? undefined : batchNear.score,
         },
       });
     }
@@ -241,7 +351,7 @@ function validateNewBatch(state, response, round) {
 
 const ledger = {
   objective: `正式部署上的6空间×${ROUNDS}批真实用户标题验收`,
-  deployment: "dpl_F8NQeu2zVjEvgM4wqz8SNs4XZHZi",
+  deployment: "dpl_HucHW3hwzyYYMcN5mEawt6mV1C4F",
   started_at: new Date().toISOString(),
   status: "running",
   batches_passed: 0,

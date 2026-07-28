@@ -7,6 +7,7 @@ import {
   evaluateTitleSemanticDuplicate,
   findUnsupportedTitleClaims,
   hasGarbledLatinCjkMix,
+  nativeTitleSemanticTopicKeys,
   titleForMethodSemanticComparison,
   titlesAreMethodAwareSemanticDuplicates,
   titlesAreSemanticDuplicates,
@@ -347,5 +348,54 @@ describe("标题语义去重", () => {
       "秋招陪跑，盘点5项异地入职提前量",
       "秋招陪跑，盘点3项异地入职提前量",
     )).toBe(true);
+  });
+
+  it.each([
+    [
+      "human_pain",
+      "中英简历对不上，不敢投心仪岗",
+      "两版简历对不上，越投越心虚",
+    ],
+    [
+      "human_pain",
+      "猎头来电时我正主持团队会",
+      "接猎头电话时我正开团队会",
+    ],
+    [
+      "human_pain",
+      "被董事会夸了反倒想走",
+      "董事会夸完我更想换方向",
+    ],
+    [
+      "nostalgia",
+      "以前陪娃写社团职位，现在证工作结果",
+      "陪娃写社团经历，如今证明工作结果",
+    ],
+    [
+      "scarce_material",
+      "跨境联系卡，保证HR能找到你",
+      "跨境联系核对卡，确保能被找到",
+    ],
+    [
+      "inventory",
+      "盘点中英表达样本，适配不同岗",
+      "盘点4类中英汇报表达样本",
+    ],
+  ])("把词面不同但母题相同的线上样本判为重复", (methodId, left, right) => {
+    expect(nativeTitleSemanticTopicKeys(methodId, left).length).toBeGreaterThan(0);
+    expect(titlesAreMethodAwareSemanticDuplicates(methodId, left, right)).toBe(true);
+  });
+
+  it("不会把对象不同的资料和盘点标题误判成同题", () => {
+    expect(titlesAreMethodAwareSemanticDuplicates(
+      "scarce_material",
+      "跨境联系核对卡，确保能被找到",
+      "跨境税务问题单，帮你比两地选择",
+    )).toBe(false);
+    expect(titlesAreMethodAwareSemanticDuplicates(
+      "inventory",
+      "盘点中英表达样本，适配不同岗",
+      "盘点3段利益相关方协作故事",
+    )).toBe(false);
   });
 });

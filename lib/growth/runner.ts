@@ -84,8 +84,10 @@ import {
   buildTitleSemanticSignature,
   canonicalizeGrowthTitle,
   evaluateGrowthTitleQuality,
+  nativeTitleSemanticTopicKeys,
   normalizeTitleForComparison,
   titleForMethodSemanticComparison,
+  titlesAreMethodAwareSemanticDuplicates,
   titlesAreSemanticDuplicates,
 } from "./titleQuality";
 import {
@@ -881,6 +883,7 @@ function titlesAreMethodAwareNearDuplicate(
   left: string,
   right: string,
 ) {
+  if (titlesAreMethodAwareSemanticDuplicates(methodId, left, right)) return true;
   if (methodId !== "inventory" && methodId !== "scarce_material") {
     return titlesAreNearDuplicate(left, right);
   }
@@ -1376,14 +1379,34 @@ function topicCandidateDuplicateProblems(
       : titlesAreNearDuplicate(topic.title, item.title)));
   const nearHistory = semanticHistory?.title ?? historyTitles.find((item) =>
     titlesAreMethodAwareNearDuplicate(topic.method_id, topic.title, item));
+  const strongTopicKeys = nativeTitleSemanticTopicKeys(topic.method_id, topic.title);
+  const semanticTopicHistory = strongTopicKeys.length
+    ? historyTopics.find((item) => {
+      const historicalKeys = new Set(nativeTitleSemanticTopicKeys(
+        item.method_id ?? topic.method_id,
+        item.title,
+      ));
+      return strongTopicKeys.some((key) => historicalKeys.has(key));
+    })
+    : undefined;
   if (sameFingerprint) problems.push(`${topic.method_id}:与历史标题“${sameFingerprint}”实质相同`);
-  else if (nearHistory) problems.push(`${topic.method_id}:与历史标题“${nearHistory}”重复或近似`);
+  else if (semanticTopicHistory) {
+    problems.push(`${topic.method_id}:与历史标题“${semanticTopicHistory.title}”讲的是同一具体母题`);
+  } else if (nearHistory) problems.push(`${topic.method_id}:与历史标题“${nearHistory}”重复或近似`);
   const inBatch = accepted.find((item) => (
     item.method_id === topic.method_id
       ? titlesAreMethodAwareNearDuplicate(topic.method_id, topic.title, item.title)
       : titlesAreNearDuplicate(topic.title, item.title)
   ));
-  if (inBatch) problems.push(`${topic.method_id}:与本批次${inBatch.method_id}标题重复或近似`);
+  const semanticTopicInBatch = strongTopicKeys.length
+    ? accepted.find((item) => {
+      const acceptedKeys = new Set(nativeTitleSemanticTopicKeys(item.method_id, item.title));
+      return strongTopicKeys.some((key) => acceptedKeys.has(key));
+    })
+    : undefined;
+  if (semanticTopicInBatch) {
+    problems.push(`${topic.method_id}:与本批次${semanticTopicInBatch.method_id}讲的是同一具体母题`);
+  } else if (inBatch) problems.push(`${topic.method_id}:与本批次${inBatch.method_id}标题重复或近似`);
   // 同一批次不能把“投错岗/岗没选对”这一核心冲突拆成两张卡片。
   // 这是批内组合约束，不把不同句式、不同材料的历史选岗题一概判重。
   const currentSemantic = buildTitleSemanticSignature(topic.title);

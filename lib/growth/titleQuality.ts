@@ -551,11 +551,98 @@ export function titleForMethodSemanticComparison(methodId: string, value: string
     || canonical;
 }
 
+/**
+ * 只收录“对象和冲突都足够明确”的强语义母题。
+ *
+ * 通用相似度擅长发现近句，却会漏掉“中英简历对不上 / 两版简历对不上”
+ * 这种几乎没有共同长词组的同题改写。这里不尝试给所有标题分类，只为已经
+ * 在线上反复出现、且不会因为行业大类相同就误杀的具体母题生成稳定 key。
+ */
+export function nativeTitleSemanticTopicKeys(methodId: string, value: string) {
+  const title = canonicalizeGrowthTitle(value);
+  const comparable = titleForMethodSemanticComparison(methodId, title);
+  const keys: string[] = [];
+  const add = (key: string, condition: boolean) => {
+    if (condition && !keys.includes(key)) keys.push(key);
+  };
+
+  add(
+    "resume:bilingual_version_mismatch",
+    /(?:中英|双语|两版|中文版|英文版).{0,4}简历|简历.{0,4}(?:中英|双语|两版|中文版|英文版)/u.test(title)
+      && /(?:对不上|不一致|不匹配|冲突|串版|乱|白投|心虚)/u.test(title),
+  );
+  add(
+    "scene:headhunter_call_during_meeting",
+    /猎头/u.test(title)
+      && /(?:电话|来电|找|消息|联系)/u.test(title)
+      && /(?:开会|会议|团队会|主持)/u.test(title),
+  );
+  add(
+    "scene:board_praise_then_exit",
+    /董事会/u.test(title)
+      && /(?:夸|认可|表扬)/u.test(title)
+      && /(?:想走|离职|换方向|转型)/u.test(title),
+  );
+  add(
+    "scene:alumni_referral_no_reply",
+    /校友/u.test(title)
+      && /内推/u.test(title)
+      && /(?:没下文|没了下文|没回应|不回复|失联|等了好久)/u.test(title),
+  );
+  add(
+    "nostalgia:parent_club_to_job_evidence",
+    /(?:孩子|娃|儿子|女儿)/u.test(title)
+      && /社团/u.test(title)
+      && /(?:工作|求职|能力|结果|胜任|证明|证)/u.test(title),
+  );
+  add(
+    "material:cross_border_contact_check",
+    /(?:跨境|海外|国外|境外|时差)/u.test(title)
+      && /(?:联系|电话|手机|地址|邮箱|邮件)/u.test(title)
+      && /(?:卡|清单|核对|检查|保证|确保|找到|联系到)/u.test(title),
+  );
+  add(
+    "material:cross_border_tax_choice",
+    /(?:跨境|海外|国外|境外|回国|两地)/u.test(title)
+      && /(?:税务|税收|纳税|个税)/u.test(title),
+  );
+  add(
+    "inventory:bilingual_expression_samples",
+    /(?:中英|双语|中文版|英文版)/u.test(comparable)
+      && /(?:表达|汇报|话术)/u.test(comparable)
+      && /(?:样本|案例|范例)/u.test(comparable),
+  );
+  add(
+    "decision:offer_direct_manager",
+    /(?:offer|录用|机会)/iu.test(title)
+      && /(?:直属经理|直接上级|汇报对象)/u.test(title),
+  );
+  add(
+    "scene:budget_freeze_team_morale",
+    /预算/u.test(title)
+      && /(?:冻结|砍|缩)/u.test(title)
+      && /团队/u.test(title)
+      && /(?:画饼|前景|信心|士气)/u.test(title),
+  );
+  add(
+    "scene:client_loss_platform_resource",
+    /客户/u.test(title)
+      && /(?:走|流失|没了)/u.test(title)
+      && /平台/u.test(title)
+      && /资源/u.test(title),
+  );
+
+  return keys;
+}
+
 export function titlesAreMethodAwareSemanticDuplicates(
   methodId: string,
   leftTitle: string,
   rightTitle: string,
 ) {
+  const leftKeys = nativeTitleSemanticTopicKeys(methodId, leftTitle);
+  const rightKeys = new Set(nativeTitleSemanticTopicKeys(methodId, rightTitle));
+  if (leftKeys.some((key) => rightKeys.has(key))) return true;
   return evaluateTitleSemanticDuplicate(
     titleForMethodSemanticComparison(methodId, leftTitle),
     titleForMethodSemanticComparison(methodId, rightTitle),
