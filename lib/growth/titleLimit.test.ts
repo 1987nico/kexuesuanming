@@ -98,6 +98,13 @@ describe("标题完整历史语义去重", () => {
     expect(titlesAreNearDuplicate(candidate, history)).toBe(true);
     expect(findDuplicateTitle(candidate, [history])).toBe(history);
   });
+
+  it("历史标题换成家庭投入的同义表达时仍必须拦截", () => {
+    const history = "花百万留学，不敢跟爸妈说秋招没方向";
+    const candidate = "花爸妈钱留学，秋招不敢说没方向";
+    expect(titlesAreNearDuplicate(candidate, history)).toBe(true);
+    expect(findDuplicateTitle(candidate, [history])).toBe(history);
+  });
 });
 
 describe("标题批次长期去重范围", () => {

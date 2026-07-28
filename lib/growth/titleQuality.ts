@@ -103,7 +103,7 @@ const ALLOWED_LATIN_TERMS = new Set([
 ]);
 
 const AUDIENCE_PATTERNS: Array<[string, RegExp]> = [
-  ["parent", /家长|妈妈|爸爸|父母|我家孩子/gu],
+  ["parent", /家长|妈妈|爸爸|爸妈|父母|我家孩子/gu],
   ["overseas_student", /留学生|留洋|海归|留英|留学|读硕|海外|工签/gu],
   ["executive", /中高管|高管|总监|中层|管理层|部门总|老板/gu],
   ["advisor", /顾问|老师|机构|陪跑|咨询师/gu],
@@ -126,6 +126,9 @@ const SCENARIO_PATTERNS: Array<[string, RegExp]> = [
 ];
 
 const CONFLICT_PATTERNS: Array<[string, RegExp]> = [
+  // 家庭投入后不敢说出秋招方向问题，是同一个可识别的内容母题；
+  // 无论语序是“先说爸妈”还是“先说不敢”，换词后都不能伪装成新标题。
+  ["family_funded_job_search_hiding", /(?:爸妈|父母|家里|家长).*(?:秋招|求职|投简历).*(?:不敢|没方向|方向模糊)|(?:不敢|没方向|方向模糊).*(?:爸妈|父母|家里|家长).*(?:秋招|求职|投简历)|(?:爸妈|父母|家里|家长).*(?:不敢|没方向|方向模糊).*(?:秋招|求职|投简历)/gu],
   ["internship_or_autumn_recruitment", /(?:实习|补实习).*(?:还是|or|vs|VS).*(?:秋招|校招)|(?:秋招|校招).*(?:还是|or|vs|VS).*(?:实习|补实习)/giu],
   ["misdirected_application", /瞎撞|乱投|海投|没回音|没人理|零回应/gu],
   ["stay_or_return_choice", /(?:留英|海外|工签).*(?:还是|or|vs|VS).*(?:回国|回沪)|(?:回国|回沪).*(?:还是|or|vs|VS).*(?:留英|海外|工签)/giu],

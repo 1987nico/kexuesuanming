@@ -75,6 +75,17 @@ describe("标题语义去重", () => {
     expect(result.reasons.some((reason) => reason.includes("连续核心短语重复"))).toBe(true);
   });
 
+  it("把家庭投入后不敢说秋招方向的换词判为重复", () => {
+    const result = evaluateTitleSemanticDuplicate(
+      "花百万留学，不敢跟爸妈说秋招没方向",
+      "花爸妈钱留学，秋招不敢说没方向",
+    );
+    expect(result.duplicate).toBe(true);
+    expect(result.reasons).toContain("受众、场景和冲突相同");
+    expect(result.left.conflict).toBe("family_funded_job_search_hiding");
+    expect(result.right.conflict).toBe("family_funded_job_search_hiding");
+  });
+
   it("允许同一业务下材料和冲突都不同的标题", () => {
     const first = "留学生秋招前先查时间线";
     const second = "回国求职前，先做岗位筛选";
