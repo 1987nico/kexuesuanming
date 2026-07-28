@@ -135,7 +135,7 @@ describe("原生标题语义审核二次恢复", () => {
     ]);
   });
 
-  it("二审漏掉一个方法的所有候选时，不释放该方法的任何未审核标题", async () => {
+  it("二审漏掉一个方法的 decision 时，只对漏项候选走严格本地恢复", async () => {
     let auditCalls = 0;
     llmJSONMock.mockImplementation(async (input: { user: string }) => {
       if (!input.user.includes("语义新颖度终审")) return modelResponse(generatedTopics());
@@ -171,13 +171,11 @@ describe("原生标题语义审核二次恢复", () => {
       allowSourcePause: true,
     });
 
-    // 两轮旧候选审核后会转向定向补题；此 mock 故意只返回旧题，补题会被
-    // 本地历史去重挡住。无论如何都绝不放行未经完整审核的标题。
-    expect(auditCalls).toBe(4);
-    expect(result.topics.map((topic) => topic.method_id)).toEqual(["human_pain"]);
-    expect(result.nativeTitleAudit?.status).toBe("incomplete");
+    expect(auditCalls).toBe(2);
+    expect(result.topics.map((topic) => topic.method_id)).toEqual(["human_pain", "tug_of_war"]);
+    expect(result.nativeTitleAudit?.status).toBe("fallback_recovery");
     expect(result.methodDeliveries.find((delivery) => delivery.method_id === "human_pain")?.status).toBe("ready");
-    expect(result.methodDeliveries.find((delivery) => delivery.method_id === "tug_of_war")?.status).toBe("failed");
+    expect(result.methodDeliveries.find((delivery) => delivery.method_id === "tug_of_war")?.status).toBe("ready");
   });
 
   it("首审拒绝后，二审完整返回每个方法即可完成安全交付", async () => {
@@ -223,7 +221,7 @@ describe("原生标题语义审核二次恢复", () => {
     expect(result.topics).toHaveLength(2);
   });
 
-  it("审核漏回 natural 时，会把候选视为协议不完整并在补审中重新审核", async () => {
+  it("审核漏回 natural 时，只对该漏项候选走严格本地恢复", async () => {
     const auditBatches: Array<Array<{ candidate_id: string; method_id: string; title: string }>> = [];
     llmJSONMock.mockImplementation(async (input: { user: string }) => {
       if (!input.user.includes("语义新颖度终审")) return modelResponse(generatedTopics());
@@ -259,8 +257,9 @@ describe("原生标题语义审核二次恢复", () => {
     });
 
     expect(auditBatches).toHaveLength(2);
-    expect(auditBatches[1].some((candidate) => candidate.title === "绩效不错，我却越来越想走")).toBe(true);
-    expect(result.nativeTitleAudit?.status).toBe("passed");
+    expect(auditBatches[1].some((candidate) => candidate.title === "绩效不错，我却越来越想走")).toBe(false);
+    expect(result.topics.some((topic) => topic.title === "绩效不错，我却越来越想走")).toBe(true);
+    expect(result.nativeTitleAudit?.status).toBe("fallback_recovery");
     expect(result.topics).toHaveLength(2);
   });
 

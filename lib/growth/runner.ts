@@ -1644,6 +1644,7 @@ export async function generateTopicBatch(input: {
   const maxAttempts = 2;
   let generationAttempts = 0;
   let nativeTitleAudit: NativeTitleAuditDiagnostic | undefined;
+  let localNativeAuditRecoveryUsed = false;
 
   const operatorReason = (method: TitleMethodDefinition, raw?: string) => {
     const unavailable = unavailableMethods.find((item) => item.method_id === method.id);
@@ -2180,8 +2181,25 @@ export async function generateTopicBatch(input: {
           });
         } catch (recoveryAuditError) {
           const detail = (recoveryAuditError as Error).message || "unknown";
+          const localRecovery = recoverMissingNativeAuditDecisions({
+            methods: remainingMethods,
+            optionsByMethod: recoveryOptionsByMethod,
+            missingCandidateIds: recoveryAuditCandidates.map((candidate) => candidate.id),
+          });
+          if (localRecovery.acceptedCount) {
+            nativeTitleAudit = {
+              status: nativeMethods.every((method) => accepted.has(method.id))
+                ? "fallback_recovery"
+                : /abort|timeout|超时/iu.test(detail) ? "timeout" : "unavailable",
+              candidate_count: (nativeTitleAudit?.candidate_count ?? 0) + recoveryAuditCandidates.length,
+              reference_count: Math.max(nativeTitleAudit?.reference_count ?? 0, recoveryReferences.length),
+              elapsed_ms: (nativeTitleAudit?.elapsed_ms ?? 0) + (Date.now() - recoveryStartedAt),
+            };
+          }
           for (const method of remainingMethods) {
-            lastProblems.push(`${method.id}:定向补题审核暂不可用（${detail.slice(0, 80)}）`);
+            if (!accepted.has(method.id)) {
+              lastProblems.push(`${method.id}:定向补题审核暂不可用（${detail.slice(0, 80)}）`);
+            }
           }
           break;
         }
@@ -2204,8 +2222,20 @@ export async function generateTopicBatch(input: {
         for (const [methodId, topic] of recoverySelection.accepted) accepted.set(methodId, topic);
         rejectedTitles.push(...recoverySelection.rejectedTitles);
         lastProblems.push(...recoverySelection.problems);
+        const recoveryMissingIds = recoveryAudit.coverage.missingCandidateIds;
+        if (recoveryMissingIds.length) {
+          // runTargetedNativeRecovery 在本函数初始化完成后才执行，因此可以
+          // 复用统一的“只恢复漏回 decision”规则。
+          recoverMissingNativeAuditDecisions({
+            methods: remainingMethods,
+            optionsByMethod: recoveryOptionsByMethod,
+            missingCandidateIds: recoveryMissingIds,
+          });
+        }
         nativeTitleAudit = {
-          status: nativeMethods.every((method) => accepted.has(method.id)) ? "passed" : "incomplete",
+          status: nativeMethods.every((method) => accepted.has(method.id))
+            ? recoveryMissingIds.length ? "fallback_recovery" : "passed"
+            : "incomplete",
           candidate_count: (nativeTitleAudit?.candidate_count ?? 0) + recoveryAuditCandidates.length,
           reference_count: Math.max(nativeTitleAudit?.reference_count ?? 0, recoveryReferences.length),
           elapsed_ms: (nativeTitleAudit?.elapsed_ms ?? 0) + (Date.now() - recoveryStartedAt),
@@ -2223,6 +2253,63 @@ export async function generateTopicBatch(input: {
         }
       }
     }
+  };
+
+  /**
+   * 审核模型有时会返回部分 decision、漏掉其余候选。这是协议/传输不完整，
+   * 不是模型明确判重。只对“漏回的候选”启用本地严格恢复；已经拿到
+   * novel=false 或 natural=false 的候选仍按明确拒绝处理。
+   */
+  const recoverMissingNativeAuditDecisions = (inputOptions: {
+    methods: TitleMethodDefinition[];
+    optionsByMethod: Map<TitleMethodId, NativeTitleCandidateOption[]>;
+    missingCandidateIds: string[];
+  }) => {
+    if (!inputOptions.missingCandidateIds.length) {
+      return { acceptedCount: 0, fallbackCount: 0 };
+    }
+    const missingIds = new Set(inputOptions.missingCandidateIds);
+    const candidatesByMethod = new Map<TitleMethodId, NativeTitleCandidateOption[]>();
+    for (const method of inputOptions.methods) {
+      const options = (inputOptions.optionsByMethod.get(method.id) ?? [])
+        .filter((option) => missingIds.has(option.audit.id));
+      if (options.length) candidatesByMethod.set(method.id, options);
+    }
+    const methods = inputOptions.methods.filter((method) => (
+      !accepted.has(method.id) && candidatesByMethod.has(method.id)
+    ));
+    if (!methods.length) return { acceptedCount: 0, fallbackCount: 0 };
+    const recovery = selectLocallyVerifiedNativeTitleOptions({
+      methods,
+      candidatesByMethod,
+      alreadyAccepted: [...accepted.values()],
+      historyTitles,
+      historyTopics,
+      account: input.account,
+      businessLine: input.account.business_line ?? "executive",
+      directionLocks: input.directionLocks,
+    });
+    for (const [methodId, topic] of recovery.accepted) accepted.set(methodId, topic);
+    rejectedTitles.push(...recovery.rejectedTitles);
+    lastProblems.push(...recovery.problems);
+    if (recovery.accepted.size) {
+      localNativeAuditRecoveryUsed = true;
+      usage = {
+        ...(usage ?? {}),
+        novelty_audit_missing_decision_recovery: {
+          accepted_count: recovery.accepted.size,
+          fallback_count: recovery.fallbackCount,
+        },
+      };
+      console.warn("[growth] recovered missing native audit decisions with deterministic gates", {
+        accepted_method_ids: [...recovery.accepted.keys()],
+        fallback_count: recovery.fallbackCount,
+      });
+    }
+    return {
+      acceptedCount: recovery.accepted.size,
+      fallbackCount: recovery.fallbackCount,
+    };
   };
 
   const auditOptionsByMethod = compactNativeAuditOptions({
@@ -2288,6 +2375,18 @@ export async function generateTopicBatch(input: {
       for (const [methodId, topic] of initialSelection.accepted) accepted.set(methodId, topic);
       rejectedTitles.push(...initialSelection.rejectedTitles);
       lastProblems.push(...initialSelection.problems);
+      const initialMissingRecovery = recoverMissingNativeAuditDecisions({
+        methods: nativeMethods,
+        optionsByMethod: auditOptionsByMethod,
+        missingCandidateIds: audit.coverage.missingCandidateIds,
+      });
+      if (nativeMethods.every((method) => accepted.has(method.id)) && initialMissingRecovery.acceptedCount) {
+        nativeTitleAudit = {
+          ...nativeTitleAudit,
+          status: "fallback_recovery",
+          missing_candidate_ids: undefined,
+        };
+      }
 
       // 首轮没有选中的方法继续审核还没看过的候选。此前候选池里确实有
       // 安全备选，但 compactNativeAuditOptions 只取前三个，导致一个模型题
@@ -2331,11 +2430,18 @@ export async function generateTopicBatch(input: {
           for (const [methodId, topic] of retrySelection.accepted) accepted.set(methodId, topic);
           rejectedTitles.push(...retrySelection.rejectedTitles);
           lastProblems.push(...retrySelection.problems);
+          const retryMissingRecovery = recoverMissingNativeAuditDecisions({
+            methods: retryMethods,
+            optionsByMethod: retryOptionsByMethod,
+            missingCandidateIds: retryAudit.coverage.missingCandidateIds,
+          });
           // 即使本轮审核漏回了未采用的备选，只要交付的每个标题都有明确通过
           // decision，仍可安全完成整批；任何漏项本身绝不被 select 放行。
           nativeTitleAudit = {
             status: nativeMethods.every((method) => accepted.has(method.id))
-              ? "passed"
+              ? retryMissingRecovery.acceptedCount || nativeTitleAudit?.status === "fallback_recovery"
+                ? "fallback_recovery"
+                : "passed"
               : retryAudit.coverage.complete && audit.coverage.complete
                 ? "passed"
                 : "incomplete",
@@ -2402,9 +2508,16 @@ export async function generateTopicBatch(input: {
         for (const [methodId, topic] of waveSelection.accepted) accepted.set(methodId, topic);
         rejectedTitles.push(...waveSelection.rejectedTitles);
         lastProblems.push(...waveSelection.problems);
+        const waveMissingRecovery = recoverMissingNativeAuditDecisions({
+          methods: remainingMethods,
+          optionsByMethod: waveOptionsByMethod,
+          missingCandidateIds: waveAudit.coverage.missingCandidateIds,
+        });
         nativeTitleAudit = {
           status: nativeMethods.every((method) => accepted.has(method.id))
-            ? "passed"
+            ? waveMissingRecovery.acceptedCount || nativeTitleAudit?.status === "fallback_recovery"
+              ? "fallback_recovery"
+              : "passed"
             : waveAudit.coverage.complete
               ? "passed"
               : "incomplete",
@@ -2597,7 +2710,9 @@ export async function generateTopicBatch(input: {
             reference_count: references.length,
             elapsed_ms: Date.now() - auditStartedAt,
           }),
-          status: "passed",
+          status: localNativeAuditRecoveryUsed || nativeTitleAudit?.status === "fallback_recovery"
+            ? "fallback_recovery"
+            : "passed",
           missing_candidate_ids: undefined,
         };
       }
@@ -2628,6 +2743,7 @@ export async function generateTopicBatch(input: {
       lastProblems.push(...localRecovery.problems);
       remainingMethods = nativeMethods.filter((method) => !accepted.has(method.id));
       if (localRecovery.accepted.size) {
+        localNativeAuditRecoveryUsed = true;
         usage = {
           ...(usage ?? {}),
           novelty_audit_local_recovery: {
