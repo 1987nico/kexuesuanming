@@ -1727,7 +1727,12 @@ export async function generateTopicBatch(input: {
           }),
           diversityHistory: historyTopics,
           context: accountContext(input.account),
-        }), maxTokens: 2200, temperature: Math.min(0.82, 0.62 + attempt * 0.07),
+        }),
+        // 每个方法要求三组“标题＋独立正文承诺”。专家视角一次最多六个
+        // 方法，固定 2200 token 会把 topics 数组截断，表现为多个槽位根本
+        // 没有候选。按方法数给结构化输出留空间，同时设置上限避免无界响应。
+        maxTokens: Math.min(4_000, 1_000 + pendingMethods.length * 500),
+        temperature: Math.min(0.82, 0.62 + attempt * 0.07),
         // 主模型中断时，由不同供应商补同一份“整批候选”请求；两条路径都有
         // 单次上限，避免历史重复一多就把操作者困在无休止的重试里。
         timeoutMs: 18_000,
@@ -2065,7 +2070,7 @@ export async function generateTopicBatch(input: {
           diversityHistoryBatchLimit: 50,
           context: accountContext(input.account),
         }),
-        maxTokens: 1800,
+        maxTokens: Math.min(3_600, 900 + targetedRecoveryMethods.length * 450),
         temperature: 0.86,
         timeoutMs: 18_000,
         jsonRetries: 0,
@@ -2572,7 +2577,7 @@ export async function generateTopicBatch(input: {
               diversityHistoryBatchLimit: 50,
               context: accountContext(input.account),
             }),
-            maxTokens: 1800,
+            maxTokens: Math.min(3_600, 900 + targetedRecoveryMethods.length * 450),
             temperature: 0.86,
             timeoutMs: 18_000,
             jsonRetries: 0,
