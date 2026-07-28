@@ -29,6 +29,10 @@ describe("标题质量门禁", () => {
     expect(evaluateGrowthTitleQuality("花百万留学，不敢跟爸妈说投了没信").reasons).toContain("unnatural_jargon");
     expect(evaluateGrowthTitleQuality("海归投简历没信，不敢跟爸妈说").reasons).toContain("unnatural_jargon");
     expect(evaluateGrowthTitleQuality("留学花了百万，秋招连岗都投错").reasons).toContain("unsupported_factual_claim");
+    expect(evaluateGrowthTitleQuality("花家里钱留学，投错岗不敢说").reasons).toContain("unsupported_factual_claim");
+    expect(evaluateGrowthTitleQuality("跟风投管培，还是蹲对口秋招岗？").reasons).toContain("unnatural_jargon");
+    expect(evaluateGrowthTitleQuality("从前等机会，现在先做准备").reasons).toContain("generic_title");
+    expect(evaluateGrowthTitleQuality("以前怕没学位，现在怕没方向").acceptable).toBe(true);
     expect(evaluateGrowthTitleQuality("求职没信心时，先收窄岗位").acceptable).toBe(true);
     expect(evaluateGrowthTitleQuality("AI筛简历后，先查岗位").acceptable).toBe(true);
   });
@@ -179,6 +183,14 @@ describe("标题语义去重", () => {
     );
     expect(result.duplicate).toBe(true);
     expect(result.reasons).toContain("目标岗位与保底 offer 的二选一母题相同");
+  });
+
+  it("不同句式的岗位错位标题不被全历史语义规则过度拦截", () => {
+    const result = evaluateTitleSemanticDuplicate(
+      "花家里钱留学，投错岗不敢说",
+      "内推不是捷径，投错岗白搭",
+    );
+    expect(result.duplicate).toBe(false);
   });
 
   it("把背景好却方向错的反认知判为同一母题", () => {

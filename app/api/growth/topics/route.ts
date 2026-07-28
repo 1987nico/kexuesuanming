@@ -951,6 +951,7 @@ export async function PATCH(req: Request) {
         garbled_latin_cjk: "含中英文乱码拼接",
         unsupported_factual_claim: "含没有事实依据的具体身份、金额或成果",
         unnatural_jargon: "含不自然的生造黑话",
+        generic_title: "只有抽象对照，缺少具体人物、场景或动作",
         empty: "为空",
       };
       return NextResponse.json({

@@ -152,4 +152,19 @@ describe("标题四层多样性签名", () => {
     const problems = topicBatchDuplicateProblems([first, second], [], [], "executive");
     expect(problems.some((item) => item.includes("同一母题和素材组合"))).toBe(true);
   });
+
+  it("同一批次不重复使用岗位方向错位这一核心冲突", () => {
+    const first = topic(
+      "human_pain",
+      "花家里钱留学，投错岗不敢说",
+      "讲清留学生选岗错位带来的焦虑",
+    );
+    const second = topic(
+      "contrarian",
+      "内推不是捷径，投错岗白搭",
+      "讲清选岗错位为什么会让内推失效",
+    );
+    const problems = topicBatchDuplicateProblems([first, second], [], [], "overseas_student");
+    expect(problems.some((item) => item.includes("岗位方向错位冲突"))).toBe(true);
+  });
 });

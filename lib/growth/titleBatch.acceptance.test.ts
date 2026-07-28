@@ -50,6 +50,23 @@ function topic(
 }
 
 describe("标题生成30批用户验收标准（确定性兜底回归）", () => {
+  it("所有内置原生兜底标题本身都能通过发布质量门禁", () => {
+    const businessLines: GrowthBusinessLine[] = ["overseas_student", "executive"];
+    const personas: GrowthPersona[] = ["buyer", "merchant", "expert"];
+    for (const businessLine of businessLines) {
+      for (const persona of personas) {
+        for (const method of methodsForPersona(persona, "default").filter((item) => !item.sourceRequired)) {
+          for (const candidate of fallbackTitleOptions(account(businessLine, persona), method.id)) {
+            expect(
+              evaluateGrowthTitleQuality(candidate).acceptable,
+              `${businessLine}/${method.id} 的兜底标题“${candidate}”不应依赖未经验证的个人事实或抽象空话`,
+            ).toBe(true);
+          }
+        }
+      }
+    }
+  });
+
   it("六个业务×视角空间各连续五批：原生槽位始终交付新、自然、无换皮标题", () => {
     const spaces: Array<[GrowthBusinessLine, GrowthPersona, number]> = [
       ["overseas_student", "buyer", 4],

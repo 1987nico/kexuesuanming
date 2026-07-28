@@ -81,6 +81,7 @@ import {
   type SourceMigrationCandidate,
 } from "./sourceMigration";
 import {
+  buildTitleSemanticSignature,
   canonicalizeGrowthTitle,
   evaluateGrowthTitleQuality,
   normalizeTitleForComparison,
@@ -234,7 +235,7 @@ function freshestSources(account: GrowthAccount) {
 
 const EXECUTIVE_FALLBACK_TITLES: Record<TitleMethodId, [string, string]> = {
   traffic: ["这波热搜，中高管先别跟", "判断热点对职业选择的真实影响"],
-  human_pain: ["年薪百万，为何更不敢离职", "解释高收入中高管不敢离职的三层代价"],
+  human_pain: ["收入越高，为何更不敢离职", "解释高收入中高管不敢离职的三层代价"],
   tug_of_war: ["留在高位，还是重新定价？", "真实比较留任与转型两条路径"],
   scarce_material: ["中高管转型路线图公开", "正文直接交付可执行的转型路线图"],
   superlative: ["中高管最危险的一次跳槽", "说明高位跳槽最危险的条件与信号"],
@@ -250,12 +251,12 @@ const EXECUTIVE_FALLBACK_TITLES: Record<TitleMethodId, [string, string]> = {
 
 const OVERSEAS_STUDENT_FALLBACK_TITLES: Record<TitleMethodId, [string, string]> = {
   traffic: ["这波缩招，留学生先别慌", "判断近期招聘变化对留学生求职的真实影响"],
-  human_pain: ["留学花百万，为何更不敢回国", "解释留学生在投入、身份和求职之间的真实压力"],
+  human_pain: ["留学投入不小，为何更不敢回国", "解释留学生在投入、身份和求职之间的真实压力"],
   tug_of_war: ["留当地，还是回国求职？", "真实比较留当地与回国求职两条路径"],
   scarce_material: ["留学生求职路线图公开", "正文直接交付可执行的留学生求职路线图"],
   superlative: ["留学生最危险的一次海投", "说明无定位海投最危险的条件与后果"],
   contrarian: ["学历越高，求职未必越容易", "解释高学历不能自动换来岗位匹配的条件"],
-  nostalgia: ["五年前海归，如今不再稀缺", "比较过去与当下海归求职优势的变化"],
+  nostalgia: ["海归吃香那几年，如今还要看岗位", "比较过去与当下海归求职优势的变化"],
   inventory: ["留学生投简历前查这5项", "逐项交付投递前必须检查的5项内容"],
   same_product: ["留学生求职参谋，先看适配", "迁移同类服务表达并说明适配边界"],
   same_effect: ["这2条求职路怎么选？", "提供两条求职路径的比较标准"],
@@ -271,7 +272,7 @@ const EXECUTIVE_FALLBACK_TITLE_VARIANTS: Record<TitleMethodId, string[]> = {
   scarce_material: ["高管转型，我只看这张表", "离职前，把这份清单算完"],
   superlative: ["高管最怕的不是降薪", "35岁后最贵的一次误判"],
   contrarian: ["做到高管，经验反而会贬值", "人脉越多，离职越难转身"],
-  nostalgia: ["当年抢着升职，如今困在高位", "以前拼职位，现在拼定价权"],
+  nostalgia: ["当年抢着升职，如今先看离职成本", "以前拿工牌，现在先查新岗位"],
   inventory: ["高管转型前必算的5笔账", "离开平台前，盘点这5样"],
   same_product: ["职业参谋先帮你排除什么", "决策咨询，不是替你选答案"],
   same_effect: ["两份工作，先算哪一笔账？", "留任和创业，哪条胜率高？"],
@@ -287,7 +288,7 @@ const OVERSEAS_STUDENT_FALLBACK_TITLE_VARIANTS: Record<TitleMethodId, string[]> 
   scarce_material: ["海归秋招时间表，我摊开了", "回国求职前先看这张表"],
   superlative: ["秋招最亏的，是太早改简历", "海归最怕的不是学历不够"],
   contrarian: ["名校毕业，海投反而更吃亏", "实习越多，岗位反而越难选"],
-  nostalgia: ["当年海归吃香，现在先过AI筛", "以前拼学校，现在拼岗位证据"],
+  nostalgia: ["当年海归吃香，现在先看简历匹配", "以前拼学校，现在练面试"],
   inventory: ["海归秋招前必查的5个日期", "回国投递前先盘点这5样"],
   same_product: ["求职陪跑，第一步不是改简历", "海归求职军师先排除什么"],
   same_effect: ["回国和留英，先算哪笔账？", "两份秋招路线，哪条回音快？"],
@@ -344,11 +345,11 @@ const NATIVE_EMERGENCY_TITLE_VARIANTS: Record<
       "年薪越高，越不能急着走",
     ],
     nostalgia: [
-      "以前拼升职，现在拼可迁移",
-      "当年看头衔，现在看市场",
-      "过去靠平台，现在靠真本事",
-      "以前抢机会，现在先验方向",
-      "从前怕失业，现在怕选错路",
+      "过去靠平台，如今先接猎头电话",
+      "当年看头衔，现在先改简历",
+      "从前怕跳槽，现在先看合同",
+      "以前等升职，现在先补面试",
+      "过去看资历，如今先做项目复盘",
     ],
     inventory: [
       "转型前，先查这5个信号",
@@ -395,11 +396,17 @@ const NATIVE_EMERGENCY_TITLE_VARIANTS: Record<
       "信息越多，越不能乱投简历",
     ],
     nostalgia: [
-      "以前看学校，现在看岗位证据",
-      "当年海归吃香，现在先看匹配",
-      "过去拼背景，现在拼项目表达",
-      "以前怕没学位，现在怕没方向",
-      "从前等机会，现在先做准备",
+      // 每条都换掉“人群/场景/现在要看的变量”中的至少两项；
+      // 不再把“学校/背景→项目证据”这一条怀旧母题换词重复使用。
+      "以前看学校，现在看岗位要求",
+      "以前看学历，现在练面试",
+      "当年海归吃香，现在先抢秋招",
+      "从前冲名校，现在先补实习",
+      "过去靠背景，现在先改简历",
+      "以前等毕业，现在先投岗位",
+      "从前看排名，现在看项目细节",
+      "以前听学长建议，现在先看岗位描述",
+      "从前只看学校，现在先补面试准备",
     ],
     inventory: [
       "秋招前，先查这5个日期",
@@ -566,7 +573,7 @@ const OVERSEAS_MOTHER_TOPICS: Array<[string, RegExp]> = [
   ["stay_or_return", /留英|留海外|留伦敦|回国|回沪|国内|工签|两个时区/],
   ["mass_application", /海投|投了|投递|没回音|零回应|回复/],
   ["recruiting_timeline", /秋招|提前批|截止|时间表|节奏|节点|窗口/],
-  ["job_targeting", /选岗|岗位地图|方向|收窄|定位|赛道/],
+  ["job_targeting", /选岗|投错岗(?:位)?|岗不对|岗(?:位)?没选对|选错岗|岗位地图|方向|收窄|定位|赛道/],
   ["resume", /简历|网申|项目经历/],
   ["interview", /面试|笔试|终面|自我介绍/],
   ["offer_result", /offer|录用|入职|大厂|国企/i],
@@ -784,6 +791,7 @@ function titleQualityProblems(topic: TopicCandidate, account: GrowthAccount) {
       garbled_latin_cjk: "标题含中英文乱码拼接",
       unsupported_factual_claim: `标题含无依据的具体事实${quality.unsupportedClaims.length ? `：${quality.unsupportedClaims.join("、")}` : ""}`,
       unnatural_jargon: "标题含不自然的生造黑话",
+      generic_title: "标题只有抽象对照，缺少具体人物、场景或动作",
     };
     return `${topic.method_id}:${labels[reason] || "标题质量不合格"}`;
   });
@@ -808,6 +816,19 @@ function topicCandidateDuplicateProblems(
   else if (nearHistory) problems.push(`${topic.method_id}:与历史标题“${nearHistory}”重复或近似`);
   const inBatch = accepted.find((item) => titlesAreNearDuplicate(topic.title, item.title));
   if (inBatch) problems.push(`${topic.method_id}:与本批次${inBatch.method_id}标题重复或近似`);
+  // 同一批次不能把“投错岗/岗没选对”这一核心冲突拆成两张卡片。
+  // 这是批内组合约束，不把不同句式、不同材料的历史选岗题一概判重。
+  const currentSemantic = buildTitleSemanticSignature(topic.title);
+  const sameBatchRoleMismatch = accepted.find((item) => {
+    const priorSemantic = buildTitleSemanticSignature(item.title);
+    return currentSemantic.scenario === "job_targeting"
+      && currentSemantic.conflict === "role_mismatch"
+      && priorSemantic.scenario === "job_targeting"
+      && priorSemantic.conflict === "role_mismatch";
+  });
+  if (sameBatchRoleMismatch) {
+    problems.push(`${topic.method_id}:与本批次${sameBatchRoleMismatch.method_id}复用了同一岗位方向错位冲突`);
+  }
   if (!options.preserveDirection) {
     const diversity = buildTopicDiversitySignature(topic, options.businessLine);
     // “换一批标题”不能只换词继续写同一原生法母题。只对同一原生方法的

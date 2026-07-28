@@ -16,7 +16,8 @@ export type TitleQualityReason =
   | "traditional_chinese"
   | "garbled_latin_cjk"
   | "unsupported_factual_claim"
-  | "unnatural_jargon";
+  | "unnatural_jargon"
+  | "generic_title";
 
 export interface TitleSemanticSignature {
   audience: string;
@@ -85,6 +86,9 @@ const MONEY_OR_RESULT_PATTERNS: RegExp[] = [
   /(?:营收|年薪|月薪|收入|成交|融资|估值|赚了?|盈利)[^，。！？?；;]{0,10}[0-9一二三四五六七八九十百千万两]+(?:万|亿|千|w|W|k|K)/gu,
   /(?:[0-9一二三四五六七八九十百千万两]+(?:万|亿|千|w|W|k|K))[^，。！？?；;]{0,8}(?:营收|年薪|月薪|收入|成交|融资|估值|利润)/gu,
   /(?:创业|入职|转行|离职)[^，。！？?；;]{0,8}(?:首年|一年内|三个月内|半年内)[^，。！？?；;]{0,12}(?:营收|年薪|收入|赚|盈利|融资)/gu,
+  // “花家里钱留学”同样是在替当前人设讲一段具体家庭经历；没有被业务事实
+  // 支持时不能拿来制造冲突。若确有公开素材，supportedFacts 可明确放行。
+  /(?:花|用|拿|靠)(?:家里|父母|爸妈)(?:的钱|钱|积蓄|存款)[^，。！？?；;]{0,8}(?:留学|读书|出国|读硕|上学|求职)?/gu,
   /(?:拿到|获得|斩获|做到|实现)[^，。！？?；;]{0,12}(?:offer|录用|年薪|营收|融资|百万|千万|亿元?)/giu,
   /(?:前|原)(?:国企|大厂|上市公司|外企|字节|阿里|腾讯|华为)[^，。！？?；;]{0,6}(?:高管|总监|负责人|VP|CEO|合伙人)/giu,
   /(?:腾讯|阿里|字节|华为|小红书|百度|京东|美团|拼多多|微软|谷歌|Google|Meta)[^，。！？?；;]{0,10}(?:offer|录用|年薪|高管|总监|入职)/giu,
@@ -97,6 +101,8 @@ const UNNATURAL_JARGON_PATTERNS: RegExp[] = [
   /饭局判胜算/gu,
   // “投了没信 / 投简历没信”是模型常见的机械压缩，不是自然的中文标题表达。
   /没信(?!心)/gu,
+  // “蹲对口秋招岗”是模型机械拼出的岗位黑话，不是自然的小红书标题语言。
+  /蹲(?:对口|心仪|秋招)?(?:秋招)?岗(?:位)?/gu,
   /(?:玄学|黑话|邪门)[^，。！？?；;]{0,8}(?:漏斗|胜算|定价)/gu,
 ];
 
@@ -148,7 +154,7 @@ const CONFLICT_PATTERNS: Array<[string, RegExp]> = [
   ["career_switch_fear", /不敢.{0,6}(?:转行|转型|换赛道|离职)|怕.{0,6}(?:转行|转型|换赛道|离职)/gu],
   ["resignation_fear", /不敢.{0,6}(?:离职|辞职|裸辞)|怕.{0,6}(?:离职|辞职|裸辞)/gu],
   ["timing_risk", /赶不上|错过|来不及|提前批|截止|窗口/gu],
-  ["role_mismatch", /方向错|岗不对|岗(?:位)?没选对|没选对岗|不匹配|选错岗|岗位不清/gu],
+  ["role_mismatch", /方向错|岗不对|岗(?:位)?没选对|没选对岗|投错岗(?:位)?|不匹配|选错岗|岗位不清/gu],
   ["pricing_loss", /不值钱|砍价|市场价|定价|降薪/gu],
   ["risk_validation", /风险|踩坑|验证|试错|排除|胜算/gu],
 ];
@@ -225,6 +231,19 @@ export function findUnsupportedTitleClaims(value: string, supportedFacts: readon
 export function findUnnaturalTitleJargon(value: string) {
   const canonical = canonicalizeGrowthTitle(value);
   return unique(UNNATURAL_JARGON_PATTERNS.flatMap((pattern) => canonical.match(pattern) ?? []));
+}
+
+const CONCRETE_TITLE_ANCHORS = /简历|岗位|秋招|校招|面试|offer|实习|学位|学校|项目|导师|校友|家长|合同|工资|客户|老板|团队|会议|工牌|猎头|离职|辞呈|绩效|预算|公司|部门|证据|招聘|投递|工作/u;
+
+/**
+ * 只有“过去/现在”的抽象情绪对照，既没有具体人物，也没有动作或场景，
+ * 容易成为任何业务都能套的空壳标题。只拦这类非常窄的怀旧框架，避免误伤
+ * 带有学校、岗位、工牌、简历等实际原力词的正常标题。
+ */
+export function isGenericAbstractTitle(value: string) {
+  const title = canonicalizeGrowthTitle(value);
+  return /^(?:以前|从前|过去|当年).*(?:现在|如今).*/u.test(title)
+    && !CONCRETE_TITLE_ANCHORS.test(title);
 }
 
 export function classifyTitleFrame(value: string) {
@@ -401,6 +420,7 @@ export function evaluateGrowthTitleQuality(title: string, options: TitleQualityO
   if (hasGarbledLatinCjkMix(canonicalTitle)) reasons.push("garbled_latin_cjk");
   if (unsupportedClaims.length) reasons.push("unsupported_factual_claim");
   if (findUnnaturalTitleJargon(canonicalTitle).length) reasons.push("unnatural_jargon");
+  if (isGenericAbstractTitle(canonicalTitle)) reasons.push("generic_title");
   return {
     title,
     canonicalTitle,
