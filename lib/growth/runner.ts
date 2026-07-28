@@ -666,6 +666,11 @@ const MAX_NATIVE_AUDIT_CANDIDATES_PER_METHOD = 3;
  * 同一槽位仍能继续尝试已通过本地门禁的剩余候选；所有候选耗尽后才失败。
  */
 const MAX_NATIVE_AUDIT_WAVES = 4;
+/**
+ * 所有已有候选都被安全拒绝后，只为缺失槽位再向标题模型索取一小组新角度。
+ * 这是“换一批”的内部补题，不会让已完成的槽位重写，更不会把旧题当兜底。
+ */
+const MAX_NATIVE_TARGETED_RECOVERY_CANDIDATES_PER_METHOD = 4;
 
 export interface NativeTitleAuditDiagnostic {
   status: "passed" | "fallback_recovery" | "timeout" | "incomplete" | "unavailable" | "not_needed";
@@ -2014,8 +2019,184 @@ export async function generateTopicBatch(input: {
           elapsed_ms: Date.now() - auditStartedAt,
           missing_candidate_ids: waveAudit.coverage.missingCandidateIds.length
             ? waveAudit.coverage.missingCandidateIds
-            : undefined,
+          : undefined,
         };
+      }
+      // 已有模型候选和安全候选都被明确拒绝时，不应该把“再点一次”留给
+      // 操作者。系统只为仍缺失的原生槽位定向补一组不同角度的标题，并且
+      // 仍走同一套本地质量、全历史去重与语义终审；补题失败才保留旧批次。
+      const targetedRecoveryMethods = nativeMethods.filter((method) => !accepted.has(method.id));
+      if (targetedRecoveryMethods.length) {
+        try {
+          generationAttempts += 1;
+          const recoveryResult = await llmJSON<any>({
+            system: GROWTH_SYSTEM_PROMPT,
+            user: buildTopicPoolUserPrompt({
+              week: Math.max(1, Math.min(4, input.week ?? 1)),
+              persona: input.account.persona,
+              targetUser: input.account.target_user,
+              coreProblem: input.account.core_problem,
+              recentSignals: `${input.learningBrief ? formatLearningBrief(input.learningBrief) : input.recentSignals || ""}\n本轮是定向补题：只为下列槽位寻找此前从未出现过的具体人物、场景和冲突；不要复用已拒绝标题的母题或句式。`,
+              methods: targetedRecoveryMethods,
+              generationMode,
+              sources: [],
+              structureCards: [],
+              excludeTitles: [
+                ...historyTitles,
+                ...rejectedTitles,
+                ...[...accepted.values()].map((topic) => topic.title),
+              ],
+              directionLocks: targetedRecoveryMethods.flatMap((method) => {
+                const lock = input.directionLocks?.[method.id];
+                return lock ? [{
+                  method_id: method.id,
+                  current_title: lock.title,
+                  title_promise: lock.title_promise,
+                  target_user: lock.target_user,
+                  pain: lock.pain,
+                  origin_force: lock.origin_force,
+                  conflict_judgement: lock.conflict_judgement,
+                }] : [];
+              }),
+              diversityHistory: historyTopics,
+              context: accountContext(input.account),
+            }),
+            maxTokens: 1800,
+            temperature: 0.86,
+            timeoutMs: 18_000,
+            jsonRetries: 0,
+            allowFallback: true,
+          });
+          usage = { ...(usage ?? {}), native_targeted_recovery: resultUsage(recoveryResult) };
+          const recoveryRows = Array.isArray(recoveryResult.data?.topics) ? recoveryResult.data.topics : [];
+          const recoveryCandidatesByMethod = new Map<TitleMethodId, NativeTitleCandidateOption[]>();
+          for (const method of targetedRecoveryMethods) {
+            const row = recoveryRows.find((item: any) => item?.method_id === method.id);
+            if (!row) {
+              lastProblems.push(`${method.id}:定向补题没有返回该方法`);
+              continue;
+            }
+            const candidateTitles = Array.from(new Set([
+              asText(row.title),
+              ...(Array.isArray(row.alternative_titles) ? row.alternative_titles.map(asText) : []),
+            ].map((value) => value.trim()).filter(Boolean))).slice(0, 5);
+            const options: NativeTitleCandidateOption[] = [];
+            for (const candidateTitle of candidateTitles) {
+              if (options.length >= MAX_NATIVE_TARGETED_RECOVERY_CANDIDATES_PER_METHOD) break;
+              const rawQuality = evaluateGrowthTitleQuality(candidateTitle, {
+                supportedFacts: supportedTitleFacts(input.account),
+              });
+              if (!rawQuality.acceptable) {
+                rejectedTitles.push(candidateTitle);
+                continue;
+              }
+              const [normalizedTopic] = normalizeTopics([
+                { ...row, title: candidateTitle },
+              ], input.account, [method], generationMode, sources);
+              const directionLock = input.directionLocks?.[method.id];
+              const topic: TopicCandidate = directionLock ? {
+                ...normalizedTopic,
+                title: candidateTitle,
+                title_promise: directionLock.title_promise,
+                title_promise_status: "synced",
+                title_promise_validation: undefined,
+                target_user: directionLock.target_user,
+                pain: directionLock.pain,
+                hook: candidateTitle,
+                origin_force: directionLock.origin_force,
+                conflict_judgement: directionLock.conflict_judgement,
+                source_snapshot: directionLock.source_snapshot ?? normalizedTopic.source_snapshot,
+              } : normalizedTopic;
+              topic.validation_checks = validateTopicCandidate(topic, input.account.persona);
+              const problems = [
+                ...titleQualityProblems(topic, input.account),
+                ...topicCandidateDuplicateProblems(
+                  topic,
+                  [...historyTitles, ...rejectedTitles],
+                  historyTopics,
+                  [...accepted.values(), ...options.map((option) => option.topic)],
+                  {
+                    preserveDirection: Boolean(directionLock),
+                    businessLine: input.account.business_line ?? "executive",
+                  },
+                ),
+              ];
+              if (problems.length) {
+                rejectedTitles.push(candidateTitle);
+                continue;
+              }
+              options.push({
+                audit: {
+                  id: `recovery:${method.id}:${options.length}`,
+                  methodId: method.id,
+                  title: topic.title,
+                  kind: "model",
+                },
+                topic,
+              });
+            }
+            if (options.length) recoveryCandidatesByMethod.set(method.id, options);
+            else lastProblems.push(`${method.id}:定向补题未形成新的本地合格候选`);
+          }
+          const recoveryMethods = targetedRecoveryMethods.filter((method) => recoveryCandidatesByMethod.has(method.id));
+          const recoveryOptionsByMethod = compactNativeAuditOptions({
+            methods: recoveryMethods,
+            candidatesByMethod: recoveryCandidatesByMethod,
+            idPrefix: "G",
+          });
+          const recoveryOptions = recoveryMethods.flatMap((method) => recoveryOptionsByMethod.get(method.id) ?? []);
+          const recoveryAuditCandidates = recoveryOptions.map((option) => option.audit);
+          if (recoveryAuditCandidates.length) {
+            const recoveryReferences = compactNativeAuditReferences({
+              methods: recoveryMethods,
+              historyTopics,
+              historyTitles: [...historyTitles, ...rejectedTitles],
+              accepted: [...accepted.values()],
+            });
+            const recoveryAudit = await auditNativeTitleBatchNovelty({
+              businessLine: input.account.business_line ?? "executive",
+              persona: input.account.persona,
+              targetUser: input.account.target_user,
+              coreProblem: input.account.core_problem,
+              candidates: recoveryAuditCandidates,
+              references: recoveryReferences,
+            });
+            usage = { ...(usage ?? {}), native_targeted_recovery_audit: recoveryAudit.usage };
+            const recoverySelection = selectAuditedNativeTitleOptions({
+              methods: recoveryMethods,
+              optionsByMethod: recoveryOptionsByMethod,
+              decisions: recoveryAudit.decisions,
+              alreadyAccepted: [...accepted.values()],
+              historyTitles: [...historyTitles, ...rejectedTitles],
+              historyTopics,
+              businessLine: input.account.business_line ?? "executive",
+              directionLocks: input.directionLocks,
+            });
+            for (const [methodId, topic] of recoverySelection.accepted) accepted.set(methodId, topic);
+            rejectedTitles.push(...recoverySelection.rejectedTitles);
+            lastProblems.push(...recoverySelection.problems);
+            nativeTitleAudit = {
+              status: nativeMethods.every((method) => accepted.has(method.id))
+                ? "passed"
+                : recoveryAudit.coverage.complete
+                  ? "passed"
+                  : "incomplete",
+              candidate_count: (nativeTitleAudit?.candidate_count ?? auditCandidates.length) + recoveryAuditCandidates.length,
+              reference_count: Math.max(nativeTitleAudit?.reference_count ?? references.length, recoveryReferences.length),
+              elapsed_ms: Date.now() - auditStartedAt,
+              missing_candidate_ids: recoveryAudit.coverage.missingCandidateIds.length
+                ? recoveryAudit.coverage.missingCandidateIds
+                : undefined,
+            };
+          }
+        } catch (recoveryError) {
+          const detail = (recoveryError as Error).message || "unknown";
+          for (const method of targetedRecoveryMethods) {
+            if (!accepted.has(method.id)) {
+              lastProblems.push(`${method.id}:定向补题或审核暂不可用（${detail.slice(0, 80)}）`);
+            }
+          }
+        }
       }
       if (nativeMethods.every((method) => accepted.has(method.id))) {
         nativeTitleAudit = {

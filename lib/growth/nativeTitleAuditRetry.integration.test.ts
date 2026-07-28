@@ -319,4 +319,47 @@ describe("原生标题语义审核二次恢复", () => {
     expect(auditBatches[0].map((candidate) => candidate.title)).not.toContain(malformed);
     expect(auditBatches[0].map((candidate) => candidate.title)).toContain(naturalAlternative);
   });
+
+  it("已有候选全被拒绝时，只为缺失槽位定向补题并交付新标题", async () => {
+    let generationCalls = 0;
+    let auditCalls = 0;
+    const recoveredPain = "年终奖到账，我却更怕留错";
+    const recoveredChoice = "继续带团队，还是去做独立顾问？";
+    llmJSONMock.mockImplementation(async (input: { user: string }) => {
+      if (!input.user.includes("语义新颖度终审")) {
+        generationCalls += 1;
+        return generationCalls <= 2
+          ? modelResponse(generatedTopics())
+          : modelResponse({
+            topics: [
+              { method_id: "human_pain", title: recoveredPain, alternative_titles: [] },
+              { method_id: "tug_of_war", title: recoveredChoice, alternative_titles: [] },
+            ],
+          });
+      }
+      auditCalls += 1;
+      const candidates = auditCandidates(input.user);
+      const isRecoveryAudit = auditCalls === 5;
+      return modelResponse({
+        decisions: candidates.map((candidate) => ({
+          candidate_id: candidate.candidate_id,
+          novel: isRecoveryAudit,
+          natural: true,
+          duplicate_reference_ids: [],
+          conflicting_candidate_ids: [],
+          reason: isRecoveryAudit ? "定向补题通过" : "旧候选重复",
+        })),
+      });
+    });
+
+    const result = await generateTopicBatch({
+      account,
+      methodIds: ["human_pain", "tug_of_war"],
+    });
+
+    expect(generationCalls).toBe(3);
+    expect(auditCalls).toBe(5);
+    expect(result.topics.map((topic) => topic.title)).toEqual([recoveredPain, recoveredChoice]);
+    expect(result.nativeTitleAudit?.status).toBe("passed");
+  });
 });
