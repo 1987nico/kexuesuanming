@@ -104,6 +104,42 @@ describe("标题生成30批用户验收标准（确定性兜底回归）", () =>
     expect(recoverable.every((candidate) => /孩子|陪孩子|娃|陪娃/u.test(candidate.title))).toBe(true);
   });
 
+  it("留学生家长已有大量反认知旧题后，仍有20个不同判断对象可恢复", () => {
+    const parent = account("overseas_student", "buyer");
+    const existingTitles = [
+      "不是学历没用，是你秋招投错了岗",
+      "以为海归吃香，投了才知道岗没选对",
+      "内推不是捷径，投错岗白搭",
+      "名校毕业，海投反而更吃亏",
+      "娃实习名头响，未必帮得上秋招",
+      "孩子学校越好，越要先看岗位",
+      "孩子实习多，不代表岗位就好选",
+      "孩子拿到笔试，不等于方向选对",
+      "孩子海投越多，越容易错过方向",
+      "总催娃投简历，不如先捋秋招方向",
+      "学历越高，求职未必越容易",
+      "海投不是勤奋，是在浪费秋招",
+    ];
+    const historyTopics = existingTitles.map((title) => ({
+      method_id: "contrarian" as TitleMethodId,
+      title,
+    }));
+    const recoverable = fallbackTitleCandidates(parent, "contrarian").filter((candidate) => {
+      const current = candidateTopic("overseas_student", "buyer", "contrarian", candidate);
+      if (!evaluateGrowthTitleQuality(candidate.title).acceptable) return false;
+      if (titlePersonaProblems(current, parent).length) return false;
+      return topicBatchDuplicateProblems(
+        [current],
+        existingTitles,
+        historyTopics,
+        "overseas_student",
+      ).length === 0;
+    });
+
+    expect(recoverable.length).toBeGreaterThanOrEqual(20);
+    expect(recoverable.every((candidate) => /孩子|陪孩子|娃|陪娃/u.test(candidate.title))).toBe(true);
+  });
+
   it("所有内置原生兜底标题本身都能通过发布质量门禁", () => {
     const businessLines: GrowthBusinessLine[] = ["overseas_student", "executive"];
     const personas: GrowthPersona[] = ["buyer", "merchant", "expert"];

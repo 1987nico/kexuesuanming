@@ -299,6 +299,43 @@ describe("来源型标题生成合同", () => {
     expect(prompt).toContain("评估中心小组任务角色");
   });
 
+  it("反认知会跳过反复使用的学历实习母题，分配未用优势与隐藏代价", () => {
+    const prompt = buildTopicPoolUserPrompt({
+      week: 1,
+      targetUser: "关注孩子就业结果的留学生家长",
+      coreProblem: "孩子回国求职时的路径选择",
+      persona: "buyer",
+      methods: [TITLE_METHOD_BY_ID.contrarian],
+      generationMode: "default",
+      diversityHistory: [
+        {
+          method_id: "contrarian",
+          title: "孩子证书很多，却拿不出工作成果证据",
+          batch_index: 0,
+        },
+        {
+          method_id: "contrarian",
+          title: "孩子英语流利，面试却说不清业务判断",
+          batch_index: 1,
+        },
+        {
+          method_id: "contrarian",
+          title: "孩子成绩高，却讲不出协作故事",
+          batch_index: 2,
+        },
+      ],
+      context: { businessLine: "overseas_student" },
+    });
+
+    expect(prompt).toContain("本轮强制使用的未用反认知关系");
+    expect(prompt).not.toContain("1. 证书数量多 → 缺少工作成果证据");
+    expect(prompt).not.toContain("1. 英语流利 → 说不清业务判断");
+    expect(prompt).not.toContain("1. 成绩高 → 缺少协作故事");
+    expect(prompt).toContain("项目多 → 讲不清个人贡献");
+    expect(prompt).toContain("社团头衔高 → 证明不了岗位胜任");
+    expect(prompt).toContain("投递很早 → 没核对招聘批次");
+  });
+
   it("来源存在但没有锁定结构卡时，明确禁止生成该方法标题", () => {
     const prompt = buildTopicPoolUserPrompt({
       week: 1,

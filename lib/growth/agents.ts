@@ -251,6 +251,104 @@ interface InventoryAngle {
   usedWhen: RegExp;
 }
 
+interface ContrarianAngle {
+  cue: string;
+  usedWhen: RegExp;
+}
+
+/**
+ * 反认知不能长期只在“学历/实习/海投/方向”四个词之间改写。这里分配的不是
+ * 成品标题，而是一组尚未使用的“表面优势 → 隐藏代价”。模型必须先更换
+ * 真实判断对象，再按当前业务与视角写成自然标题。
+ */
+const OVERSEAS_CONTRARIAN_ANGLES: ContrarianAngle[] = [
+  { cue: "证书数量多 → 缺少工作成果证据", usedWhen: /证书.*(?:成果|证据)|(?:成果|证据).*证书/u },
+  { cue: "英语流利 → 说不清业务判断", usedWhen: /英语.*(?:业务|判断)|(?:业务|判断).*英语/u },
+  { cue: "成绩高 → 缺少协作故事", usedWhen: /成绩.*协作|协作.*成绩/u },
+  { cue: "项目多 → 讲不清个人贡献", usedWhen: /项目.*个人贡献|个人贡献.*项目/u },
+  { cue: "社团头衔高 → 证明不了岗位胜任", usedWhen: /社团.*(?:胜任|岗位)|(?:胜任|岗位).*社团/u },
+  { cue: "投递很早 → 没核对招聘批次", usedWhen: /投.*早.*批次|批次.*投.*早/u },
+  { cue: "认识校友多 → 不清楚岗位日常", usedWhen: /校友.*岗位日常|岗位日常.*校友/u },
+  { cue: "模拟面试多 → 回答变得不自然", usedWhen: /模拟面试.*自然|回答.*不自然/u },
+  { cue: "Offer选择多 → 忽略直属经理", usedWhen: /(?:Offer|录用).*直属|直属.*(?:Offer|录用)/iu },
+  { cue: "起薪高 → 学习成长空间小", usedWhen: /起薪.*成长|成长.*起薪/u },
+  { cue: "公司名气大 → 实际职责太窄", usedWhen: /公司.*名气.*职责|职责.*名气/u },
+  { cue: "岗位名称好听 → 工作内容不对口", usedWhen: /岗位.*(?:名称|名).*内容|工作内容.*岗位/u },
+  { cue: "会的工具多 → 没有结果证据", usedWhen: /工具.*结果|结果.*工具/u },
+  { cue: "课程选得广 → 说不清真正专长", usedWhen: /课程.*专长|专长.*课程/u },
+  { cue: "专业热门 → 同岗位竞争更拥挤", usedWhen: /专业.*热门.*竞争|热门专业.*竞争/u },
+  { cue: "内推机会多 → 岗位匹配反而被忽略", usedWhen: /内推.*匹配|匹配.*内推/u },
+  { cue: "简历写得满 → 经不起细节追问", usedWhen: /简历.*(?:写满|细节|追问)|追问.*简历/u },
+  { cue: "案例背得熟 → 扛不住现场追问", usedWhen: /案例.*(?:现场|追问)|现场追问.*案例/u },
+  { cue: "留海外时间长 → 错过回国招聘窗口", usedWhen: /留.*(?:海外|英).*回国.*窗口|回国.*窗口.*留/u },
+  { cue: "回国时间早 → 未必赶上正确批次", usedWhen: /回国.*早.*批次|批次.*回国.*早/u },
+  { cue: "可选城市多 → 投递越来越分散", usedWhen: /城市.*多.*分散|分散.*城市/u },
+  { cue: "关注行业多 → 准备没有针对性", usedWhen: /行业.*多.*针对|针对.*行业/u },
+  { cue: "候选方向多 → 没有先验证一条", usedWhen: /方向.*多.*验证|验证.*方向/u },
+  { cue: "名企实习 → 没做过关键任务", usedWhen: /名企.*关键任务|关键任务.*名企/u },
+  { cue: "比赛获奖 → 讲不出业务结果", usedWhen: /比赛.*(?:业务|结果)|业务结果.*比赛/u },
+  { cue: "技术能力强 → 讲不清客户价值", usedWhen: /技术.*客户价值|客户价值.*技术/u },
+  { cue: "人脉广 → 没记录有效反馈", usedWhen: /人脉.*反馈|反馈.*人脉/u },
+  { cue: "口语好 → 中文汇报仍需验证", usedWhen: /口语.*中文汇报|中文汇报.*口语/u },
+  { cue: "笔试通过快 → 面试岗位未必匹配", usedWhen: /笔试.*面试.*匹配|匹配.*笔试/u },
+  { cue: "进到终面 → 不该停止其他投递", usedWhen: /终面.*(?:停止|投递)|投递.*终面/u },
+  { cue: "愿意降薪 → 未必更容易跨行业", usedWhen: /降薪.*(?:跨行|转行)|(?:跨行|转行).*降薪/u },
+  { cue: "远程岗位方便 → 新人融入更慢", usedWhen: /远程.*融入|融入.*远程/u },
+  { cue: "管培轮岗多 → 方向可能更模糊", usedWhen: /管培.*方向|轮岗.*方向/u },
+  { cue: "跨专业经历 → 优势仍需项目证明", usedWhen: /跨专业.*项目|项目.*跨专业/u },
+  { cue: "作品集漂亮 → 没对准岗位任务", usedWhen: /作品集.*岗位任务|岗位任务.*作品集/u },
+  { cue: "导师推荐强 → 替代不了工作证据", usedWhen: /导师.*(?:推荐|证据)|工作证据.*导师/u },
+  { cue: "工签没有问题 → 岗位未必合适", usedWhen: /工签.*岗位.*(?:合适|匹配)|岗位.*工签/u },
+  { cue: "签约速度快 → 更要先看试用期", usedWhen: /签约.*试用期|试用期.*签约/u },
+  { cue: "福利项目多 → 总回报未必更高", usedWhen: /福利.*总回报|总回报.*福利/u },
+  { cue: "双语简历齐全 → 两版经历口径不一致", usedWhen: /双语简历|两版.*简历|简历.*口径/u },
+  { cue: "海外经历丰富 → 不熟悉本地业务语境", usedWhen: /海外经历.*本地|本地.*海外经历/u },
+  { cue: "量化课程扎实 → 不会解释商业影响", usedWhen: /量化.*商业|商业.*量化/u },
+];
+
+const EXECUTIVE_CONTRARIAN_ANGLES: ContrarianAngle[] = [
+  { cue: "平台大 → 外部市场看不清个人贡献", usedWhen: /平台.*个人贡献|个人贡献.*平台/u },
+  { cue: "职位高 → 可选岗位反而更少", usedWhen: /职位.*岗位.*少|岗位.*少.*职位/u },
+  { cue: "年薪高 → 转型试错空间更小", usedWhen: /年薪.*试错|试错.*年薪/u },
+  { cue: "人脉广 → 真实付费需求仍未验证", usedWhen: /人脉.*付费|付费.*人脉/u },
+  { cue: "团队大 → 个人交付能力更难证明", usedWhen: /团队.*个人交付|个人交付.*团队/u },
+  { cue: "客户多 → 可带走关系未必多", usedWhen: /客户.*带走|带走.*客户/u },
+  { cue: "预算大 → 不等于有独立经营权", usedWhen: /预算.*经营权|经营权.*预算/u },
+  { cue: "头衔好听 → 新公司任务书可能缩水", usedWhen: /头衔.*任务|任务书.*头衔/u },
+  { cue: "绩效优秀 → 可能只适配原组织", usedWhen: /绩效.*组织|组织.*绩效/u },
+  { cue: "行业经验深 → 跨行业迁移更需证据", usedWhen: /行业经验.*迁移|迁移.*行业经验/u },
+  { cue: "管理经验多 → 面试仍要讲具体结果", usedWhen: /管理经验.*结果|结果.*管理经验/u },
+  { cue: "猎头来电多 → 市场报价未必真实", usedWhen: /猎头.*报价|报价.*猎头/u },
+  { cue: "副业咨询多 → 未必形成稳定复购", usedWhen: /副业.*复购|复购.*副业/u },
+  { cue: "创业资源多 → 现金跑道仍可能不足", usedWhen: /创业.*现金|现金跑道.*创业/u },
+  { cue: "大厂履历强 → 小团队未必买单", usedWhen: /大厂.*小团队|小团队.*大厂/u },
+  { cue: "战略能力强 → 亲自获客仍需验证", usedWhen: /战略.*获客|获客.*战略/u },
+  { cue: "表达能力强 → 解决方案未必能成交", usedWhen: /表达.*成交|成交.*表达/u },
+  { cue: "决策速度快 → 转型前更容易漏变量", usedWhen: /决策.*漏.*变量|变量.*决策/u },
+  { cue: "原团队挽留 → 不等于外部机会更好", usedWhen: /挽留.*外部|外部.*挽留/u },
+  { cue: "晋升在望 → 可能推迟方向验证", usedWhen: /晋升.*验证|验证.*晋升/u },
+  { cue: "现金储备多 → 也可能没有验证节奏", usedWhen: /现金.*验证|验证.*现金/u },
+  { cue: "合伙人熟悉 → 责任边界更容易含糊", usedWhen: /合伙人.*边界|责任边界.*合伙/u },
+  { cue: "客户认可高 → 能力未必可产品化", usedWhen: /客户.*产品化|产品化.*客户/u },
+  { cue: "证书课程多 → 市场不会替你定价", usedWhen: /证书.*定价|课程.*定价/u },
+  { cue: "简历项目多 → 关键胜任证据仍分散", usedWhen: /简历.*胜任|胜任.*简历/u },
+  { cue: "面试机会多 → 岗位边界可能更模糊", usedWhen: /面试.*岗位边界|岗位边界.*面试/u },
+  { cue: "行业名气大 → 周期下行风险更集中", usedWhen: /行业.*名气.*周期|周期.*名气/u },
+  { cue: "长期稳定 → 可迁移能力可能被遮住", usedWhen: /稳定.*迁移|迁移.*稳定/u },
+  { cue: "责任心强 → 更容易替组织扛风险", usedWhen: /责任心.*组织.*风险|组织.*风险.*责任/u },
+  { cue: "执行力强 → 可能一直没验证方向", usedWhen: /执行力.*方向|方向.*执行力/u },
+  { cue: "资源调动快 → 离开平台后未必可用", usedWhen: /资源.*离开平台|离开平台.*资源/u },
+  { cue: "熟悉老板 → 不等于拥有决策边界", usedWhen: /老板.*决策边界|决策边界.*老板/u },
+  { cue: "岗位稳定 → 真实工作内容可能收窄", usedWhen: /岗位.*稳定.*内容|工作内容.*稳定/u },
+  { cue: "跨部门经验多 → 核心专长更需聚焦", usedWhen: /跨部门.*专长|专长.*跨部门/u },
+  { cue: "离职补偿高 → 不能替代下一步验证", usedWhen: /补偿.*验证|验证.*补偿/u },
+  { cue: "顾问项目多 → 不代表有持续获客", usedWhen: /顾问.*获客|获客.*顾问/u },
+  { cue: "个人品牌强 → 商业交付仍需标准化", usedWhen: /个人品牌.*交付|交付.*个人品牌/u },
+  { cue: "管理半径大 → 亲自解决问题可能变慢", usedWhen: /管理.*亲自|亲自.*管理/u },
+  { cue: "熟悉行业规则 → 新赛道学习成本仍高", usedWhen: /行业规则.*学习|学习成本.*行业/u },
+  { cue: "选择机会多 → 更需要先排除一条", usedWhen: /机会.*多.*排除|排除.*机会/u },
+];
+
 /**
  * 拔河式标题最容易在历史积累后退回“回国/留海外、实习/全职、内推/海投”
  * 三四组熟悉选项。这里不是直接写标题，而是给模型轮换一组尚未使用的真实
@@ -550,6 +648,19 @@ ${selected.map((angle, index) => `${index + 1}. ${angle.cue}`).join("\n")}
 标题仍需符合当前业务和视角；数字只是结构，换数字不算换题。`;
 }
 
+function contrarianAngleDirective(businessLine: string | undefined, historyTitles: string[]) {
+  const pool = isOverseasBusinessLine(businessLine)
+    ? OVERSEAS_CONTRARIAN_ANGLES
+    : EXECUTIVE_CONTRARIAN_ANGLES;
+  const unused = pool.filter((angle) => !historyTitles.some((title) => angle.usedWhen.test(title)));
+  if (!unused.length) return "";
+  const selected = unused.slice(0, 3);
+  return `【本轮强制使用的未用反认知关系】三个候选分别使用以下三组“表面优势→隐藏代价”，不得退回学历高、实习多、海投多、方向错等已经反复出现的旧关系：
+${selected.map((angle, index) => `${index + 1}. ${angle.cue}`).join("\n")}
+候选1只使用第1组关系，候选2只使用第2组，候选3只使用第3组；标题必须同时让人看出表面优势与隐藏代价，严禁跨编号拼接或只写“未必更好”。
+标题仍需符合当前业务和视角；买家写亲历或当事人处境，专家写判断，商家写服务观察，不能照抄说明句。`;
+}
+
 export function buildTopicPoolUserPrompt(input: {
   week: number;
   targetUser: string;
@@ -632,6 +743,8 @@ export function buildTopicPoolUserPrompt(input: {
           ? nostalgiaAngleDirective(input.context?.businessLine, methodHistoryTitles, input.persona)
           : method.id === "inventory"
             ? inventoryAngleDirective(input.context?.businessLine, methodHistoryTitles)
+            : method.id === "contrarian"
+              ? contrarianAngleDirective(input.context?.businessLine, methodHistoryTitles)
             : ""
       : "";
     return [
