@@ -1,0 +1,46 @@
+{
+  "objective": "固定同一个部署版本，在独立测试空间完成6个业务视角各5批、共30批真实页面标题验收",
+  "status": "automated_checks_passed_preparing_real_model_stress",
+  "branch": "codex/growth-acceptance-loop",
+  "candidate_commit": "working_tree_after_2d703a1",
+  "fixed_deployment": null,
+  "acceptance_account": "dedicated_test_account",
+  "acceptance_space": null,
+  "formal_batches_passed": 0,
+  "formal_batches_required": 30,
+  "speed_under_90_seconds": 0,
+  "speed_required_under_90_seconds": 27,
+  "last_failure": {
+    "deployment": "dpl_4ij2ASAdChfm5XuvyXFDCS2k79AD",
+    "space": "overseas_student/buyer",
+    "batch": 1,
+    "elapsed_ms": 82262,
+    "failed_method_ids": [
+      "nostalgia"
+    ],
+    "reason": "动态生成与静态候选均未形成历史外的新标题，整批按原子规则未替换",
+    "evidence": "生产诊断显示nostalgia候选数为0，其余三个非来源原生槽位已通过"
+  },
+  "repairs_completed": [
+    "语义审核输出预算随候选数量增长，避免合法JSON被截断",
+    "审核异常、零本地候选和审核拒绝后统一进入定向补题",
+    "留学生家长末级兜底保持亲子身份且保留安全余量",
+    "最终诊断增加逐方法失败原因",
+    "本轮刚被拒绝的标题优先进入模型禁区，不再被长历史挤出",
+    "定向补题读取近20批母题和素材轨迹",
+    "每个模型候选标题独立绑定自己的正文承诺",
+    "全量388项测试、类型检查、代码规范和生产构建通过"
+  ],
+  "repairs_in_progress": [
+    "在隔离历史中执行6个业务视角各20批真实模型压力验收",
+    "准备可重置且不影响真实用户数据的干净验收空间"
+  ],
+  "real_model_stress": {
+    "status": "pending",
+    "batches_passed": 0,
+    "batches_required": 120,
+    "spaces": 6,
+    "batches_per_space": 20
+  },
+  "next_step": "拉取生产模型配置，在纯内存隔离历史中执行120批压力验收"
+}

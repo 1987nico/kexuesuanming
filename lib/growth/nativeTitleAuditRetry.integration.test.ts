@@ -320,6 +320,48 @@ describe("原生标题语义审核二次恢复", () => {
     expect(auditBatches[0].map((candidate) => candidate.title)).toContain(naturalAlternative);
   });
 
+  it("结构化候选被选中后使用该标题自己的正文承诺", async () => {
+    const firstTitle = "年终奖到账，我反而更想走";
+    const secondTitle = "工位没变，我先去外面面试";
+    const firstPromise = "讲清年终奖到账后仍想离开的收入与方向冲突。";
+    const secondPromise = "讲清岗位停滞后先用外部面试验证市场反馈的过程。";
+
+    llmJSONMock.mockImplementation(async (input: { user: string }) => {
+      if (!input.user.includes("语义新颖度终审")) {
+        return modelResponse({
+          topics: [{
+            method_id: "human_pain",
+            title_candidates: [
+              { title: firstTitle, title_promise: firstPromise },
+              { title: secondTitle, title_promise: secondPromise },
+            ],
+          }],
+        });
+      }
+      const candidates = auditCandidates(input.user);
+      return modelResponse({
+        decisions: candidates.map((candidate) => ({
+          candidate_id: candidate.candidate_id,
+          novel: candidate.title === secondTitle,
+          natural: true,
+          duplicate_reference_ids: [],
+          conflicting_candidate_ids: [],
+          reason: candidate.title === secondTitle ? "新标题" : "模拟重复",
+        })),
+      });
+    });
+
+    const result = await generateTopicBatch({
+      account,
+      methodIds: ["human_pain"],
+    });
+
+    expect(result.topics).toHaveLength(1);
+    expect(result.topics[0].title).toBe(secondTitle);
+    expect(result.topics[0].title_promise).toBe(secondPromise);
+    expect(result.topics[0].title_promise).not.toBe(firstPromise);
+  });
+
   it("已有候选全被拒绝时，只为缺失槽位定向补题并交付新标题", async () => {
     let generationCalls = 0;
     let auditCalls = 0;

@@ -105,6 +105,42 @@ function asText(value: unknown) {
   return "";
 }
 
+/**
+ * 模型生成一个方法的多个标题时，每条标题必须携带自己的正文承诺。
+ * 新协议使用 title_candidates；旧协议只用于兼容历史测试和灰度期间尚未
+ * 切换的模型响应。不能把首选标题的承诺静默复用到新协议的其他候选上。
+ */
+function modelTitleCandidateRows(row: any) {
+  const structured = Array.isArray(row?.title_candidates)
+    ? row.title_candidates
+      .map((candidate: any) => ({
+        ...row,
+        ...candidate,
+        title: asText(candidate?.title),
+        title_promise: asText(candidate?.title_promise),
+      }))
+      .filter((candidate: any) => candidate.title && candidate.title_promise)
+    : [];
+  const legacy = [
+    asText(row?.title),
+    ...(Array.isArray(row?.alternative_titles) ? row.alternative_titles.map(asText) : []),
+  ]
+    .map((title) => ({
+      ...row,
+      title: title.trim(),
+      title_promise: asText(row?.title_promise),
+    }))
+    .filter((candidate) => candidate.title);
+  const candidates = structured.length ? structured : legacy;
+  const seen = new Set<string>();
+  return candidates.filter((candidate: any) => {
+    const fingerprint = normalizeTitleForComparison(candidate.title);
+    if (!fingerprint || seen.has(fingerprint)) return false;
+    seen.add(fingerprint);
+    return true;
+  }).slice(0, 5);
+}
+
 function accountContext(account: GrowthAccount): AccountContext {
   return {
     businessLine: GROWTH_BUSINESS_LINE_VALUES[account.business_line ?? "executive"],
@@ -1605,7 +1641,11 @@ export async function generateTopicBatch(input: {
           methods: pendingMethods, generationMode,
           sources: pendingMethods.map((method) => sources.get(method.id)).filter(Boolean) as TopicSourceSnapshot[],
           structureCards: pendingMethods.map((method) => structureCards.get(method.id)).filter(Boolean) as BenchmarkStructureCard[],
-          excludeTitles: [...historyTitles, ...rejectedTitles, ...[...accepted.values()].map((topic) => topic.title)],
+          excludeTitles: historyTitles,
+          priorityExcludeTitles: [
+            ...[...accepted.values()].map((topic) => topic.title),
+            ...rejectedTitles.slice().reverse(),
+          ],
           directionLocks: pendingMethods.flatMap((method) => {
             const lock = input.directionLocks?.[method.id];
             return lock ? [{
@@ -1645,16 +1685,14 @@ export async function generateTopicBatch(input: {
           continue;
         }
         const directionLock = input.directionLocks?.[method.id];
-        const candidateTitles = Array.from(new Set([
-          asText(row.title),
-          ...(Array.isArray(row.alternative_titles) ? row.alternative_titles.map(asText) : []),
-        ].map((value) => value.trim()).filter(Boolean))).slice(0, 5);
+        const candidateRows = modelTitleCandidateRows(row);
         let acceptedTopic: TopicCandidate | undefined;
         let capturedNativeCandidate = false;
         const candidateProblems: string[] = [];
         candidateProblemsByMethod.set(method.id, candidateProblems);
 
-        for (const [candidateIndex, candidateTitle] of candidateTitles.entries()) {
+        for (const [candidateIndex, candidateRow] of candidateRows.entries()) {
+          const candidateTitle = asText(candidateRow.title);
           try {
             // 不允许先截成20字再放行：被截断的模型输出很容易把句子截残，
             // 也会掩盖“原题本来超长”的质量问题。
@@ -1668,7 +1706,6 @@ export async function generateTopicBatch(input: {
               rejectedTitles.push(candidateTitle);
               continue;
             }
-            const candidateRow = { ...row, title: candidateTitle };
             const [normalizedTopic] = normalizeTopics([candidateRow], input.account, [method], generationMode, sources);
             const topic: TopicCandidate = directionLock ? {
               ...normalizedTopic,
@@ -1938,10 +1975,10 @@ export async function generateTopicBatch(input: {
           generationMode,
           sources: [],
           structureCards: [],
-          excludeTitles: [
-            ...historyTitles,
-            ...rejectedTitles,
+          excludeTitles: historyTitles,
+          priorityExcludeTitles: [
             ...[...accepted.values()].map((topic) => topic.title),
+            ...rejectedTitles.slice().reverse(),
           ],
           directionLocks: targetedRecoveryMethods.flatMap((method) => {
             const lock = input.directionLocks?.[method.id];
@@ -1956,6 +1993,7 @@ export async function generateTopicBatch(input: {
             }] : [];
           }),
           diversityHistory: historyTopics,
+          diversityHistoryBatchLimit: 20,
           context: accountContext(input.account),
         }),
         maxTokens: 1800,
@@ -1973,12 +2011,10 @@ export async function generateTopicBatch(input: {
           lastProblems.push(`${method.id}:定向补题没有返回该方法`);
           continue;
         }
-        const candidateTitles = Array.from(new Set([
-          asText(row.title),
-          ...(Array.isArray(row.alternative_titles) ? row.alternative_titles.map(asText) : []),
-        ].map((value) => value.trim()).filter(Boolean))).slice(0, 5);
+        const candidateRows = modelTitleCandidateRows(row);
         const options: NativeTitleCandidateOption[] = [];
-        for (const candidateTitle of candidateTitles) {
+        for (const candidateRow of candidateRows) {
+          const candidateTitle = asText(candidateRow.title);
           if (options.length >= MAX_NATIVE_TARGETED_RECOVERY_CANDIDATES_PER_METHOD) break;
           const rawQuality = evaluateGrowthTitleQuality(candidateTitle, {
             supportedFacts: supportedTitleFacts(input.account),
@@ -1987,9 +2023,7 @@ export async function generateTopicBatch(input: {
             rejectedTitles.push(candidateTitle);
             continue;
           }
-          const [normalizedTopic] = normalizeTopics([
-            { ...row, title: candidateTitle },
-          ], input.account, [method], generationMode, sources);
+          const [normalizedTopic] = normalizeTopics([candidateRow], input.account, [method], generationMode, sources);
           const directionLock = input.directionLocks?.[method.id];
           const topic: TopicCandidate = directionLock ? {
             ...normalizedTopic,
@@ -2335,10 +2369,10 @@ export async function generateTopicBatch(input: {
               generationMode,
               sources: [],
               structureCards: [],
-              excludeTitles: [
-                ...historyTitles,
-                ...rejectedTitles,
+              excludeTitles: historyTitles,
+              priorityExcludeTitles: [
                 ...[...accepted.values()].map((topic) => topic.title),
+                ...rejectedTitles.slice().reverse(),
               ],
               directionLocks: targetedRecoveryMethods.flatMap((method) => {
                 const lock = input.directionLocks?.[method.id];
@@ -2353,6 +2387,7 @@ export async function generateTopicBatch(input: {
                 }] : [];
               }),
               diversityHistory: historyTopics,
+              diversityHistoryBatchLimit: 20,
               context: accountContext(input.account),
             }),
             maxTokens: 1800,
@@ -2370,12 +2405,10 @@ export async function generateTopicBatch(input: {
               lastProblems.push(`${method.id}:定向补题没有返回该方法`);
               continue;
             }
-            const candidateTitles = Array.from(new Set([
-              asText(row.title),
-              ...(Array.isArray(row.alternative_titles) ? row.alternative_titles.map(asText) : []),
-            ].map((value) => value.trim()).filter(Boolean))).slice(0, 5);
+            const candidateRows = modelTitleCandidateRows(row);
             const options: NativeTitleCandidateOption[] = [];
-            for (const candidateTitle of candidateTitles) {
+            for (const candidateRow of candidateRows) {
+              const candidateTitle = asText(candidateRow.title);
               if (options.length >= MAX_NATIVE_TARGETED_RECOVERY_CANDIDATES_PER_METHOD) break;
               const rawQuality = evaluateGrowthTitleQuality(candidateTitle, {
                 supportedFacts: supportedTitleFacts(input.account),
@@ -2384,9 +2417,7 @@ export async function generateTopicBatch(input: {
                 rejectedTitles.push(candidateTitle);
                 continue;
               }
-              const [normalizedTopic] = normalizeTopics([
-                { ...row, title: candidateTitle },
-              ], input.account, [method], generationMode, sources);
+              const [normalizedTopic] = normalizeTopics([candidateRow], input.account, [method], generationMode, sources);
               const directionLock = input.directionLocks?.[method.id];
               const topic: TopicCandidate = directionLock ? {
                 ...normalizedTopic,

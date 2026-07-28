@@ -171,7 +171,7 @@ describe("标题生成30批用户验收标准（确定性兜底回归）", () =>
     expect(batches).toBe(30);
   });
 
-  it("语义审核最多只看两个合格兜底候选时，五批里每个原生槽位仍有可替代项", () => {
+  it("语义审核最多只看两个合格兜底候选时，五批外仍保留一批安全余量", () => {
     const spaces: Array<[GrowthBusinessLine, GrowthPersona]> = [
       ["overseas_student", "buyer"],
       ["overseas_student", "merchant"],
@@ -186,7 +186,7 @@ describe("标题生成30批用户验收标准（确定性兜底回归）", () =>
       const historyTitles: string[] = [];
       const historyTopics: Array<{ method_id: TitleMethodId; title: string }> = [];
 
-      for (let round = 0; round < 5; round += 1) {
+      for (let round = 0; round < 6; round += 1) {
         const batch: TopicCandidate[] = [];
         for (const method of methods) {
           const eligible = fallbackTitleCandidates(account(businessLine, persona), method.id)
@@ -204,8 +204,8 @@ describe("标题生成30批用户验收标准（确定性兜底回归）", () =>
             .slice(0, 2);
           expect(
             eligible.length,
-            `${businessLine}/${persona}/第${round + 1}批/${method.id}没有给语义审核留下两个安全兜底候选`,
-          ).toBe(2);
+            `${businessLine}/${persona}/第${round + 1}批/${method.id}没有留下规定的安全候选余量`,
+          ).toBeGreaterThanOrEqual(round < 5 ? 2 : 1);
           batch.push(candidateTopic(businessLine, persona, method.id, eligible[0]));
         }
         historyTitles.push(...batch.map((item) => item.title));

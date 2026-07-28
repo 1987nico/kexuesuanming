@@ -237,6 +237,8 @@ export function buildTopicPoolUserPrompt(input: {
   sources?: TopicSourceSnapshot[];
   structureCards?: BenchmarkStructureCard[];
   excludeTitles?: string[];
+  /** 本轮刚被拒绝或已选中的标题，必须优先进入有限提示词窗口。 */
+  priorityExcludeTitles?: string[];
   directionLocks?: Array<{
     method_id: TitleMethodId;
     current_title: string;
@@ -253,19 +255,29 @@ export function buildTopicPoolUserPrompt(input: {
     material_signature?: string;
     batch_index?: number;
   }>;
+  /** 常规生成看近5批；定向补题可扩大到更长历史，避免回到更早的旧母题。 */
+  diversityHistoryBatchLimit?: number;
   context?: AccountContext;
 }) {
   // 历史全集由服务端做确定性去重；调用方已按“最新在前”排序，提示词只带最近一段，
   // 避免长期使用后挤爆上下文。此前 slice(-160) 会错误地把最旧的标题交给模型，
   // 使它看不见刚生成的方向并反复提近题。
-  const exclude = (input.excludeTitles ?? []).filter(Boolean).slice(0, 160);
+  const exclude = Array.from(new Set([
+    ...(input.priorityExcludeTitles ?? []),
+    ...(input.excludeTitles ?? []),
+  ].filter(Boolean))).slice(0, 160);
+  const diversityHistoryBatchLimit = Math.max(
+    1,
+    Math.min(50, input.diversityHistoryBatchLimit ?? 5),
+  );
   const sourceByMethod = new Map((input.sources ?? []).map((source) => [source.method_id, source]));
   const cardByMethod = new Map((input.structureCards ?? []).map((card) => [card.method_id, card]));
   const lockByMethod = new Map((input.directionLocks ?? []).map((lock) => [lock.method_id, lock]));
   const diversityByMethod = new Map(input.methods.map((method) => [
     method.id,
     (input.diversityHistory ?? []).filter((item) =>
-      item.method_id === method.id && (item.batch_index ?? Number.MAX_SAFE_INTEGER) < 5
+      item.method_id === method.id
+      && (item.batch_index ?? Number.MAX_SAFE_INTEGER) < diversityHistoryBatchLimit
     ),
   ]));
   const methodLines = input.methods.map((method) => {
@@ -303,7 +315,7 @@ export function buildTopicPoolUserPrompt(input: {
 正文唯一承诺=${lock.title_promise}
 具体场景依据=${lock.origin_force || "沿用当前标题场景"}
 核心冲突依据=${lock.conflict_judgement || "沿用当前标题冲突"}
-title_promise 必须原样返回。title 与 alternative_titles 必须属于同一方向，不得换人物、问题、结果、资料数量或对立选项。`
+每个 title_candidates[].title_promise 必须原样返回正文唯一承诺。所有候选标题必须属于同一方向，不得换人物、问题、结果、资料数量或对立选项。`
         : "",
       diversity.length && !lock
         ? `【近期多样性禁区】不能只换数字或近义词。优先避开：
@@ -345,8 +357,8 @@ ${personaContinuityRule}
 - 【真实换题规则】本轮标题必须相对历史标题实质换题：至少更换人物、场景、冲突、正文承诺、句式中的两项。只改数字、标点、语气词、繁简体、近义词或前后顺序，都不算新标题。不要复用历史标题的核心人物+场景+冲突组合。
 - 【原力要大】标题外层必须有至少 1 个具体实在、有画面的"原力词"：目标受众生活里能看见、摸到、遇到的物件、角色、场景或动作。例：工资条、合同、老板、合伙人、客户、会议室、工位、预算表、PPT、手机消息、加班、汇报、签合同、拍板、微信对话框、面试通知、离职交接、绩效面谈。禁止只用泛虚词做标题入口，如：成长、认知、觉醒、自由、焦虑、选择、结构、位置、命运、人生、体面；这些词可以进正文解释，但不能单独承担标题入口。
 - 【冲突要大】每个选题必须有反常识、反预期或强落差，让用户一眼看到"怎么会这样"的张力。冲突可以来自：想要稳定 vs 想要自由、职位很高 vs 离开平台不值钱、努力很多 vs 结果不变、想转型 vs 家庭/收入/年龄限制、以为是机会 vs 后来发现是坑。没有冲突的平铺题、纯建议题、纯清单题不进入候选池。
-- 每个候选题必须可比较、可复盘、可延展，并写清正文要兑现的唯一承诺。
-- 每种方法同时给出 5 个彼此明显不同的标题候选：title 是首选，alternative_titles 是四个备选。五个候选不能只是改标点、数字或语气词，必须主动轮换句式和具体素材，但仍严格属于同一个方法。${singleTitleRewrite ? "当前是单槽改写，五个候选必须保持方向锁中的目标用户、核心处境、正文承诺和数量完全不变。" : ""}
+- 每个候选题必须可比较、可复盘、可延展，并写清该标题自己要兑现的唯一承诺。候选标题与正文承诺必须一一绑定，不能让五个标题共用首选标题的承诺。
+- 每种方法同时给出 5 个彼此明显不同的 title_candidates。五个候选不能只是改标点、数字或语气词，必须主动轮换句式和具体素材，但仍严格属于同一个方法。${singleTitleRewrite ? "当前是单槽改写，五个候选必须保持方向锁中的目标用户、核心处境、正文承诺和数量完全不变；五条 title_promise 都原样返回方向锁中的正文唯一承诺。" : ""}
 - 来源型方法已经在上一步完成母题拆解。你只能使用“已锁定结构卡”生成，不会看到原标题，也不得自行重新解释母题。
 - 蹭流量必须能从新标题中识别出所绑定热点的事件、人物或社会冲突；相同产品迁移产品表达或选择场景；相同功效迁移解决问题或降低风险的功效；相似人群迁移人群处境；终极结果相同迁移最终利益；爆款框架迁移句式与冲突结构。
 - 绑定母题的标题不得调用与结构卡无关的通用模板。必须继承结构卡指定的元素，并完成replacement_requirement。
@@ -361,9 +373,13 @@ ${exclude.length ? `- 严禁与以下已生成选题重复或近似：${exclude.
   "topics": [
     {
       "method_id": "必须与给定method_id完全一致",
-      "title": "题目（20 字以内，含标点）",
-      "alternative_titles": ["备选题目1（20字以内）", "备选题目2（20字以内）", "备选题目3（20字以内）", "备选题目4（20字以内）"],
-      "title_promise": "正文必须兑现的唯一承诺"
+      "title_candidates": [
+        {"title": "候选题目1（20字以内，含标点）", "title_promise": "候选题目1正文必须兑现的唯一承诺"},
+        {"title": "候选题目2（20字以内，含标点）", "title_promise": "候选题目2正文必须兑现的唯一承诺"},
+        {"title": "候选题目3（20字以内，含标点）", "title_promise": "候选题目3正文必须兑现的唯一承诺"},
+        {"title": "候选题目4（20字以内，含标点）", "title_promise": "候选题目4正文必须兑现的唯一承诺"},
+        {"title": "候选题目5（20字以内，含标点）", "title_promise": "候选题目5正文必须兑现的唯一承诺"}
+      ]
     }
   ]
 }

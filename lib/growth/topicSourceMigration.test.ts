@@ -73,6 +73,21 @@ describe("来源型标题生成合同", () => {
     expect(prompt).toContain("不能把家长身份只留给正文承诺");
   });
 
+  it("每个模型候选标题必须携带自己独立的正文承诺", () => {
+    const prompt = buildTopicPoolUserPrompt({
+      week: 1,
+      targetUser: "转型中的中高管",
+      coreProblem: "方向不清晰",
+      persona: "buyer",
+      methods: [TITLE_METHOD_BY_ID.human_pain],
+      generationMode: "default",
+    });
+
+    expect(prompt).toContain('"title_candidates"');
+    expect(prompt).toContain("候选标题与正文承诺必须一一绑定");
+    expect(prompt).not.toContain('"alternative_titles"');
+  });
+
   it("标题提示词只带最新160条历史，不会误把最旧标题当作近期禁区", () => {
     const newestFirstHistory = Array.from({ length: 161 }, (_, index) => (
       `最新历史标题${String(index + 1).padStart(3, "0")}`
@@ -90,6 +105,49 @@ describe("来源型标题生成合同", () => {
     expect(prompt).toContain("最新历史标题001");
     expect(prompt).toContain("最新历史标题160");
     expect(prompt).not.toContain("最新历史标题161");
+  });
+
+  it("定向补题优先保留本轮刚被拒绝的标题，不会被长历史挤出窗口", () => {
+    const newestFirstHistory = Array.from({ length: 180 }, (_, index) => (
+      `历史标题${String(index + 1).padStart(3, "0")}`
+    ));
+    const prompt = buildTopicPoolUserPrompt({
+      week: 1,
+      targetUser: "转型中的中高管",
+      coreProblem: "方向不清晰",
+      persona: "buyer",
+      methods: [TITLE_METHOD_BY_ID.human_pain],
+      generationMode: "default",
+      excludeTitles: newestFirstHistory,
+      priorityExcludeTitles: ["刚被拒绝的重复标题"],
+    });
+
+    expect(prompt).toContain("刚被拒绝的重复标题");
+    expect(prompt).toContain("历史标题001");
+    expect(prompt).not.toContain("历史标题160");
+  });
+
+  it("定向补题可读取超过近5批的母题轨迹", () => {
+    const prompt = buildTopicPoolUserPrompt({
+      week: 1,
+      targetUser: "转型中的中高管",
+      coreProblem: "方向不清晰",
+      persona: "buyer",
+      methods: [TITLE_METHOD_BY_ID.human_pain],
+      generationMode: "default",
+      diversityHistory: [{
+        method_id: "human_pain",
+        sentence_frame: "第八批旧句式",
+        mother_topic_key: "第八批旧母题",
+        material_signature: "第八批旧素材",
+        batch_index: 7,
+      }],
+      diversityHistoryBatchLimit: 20,
+    });
+
+    expect(prompt).toContain("第八批旧句式");
+    expect(prompt).toContain("第八批旧母题");
+    expect(prompt).toContain("第八批旧素材");
   });
 
   it("标题生成阶段只接收锁定结构卡，不再看到或解释原题", () => {
