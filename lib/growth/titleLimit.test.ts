@@ -91,6 +91,13 @@ describe("标题完整历史语义去重", () => {
       "秋招缺的不是海投，是反馈",
     ])).toBe("秋招缺的不是海投，是反馈");
   });
+
+  it("历史标题只替换后半句时仍必须拦截", () => {
+    const history = "花百万留学，不敢跟爸妈说秋招没方向";
+    const candidate = "花百万留学，不敢跟爸妈说投了没信";
+    expect(titlesAreNearDuplicate(candidate, history)).toBe(true);
+    expect(findDuplicateTitle(candidate, [history])).toBe(history);
+  });
 });
 
 describe("标题批次长期去重范围", () => {
