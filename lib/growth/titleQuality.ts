@@ -604,6 +604,12 @@ export function nativeTitleSemanticTopicKeys(methodId: string, value: string) {
       && /(?:不敢说不|难拒绝|不好拒绝|不敢拒绝)/u.test(title),
   );
   add(
+    "scene:too_many_mock_interviews_sound_unnatural",
+    /(?:模拟面试|面试练)/u.test(title)
+      && /(?:多|越)/u.test(title)
+      && /(?:不自然|未必.{0,4}自然|机械|像背稿|答得更差|回答更差)/u.test(title),
+  );
+  add(
     "nostalgia:parent_club_to_job_evidence",
     /(?:孩子|娃|儿子|女儿)/u.test(title)
       && /社团/u.test(title)
@@ -619,6 +625,63 @@ export function nativeTitleSemanticTopicKeys(methodId: string, value: string) {
     "material:cross_border_tax_choice",
     /(?:跨境|海外|国外|境外|回国|两地)/u.test(title)
       && /(?:税务|税收|纳税|个税)/u.test(title),
+  );
+  add(
+    "material:interview_reverse_question_bank",
+    /(?:面试反问|反问题)/u.test(title)
+      && /(?:题库|题单|问题|方向|清单|盘点|核验)/u.test(title),
+  );
+  add(
+    "material:alumni_interview_questions",
+    /(?:校友访谈|校友交流|找校友问)/u.test(title)
+      && /(?:题单|问题|提问|验证|岗位日常)/u.test(title),
+  );
+  add(
+    "material:compensation_terms_comparison",
+    /(?:薪酬|底薪|奖金|签字费|总回报)/u.test(title)
+      && /(?:口径|构成|比较|对照|条款)/u.test(title),
+  );
+  add(
+    "material:recruiter_followup_timing",
+    /招聘官/u.test(title)
+      && /(?:跟进|沟通|触点|间隔|节奏)/u.test(title),
+  );
+  add(
+    "material:rejection_reason_fields",
+    /拒信/u.test(title)
+      && /(?:原因|字段|记录|复盘)/u.test(title),
+  );
+  add(
+    "material:collaboration_story_evidence",
+    /协作故事/u.test(title)
+      && /(?:素材|拆解|细节|证据|利益相关方)/u.test(title),
+  );
+  add(
+    "material:regulatory_risk_check",
+    /(?:监管|合规)/u.test(title)
+      && /(?:风险|变化|问题|新赛道|方向)/u.test(title),
+  );
+  add(
+    "material:background_reference_availability",
+    /(?:背调|背景调查)/u.test(title)
+      && /(?:证明人|联系人)/u.test(title)
+      && /(?:失效|可用|联系|盘点)/u.test(title),
+  );
+  add(
+    "material:consulting_responsibility_boundary",
+    /(?:顾问|咨询)/u.test(title)
+      && /(?:合同|交付)/u.test(title)
+      && /责任边界|边界/u.test(title),
+  );
+  add(
+    "material:first_customer_source",
+    /(?:首批客户|第一批客户|客户线索)/u.test(title)
+      && /(?:来源|从哪里|线索|高估|盘点)/u.test(title),
+  );
+  add(
+    "material:portable_personal_brand_assets",
+    /个人品牌/u.test(title)
+      && /(?:资产|带走|归属|盘点|分清)/u.test(title),
   );
   add(
     "inventory:bilingual_expression_samples",
@@ -640,8 +703,15 @@ export function nativeTitleSemanticTopicKeys(methodId: string, value: string) {
   add(
     "decision:job_label_vs_actual_work",
     /(?:岗位名|名头|头衔|职位名)/u.test(title)
-      && /(?:实际内容|工作内容|实际职责|具体职责|做的事)/u.test(title)
-      && /(?:还是|不如|比|反而)/u.test(title),
+      && /(?:实际内容|工作内容|实际职责|具体职责|做的事|内容扎实|内容不对口)/u.test(title)
+      && /(?:还是|不如|比|反而|反倒)/u.test(title),
+  );
+  add(
+    "contrarian:industry_depth_cross_role_needs_evidence",
+    /行业经验/u.test(title)
+      && /(?:深|多年|丰富)/u.test(title)
+      && /(?:跨岗|跨行|换行业|新岗位)/u.test(title)
+      && /(?:证据|证明|补证)/u.test(title),
   );
   add(
     "scene:budget_freeze_team_morale",

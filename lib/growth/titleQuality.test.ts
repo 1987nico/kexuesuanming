@@ -401,7 +401,77 @@ describe("标题语义去重", () => {
       "岗位名好听，还是工作内容扎实好",
       "岗位名头响还是实际内容更扎实",
     ],
-  ])("把词面不同但母题相同的线上样本判为重复", (methodId, left, right) => {
+    [
+      "contrarian",
+      "行业经验深，跨岗更要拿证据",
+      "行业经验深，跨岗反倒要补证据",
+    ],
+    [
+      "contrarian",
+      "岗位名称好听，反倒内容不对口",
+      "岗位名头响还是内容扎实更重要",
+    ],
+    [
+      "contrarian",
+      "模拟面试多，娃回答反而不自然了",
+      "孩子面试练得多，未必答得更自然",
+    ],
+    [
+      "scarce_material",
+      "面试反问题库，核验岗位和经理",
+      "盘点4类面试反问实用方向",
+    ],
+    [
+      "inventory",
+      "校友访谈题单，验证岗位日常",
+      "盘点5个校友访谈验证问题",
+    ],
+    [
+      "inventory",
+      "薪酬条款比较尺，统一底薪奖金口径",
+      "盘点3类底薪奖金签字费口径",
+    ],
+    [
+      "superlative",
+      "招聘官触点页，排好跟进节奏",
+      "招聘官跟进最易失礼的间隔",
+    ],
+    [
+      "inventory",
+      "留学生求职拒信要记这些字段",
+      "拒信别删，先盘原因记录字段",
+    ],
+    [
+      "scarce_material",
+      "写简历前，先盘协作故事素材",
+      "协作故事拆解卡，补项目细节用",
+    ],
+    [
+      "scarce_material",
+      "送监管风险问题库，核验新赛道用",
+      "盘点：监管变化的3类方向风险",
+    ],
+    [
+      "inventory",
+      "高管背调最容易失效的证明人",
+      "盘点：背调证明人的可用性",
+    ],
+    [
+      "scarce_material",
+      "顾问合同最易失控的责任边界",
+      "送顾问责任边界单，防交付失控",
+    ],
+    [
+      "inventory",
+      "创业最易高估的首批客户来源",
+      "盘点：首批客户线索的来源",
+    ],
+    [
+      "scarce_material",
+      "盘点个人品牌可带走的资产",
+      "送个人品牌资产表，分清能带走什么",
+    ],
+  ])("把%s方法的线上同题样本判为重复：%s / %s", (methodId, left, right) => {
     expect(nativeTitleSemanticTopicKeys(methodId, left).length).toBeGreaterThan(0);
     expect(titlesAreMethodAwareSemanticDuplicates(methodId, left, right)).toBe(true);
   });
