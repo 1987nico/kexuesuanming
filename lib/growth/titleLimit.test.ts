@@ -105,6 +105,13 @@ describe("标题完整历史语义去重", () => {
     expect(titlesAreNearDuplicate(candidate, history)).toBe(true);
     expect(findDuplicateTitle(candidate, [history])).toBe(history);
   });
+
+  it("历史标题只把秋招问题换成面试结果时仍必须拦截", () => {
+    const history = "花爸妈钱留学，秋招不敢说没方向";
+    const candidate = "花爸妈钱留学，不敢说面试全挂";
+    expect(titlesAreNearDuplicate(candidate, history)).toBe(true);
+    expect(findDuplicateTitle(candidate, [history])).toBe(history);
+  });
 });
 
 describe("标题批次长期去重范围", () => {

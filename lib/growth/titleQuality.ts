@@ -128,7 +128,7 @@ const SCENARIO_PATTERNS: Array<[string, RegExp]> = [
 const CONFLICT_PATTERNS: Array<[string, RegExp]> = [
   // 家庭投入后不敢说出秋招方向问题，是同一个可识别的内容母题；
   // 无论语序是“先说爸妈”还是“先说不敢”，换词后都不能伪装成新标题。
-  ["family_funded_job_search_hiding", /(?:爸妈|父母|家里|家长).*(?:秋招|求职|投简历).*(?:不敢|没方向|方向模糊)|(?:不敢|没方向|方向模糊).*(?:爸妈|父母|家里|家长).*(?:秋招|求职|投简历)|(?:爸妈|父母|家里|家长).*(?:不敢|没方向|方向模糊).*(?:秋招|求职|投简历)/gu],
+  ["family_funded_job_search_hiding", /(?:爸妈|父母|家里|家长).*(?:秋招|求职|投简历|面试|笔试).*(?:不敢|没方向|方向模糊|全挂|没回音)|(?:不敢|没方向|方向模糊|全挂|没回音).*(?:爸妈|父母|家里|家长).*(?:秋招|求职|投简历|面试|笔试)|(?:爸妈|父母|家里|家长).*(?:不敢|没方向|方向模糊|全挂|没回音).*(?:秋招|求职|投简历|面试|笔试)/gu],
   ["internship_or_autumn_recruitment", /(?:实习|补实习).*(?:还是|or|vs|VS).*(?:秋招|校招)|(?:秋招|校招).*(?:还是|or|vs|VS).*(?:实习|补实习)/giu],
   ["misdirected_application", /瞎撞|乱投|海投|没回音|没人理|零回应/gu],
   ["stay_or_return_choice", /(?:留英|海外|工签).*(?:还是|or|vs|VS).*(?:回国|回沪)|(?:回国|回沪).*(?:还是|or|vs|VS).*(?:留英|海外|工签)/giu],
@@ -324,9 +324,17 @@ export function evaluateTitleSemanticDuplicate(leftTitle: string, rightTitle: st
     left[field as keyof TitleSemanticSignature] !== "open"
     && left[field as keyof TitleSemanticSignature] === right[field as keyof TitleSemanticSignature]
   ));
+  const isSameFamilyHidingTheme = left.audience === "parent"
+    && right.audience === "parent"
+    && left.conflict === "family_funded_job_search_hiding"
+    && right.conflict === "family_funded_job_search_hiding"
+    && left.frame === "identity_inhibition"
+    && right.frame === "identity_inhibition";
 
   if (commonSegmentLength >= 9) {
     reasons.push(`连续核心短语重复（${commonSegmentLength}字）`);
+  } else if (isSameFamilyHidingTheme) {
+    reasons.push("家庭投入后隐瞒求职困境的母题相同");
   } else if (coreMatches.length === 3 && (left.frame === right.frame || left.promise === right.promise || bigramScore >= 0.22)) {
     reasons.push("受众、场景和冲突相同");
   } else if (matched.length >= 4 && bigramScore >= 0.18) {
