@@ -226,6 +226,16 @@ ${specJsonLines}
 `.trim();
 }
 
+const NATIVE_METHOD_DIVERSITY_PLAYBOOK: Partial<Record<TitleMethodId, string>> = {
+  human_pain: "五个候选必须轮换真实触发时刻，例如工资到账、续签合同、绩效面谈、老板消息、客户流失、家庭开支、晋升通知、投递沉默；不能五条都只是“焦虑/没回音”的换词。",
+  tug_of_war: "五个候选必须使用五组不同的真实取舍变量，例如地区、岗位、收入、时间、家庭、身份、工作方式、验证顺序；“A还是B”只是句式，真正的新题取决于两边选择和代价都不同。",
+  scarce_material: "五个候选必须使用五种不同的资料载体与决策任务。可选载体包括：招聘节点日历、岗位JD拆解卡、面试追问库、投递漏斗复盘页、项目证据账本、Offer比较尺、岗位排除题库、行业适配坐标、内推跟进看板、家庭约束单、能力证据索引、风险红旗卡。不要连续输出“某某表/清单/路线图”，也不能只替换资料名称；正文承诺必须说明这份资料具体帮助读者判断什么。",
+  superlative: "五个候选必须轮换不同的高代价风险对象，例如合同、现金流、岗位错配、面试证据、家庭约束、行业周期、试错窗口；不能都写“最危险/最容易漏的一步”的空壳。",
+  contrarian: "五个候选必须轮换五组不同的“表面优势→隐藏代价”，例如名校、平台、职位、收入、人脉、实习、投递量、内推；不能只把“越高越难”套在不同名词上。",
+  nostalgia: "五个候选必须轮换过去与现在的物件和场景，例如录取信与面试通知、工牌与外部报价、旧简历与岗位JD、排名与项目追问、升职邮件与合同条款；不能重复同一组今昔对照。",
+  inventory: "五个候选必须盘点五类不同对象或阶段，例如日期窗口、岗位红旗、简历证据、面试追问、投递漏斗、Offer条款、家庭约束、现金流、客户资源、可迁移能力；数字和“几个坑”不是新题，盘点对象与使用场景必须不同。",
+};
+
 export function buildTopicPoolUserPrompt(input: {
   week: number;
   targetUser: string;
@@ -288,8 +298,10 @@ export function buildTopicPoolUserPrompt(input: {
     const recentFrames = Array.from(new Set(diversity.map((item) => item.sentence_frame).filter(Boolean)));
     const recentMothers = Array.from(new Set(diversity.map((item) => item.mother_topic_key).filter(Boolean)));
     const recentMaterials = Array.from(new Set(diversity.map((item) => item.material_signature).filter(Boolean)));
+    const diversityPlaybook = NATIVE_METHOD_DIVERSITY_PLAYBOOK[method.id];
     return [
       `${method.order}. method_id=${method.id}；方法=${method.label}；要求=${method.instruction}`,
+      diversityPlaybook ? `【该方法动态供题要求】${diversityPlaybook}` : "",
       card
         ? `已锁定结构卡=${JSON.stringify({
           id: card.id,

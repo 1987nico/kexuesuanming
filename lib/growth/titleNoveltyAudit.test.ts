@@ -97,6 +97,9 @@ describe("原生标题批次语义新颖度审核", () => {
     expect(prompt).toContain("自然、完整的简体中文");
     expect(prompt).toContain("\"natural\": true");
     expect(prompt).toContain("我替孩子找内推，不如先对岗位");
+    expect(prompt).toContain("必须区分“方法固有形式”和“真实母题”");
+    expect(prompt).toContain("岗位匹配清单");
+    expect(prompt).toContain("投递优先级清单");
   });
 
   it("语义新颖但被判为残句的标题不能放行", () => {

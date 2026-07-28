@@ -88,6 +88,22 @@ describe("来源型标题生成合同", () => {
     expect(prompt).not.toContain('"alternative_titles"');
   });
 
+  it("送稀缺资料必须轮换资料载体和决策任务，不能反复生成表格清单", () => {
+    const prompt = buildTopicPoolUserPrompt({
+      week: 1,
+      targetUser: "准备回国求职的留学生",
+      coreProblem: "岗位方向和投递优先级不清晰",
+      persona: "merchant",
+      methods: [TITLE_METHOD_BY_ID.scarce_material],
+      generationMode: "default",
+    });
+
+    expect(prompt).toContain("五种不同的资料载体与决策任务");
+    expect(prompt).toContain("岗位JD拆解卡");
+    expect(prompt).toContain("投递漏斗复盘页");
+    expect(prompt).toContain("不要连续输出“某某表/清单/路线图”");
+  });
+
   it("标题提示词只带最新160条历史，不会误把最旧标题当作近期禁区", () => {
     const newestFirstHistory = Array.from({ length: 161 }, (_, index) => (
       `最新历史标题${String(index + 1).padStart(3, "0")}`

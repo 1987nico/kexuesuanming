@@ -25,6 +25,8 @@ export interface NativeTitleNoveltyCandidate {
   id: string;
   methodId: TitleMethodId;
   title: string;
+  /** 标题自己的正文唯一承诺，用于区分“同为清单但解决不同决策任务”。 */
+  titlePromise?: string;
   /** model 为本轮模型候选；fallback 为同样必须通过审核的安全候选。 */
   kind: "model" | "fallback";
 }
@@ -184,6 +186,7 @@ export function buildNativeTitleNoveltyAuditPrompt(input: NativeTitleNoveltyAudi
       method_id: candidate.methodId,
       candidate_kind: candidate.kind,
       title: compact(candidate.title, 48),
+      title_promise: compact(candidate.titlePromise, 100),
     }));
   const references = uniqueById(input.references, TITLE_NOVELTY_AUDIT_MAX_REFERENCES)
     .map((reference) => ({
@@ -208,10 +211,16 @@ export function buildNativeTitleNoveltyAuditPrompt(input: NativeTitleNoveltyAudi
    - 例： “催娃定方向，还是等他自己想明白？” 与 “总催娃投简历，不如先捋秋招方向” 是同一件事，必须拒绝。
    - 例： “当年收录取信多开心，现在等面试多揪心” 与另一条“过去拿录取、现在等面试”的今昔对照也是同一件事，必须拒绝。
 2. 不要因为都属于“秋招、离职、转型”等大类就一律拒绝。人物、具体场景、冲突和承诺都明显不同，才算新题。
-3. 同一批候选彼此如果只是换词，也标出 conflicting_candidate_ids；它们可以各自 novel=true，但系统只会从冲突组里选一个。
-4. 不要按字面重合率判断；请按普通读者看到的“这是不是同一个选题”判断。
-5. 同时判断标题是否为自然、完整的简体中文：不能是半句话、病句、缺少必要宾语/补语、机械缩写或读起来别扭的拼接。例：“我替孩子找内推，不如先对岗位”不完整，应 natural=false；“我替孩子找内推，不如先看岗位匹配”才是完整表达。
-6. 不确定时宁可 novel=false、natural=false。不要重写或美化标题，只做审核。
+3. 必须区分“方法固有形式”和“真实母题”：
+   - scarce_material 本来就会出现资料、表、卡、清单。不能仅因两条都是资料就判重复；要比较它们帮助读者完成的决策任务。比如“岗位匹配清单”和“投递优先级清单”解决的不是同一件事，可以 novel=true；两条都在判断岗位匹配才是重复。
+   - inventory 本来就会出现数字或盘点。数字不同不算新题，但盘点对象从“秋招日期”换成“面试追问”属于新题。
+   - tug_of_war 本来就是两边取舍；选择两端与实际代价都不同才是新题。
+   - nostalgia 本来就是今昔对照；过去和现在使用的具体物件、场景与结论都不同才是新题。
+   - human_pain、contrarian、superlative 也不能只因句式相同就拒绝，要比较具体触发时刻、冲突对象与承诺。
+4. 同一批候选彼此如果只是换词，也标出 conflicting_candidate_ids；它们可以各自 novel=true，但系统只会从冲突组里选一个。
+5. 不要按字面重合率判断；请按普通读者看到的“这是不是同一个选题”判断。
+6. 同时判断标题是否为自然、完整的简体中文：不能是半句话、病句、缺少必要宾语/补语、机械缩写或读起来别扭的拼接。例：“我替孩子找内推，不如先对岗位”不完整，应 natural=false；“我替孩子找内推，不如先看岗位匹配”才是完整表达。
+7. 不确定时宁可 novel=false、natural=false。不要重写或美化标题，只做审核。
 
 历史/已选参考：
 ${JSON.stringify(references)}
