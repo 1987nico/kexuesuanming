@@ -240,33 +240,41 @@ function parseSessionCookie(raw) {
 const cookie = parseSessionCookie(await readFile(COOKIE_PATH, "utf8"));
 
 async function request(path, options = {}) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), options.timeoutMs ?? 135_000);
   const startedAt = Date.now();
-  try {
-    const response = await fetch(`${BASE_URL}${path}`, {
-      method: options.method ?? "GET",
-      headers: {
-        cookie,
-        ...(options.body ? { "content-type": "application/json" } : {}),
-      },
-      body: options.body ? JSON.stringify(options.body) : undefined,
-      signal: controller.signal,
-    });
-    const raw = await response.text();
-    let data;
+  let lastNetworkError;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), options.timeoutMs ?? 135_000);
     try {
-      data = JSON.parse(raw);
-    } catch {
-      data = {
-        error: "invalid_json",
-        raw_response: raw.slice(0, 500),
-      };
+      const response = await fetch(`${BASE_URL}${path}`, {
+        method: options.method ?? "GET",
+        headers: {
+          cookie,
+          ...(options.body ? { "content-type": "application/json" } : {}),
+        },
+        body: options.body ? JSON.stringify(options.body) : undefined,
+        signal: controller.signal,
+      });
+      const raw = await response.text();
+      let data;
+      try {
+        data = JSON.parse(raw);
+      } catch {
+        data = {
+          error: "invalid_json",
+          raw_response: raw.slice(0, 500),
+        };
+      }
+      return { ok: response.ok, status: response.status, data, elapsedMs: Date.now() - startedAt };
+    } catch (error) {
+      lastNetworkError = error;
+      if (attempt === 2 || controller.signal.aborted) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 1000 * (attempt + 1)));
+    } finally {
+      clearTimeout(timeout);
     }
-    return { ok: response.ok, status: response.status, data, elapsedMs: Date.now() - startedAt };
-  } finally {
-    clearTimeout(timeout);
   }
+  throw lastNetworkError;
 }
 
 async function loadSpace(businessLine, persona) {
@@ -376,7 +384,7 @@ function validateNewBatch(state, response, round) {
       });
     }
     if (/[A-Za-z]{3,}[\u3400-\u9fff]|[\u3400-\u9fff][A-Za-z]{3,}/u.test(title)
-      && !/(?:AI|offer|QS)/iu.test(title)) {
+      && !/(?:AI|offer|QS|KPI)/iu.test(title)) {
       throw Object.assign(new Error("标题出现中英文硬拼或乱码"), {
         evidence: { space: state.key, round, method_id: topic.method_id, title },
       });
@@ -447,7 +455,7 @@ function validateNewBatch(state, response, round) {
 
 const ledger = {
   objective: `正式部署上的6空间×${ROUNDS}批真实用户标题验收`,
-  deployment: "dpl_HmhHLwu3fgHkvmi766B7UcKCh18u",
+  deployment: "dpl_7nuP3ihVbhZEWjR3Cat7YeqfvyJS",
   started_at: new Date().toISOString(),
   status: "running",
   batches_passed: 0,

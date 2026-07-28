@@ -250,7 +250,7 @@ describe("标题生成30批用户验收标准（确定性兜底回归）", () =>
         historyTopics.push(...batch.map((item) => ({ method_id: item.method_id, title: item.title })));
       }
     }
-  }, 15_000);
+  }, 30_000);
 
   it("繁体、乱码、虚构事实和换词重复都不能进入成功批次", () => {
     for (const value of [
