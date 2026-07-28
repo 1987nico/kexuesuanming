@@ -5,13 +5,14 @@ import type {
   GrowthPersona,
   TitleMethodId,
 } from "./types";
+import { titlesAreSemanticDuplicates } from "./titleQuality";
 
 /**
  * 标题的规则去重能识别已知模式，却无法可靠识别“同一件事换了整句话”的情况。
  * 这个审查器只做一件事：在一整批原生标题写入前，比较它们与历史标题及批内候选
  * 的实际语义。它不生成标题、不改标题、不参与来源型标题的迁移审核。
  */
-export const TITLE_NOVELTY_AUDIT_VERSION = "v1" as const;
+export const TITLE_NOVELTY_AUDIT_VERSION = "v2" as const;
 
 /**
  * 语义终审必须比标题生成更轻：它只是挑出已通过本地硬门禁的少量候选，
@@ -96,6 +97,8 @@ export function normalizeNativeTitleNoveltyDecisions(
     : [];
   const candidateIds = new Set(candidates.map((candidate) => candidate.id));
   const referenceIds = new Set(references.map((reference) => reference.id));
+  const candidatesById = new Map(candidates.map((candidate) => [candidate.id, candidate]));
+  const referencesById = new Map(references.map((reference) => [reference.id, reference]));
   const rowsByCandidate = new Map<string, Record<string, unknown>>();
 
   for (const value of rawRows) {
@@ -119,20 +122,46 @@ export function normalizeNativeTitleNoveltyDecisions(
         reason: "语义新颖度审核没有返回该候选，未放行。",
       };
     }
-    const duplicateReferenceIds = Array.isArray(row.duplicate_reference_ids)
+    const reportedDuplicateReferenceIds = Array.isArray(row.duplicate_reference_ids)
       ? row.duplicate_reference_ids.map((value) => compact(value, 80)).filter((id) => referenceIds.has(id))
       : [];
-    const conflictingCandidateIds = Array.isArray(row.conflicting_candidate_ids)
+    const reportedConflictingCandidateIds = Array.isArray(row.conflicting_candidate_ids)
       ? row.conflicting_candidate_ids
         .map((value) => compact(value, 80))
         .filter((id) => id !== candidate.id && candidateIds.has(id))
       : [];
+    /**
+     * 语义模型负责发现本地规则可能漏掉的同义改写，但不能只凭“都是盘点/清单”
+     * 这种方法固有形式一票否决。只有模型给出的重复对象也能被确定性语义比较器
+     * 复核，才把它作为硬拒绝证据。候选在进入这里前已经通过全历史、本批与
+     * 业务视角门禁，因此“novel=false 但没有可验证对象”只能算软提示。
+     */
+    const duplicateReferenceIds = reportedDuplicateReferenceIds.filter((referenceId) => {
+      const reference = referencesById.get(referenceId);
+      return Boolean(reference && titlesAreSemanticDuplicates(candidate.title, reference.title));
+    });
+    const conflictingCandidateIds = reportedConflictingCandidateIds.filter((candidateId) => {
+      const conflictingCandidate = candidatesById.get(candidateId);
+      return Boolean(conflictingCandidate && titlesAreSemanticDuplicates(
+        candidate.title,
+        conflictingCandidate.title,
+      ));
+    });
     // natural 缺失、格式错误或明确为 false 都不能放行。否则模型漏掉字段时，
     // “半句话/病句”会被误当成可交付标题，破坏生成即交付的保证。
     const natural = row.natural === true;
-    // 若模型一边标记 novel、一边又指出历史重复，优先按新颖度不通过处理；
-    // 自然度单独保留，方便恢复轮和内部诊断知道为何未采用。
-    const novel = row.novel === true && duplicateReferenceIds.length === 0;
+    // 资料法与盘点法的固有形式最容易触发“都是清单/都是数字”的泛化误拒。
+    // 这两种方法必须有可复核的具体同题证据才拒绝；其余方法仍保留模型的
+    // 语义否决能力，避免放过本地规则尚未覆盖的同义改写。
+    const hasSupportedDuplicateEvidence = duplicateReferenceIds.length > 0
+      || conflictingCandidateIds.length > 0;
+    const requiresConcreteDuplicateEvidence = candidate.methodId === "scarce_material"
+      || candidate.methodId === "inventory";
+    const modelRejectedWithoutEvidence = row.novel === false && !hasSupportedDuplicateEvidence;
+    const novel = !hasSupportedDuplicateEvidence && (
+      row.novel === true
+      || (requiresConcreteDuplicateEvidence && modelRejectedWithoutEvidence)
+    );
     const eligible = novel && natural;
     return {
       candidateId: candidate.id,
@@ -141,7 +170,12 @@ export function normalizeNativeTitleNoveltyDecisions(
       eligible,
       duplicateReferenceIds,
       conflictingCandidateIds,
-      reason: compact(row.reason, 80) || (natural ? (novel ? "与当前历史标题语义不同。" : "与历史或本批候选语义过近。") : "标题不是自然完整的中文。"),
+      reason: requiresConcreteDuplicateEvidence && modelRejectedWithoutEvidence
+        ? "模型拒绝缺少可复核的重复对象，已按本地严格门禁放行。"
+        : compact(row.reason, 80)
+          || (natural
+            ? (novel ? "与当前历史标题语义不同。" : "与历史或本批候选语义过近。")
+            : "标题不是自然完整的中文。"),
     };
   });
 }
@@ -220,7 +254,10 @@ export function buildNativeTitleNoveltyAuditPrompt(input: NativeTitleNoveltyAudi
 4. 同一批候选彼此如果只是换词，也标出 conflicting_candidate_ids；它们可以各自 novel=true，但系统只会从冲突组里选一个。
 5. 不要按字面重合率判断；请按普通读者看到的“这是不是同一个选题”判断。
 6. 同时判断标题是否为自然、完整的简体中文：不能是半句话、病句、缺少必要宾语/补语、机械缩写或读起来别扭的拼接。例：“我替孩子找内推，不如先对岗位”不完整，应 natural=false；“我替孩子找内推，不如先看岗位匹配”才是完整表达。
-7. 不确定时宁可 novel=false、natural=false。不要重写或美化标题，只做审核。
+7. novel=false 必须同时给出至少一个真正同题的 duplicate_reference_ids，或真正同题的
+   conflicting_candidate_ids；不能只因同属一种方法、同用数字/清单/盘点句式就拒绝。
+   如果没有可指出的重复对象，应 novel=true。自然度不确定时可以 natural=false。
+8. 不要重写或美化标题，只做审核。
 
 历史/已选参考：
 ${JSON.stringify(references)}

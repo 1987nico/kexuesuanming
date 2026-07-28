@@ -18,7 +18,7 @@ const references: NativeTitleNoveltyReference[] = [
 ];
 
 describe("原生标题批次语义新颖度审核", () => {
-  it("把同义改写的历史标题标成不通过，并保留批内冲突信息", () => {
+  it("把同义改写的历史标题标成不通过，并过滤没有本地证据的批内冲突", () => {
     const decisions = normalizeNativeTitleNoveltyDecisions({
       decisions: [
         {
@@ -46,7 +46,7 @@ describe("原生标题批次语义新颖度审核", () => {
       natural: true,
       eligible: false,
       duplicateReferenceIds: ["H1"],
-      conflictingCandidateIds: ["C2"],
+      conflictingCandidateIds: [],
     });
     expect(decisions[1]).toMatchObject({ candidateId: "C2", novel: true, natural: true, eligible: true });
   });
@@ -57,6 +57,90 @@ describe("原生标题批次语义新颖度审核", () => {
     }, candidates, references);
     expect(decisions[0].novel).toBe(false);
     expect(decisions[1]).toMatchObject({ novel: false, natural: false, eligible: false });
+  });
+
+  it("模型只因方法形式泛化拒绝、却没有重复证据时，按本地严格门禁放行", () => {
+    const inventoryCandidates: NativeTitleNoveltyCandidate[] = [
+      {
+        id: "I1",
+        methodId: "inventory",
+        kind: "model",
+        title: "秋招陪跑，盘点4个投递盲区",
+        titlePromise: "盘点投递动作里容易忽略的四个盲区",
+      },
+    ];
+    const inventoryReferences: NativeTitleNoveltyReference[] = [
+      { id: "IH1", kind: "history", title: "留学生求职，盘点5项简历硬证据" },
+    ];
+    const decisions = normalizeNativeTitleNoveltyDecisions({
+      decisions: [{
+        candidate_id: "I1",
+        novel: false,
+        natural: true,
+        duplicate_reference_ids: [],
+        conflicting_candidate_ids: [],
+        reason: "都是盘点句式",
+      }],
+    }, inventoryCandidates, inventoryReferences);
+
+    expect(decisions[0]).toMatchObject({
+      novel: true,
+      natural: true,
+      eligible: true,
+      duplicateReferenceIds: [],
+    });
+    expect(decisions[0]?.reason).toContain("缺少可复核");
+  });
+
+  it("模型引用了并不同题的历史标题时，不把无效引用当成硬拒绝", () => {
+    const inventoryCandidates: NativeTitleNoveltyCandidate[] = [
+      { id: "I1", methodId: "inventory", kind: "model", title: "秋招陪跑，盘点4个投递盲区" },
+    ];
+    const inventoryReferences: NativeTitleNoveltyReference[] = [
+      { id: "IH1", kind: "history", title: "留学生求职，盘点5项简历硬证据" },
+    ];
+    const decisions = normalizeNativeTitleNoveltyDecisions({
+      decisions: [{
+        candidate_id: "I1",
+        novel: false,
+        natural: true,
+        duplicate_reference_ids: ["IH1"],
+        conflicting_candidate_ids: [],
+        reason: "都是盘点",
+      }],
+    }, inventoryCandidates, inventoryReferences);
+
+    expect(decisions[0]).toMatchObject({
+      novel: true,
+      eligible: true,
+      duplicateReferenceIds: [],
+    });
+  });
+
+  it("模型指出且本地复核确认的历史同题仍然必须拒绝", () => {
+    const duplicateCandidates: NativeTitleNoveltyCandidate[] = [
+      { id: "D1", methodId: "inventory", kind: "model", title: "秋招陪跑常见的4个低效动作" },
+    ];
+    const duplicateReferences: NativeTitleNoveltyReference[] = [
+      { id: "DH1", kind: "history", title: "秋招陪跑常见的3个低效动作" },
+    ];
+    const decisions = normalizeNativeTitleNoveltyDecisions({
+      decisions: [{
+        candidate_id: "D1",
+        novel: false,
+        natural: true,
+        duplicate_reference_ids: ["DH1"],
+        conflicting_candidate_ids: [],
+        reason: "同一低效动作盘点",
+      }],
+    }, duplicateCandidates, duplicateReferences);
+
+    expect(decisions[0]).toMatchObject({
+      novel: false,
+      natural: true,
+      eligible: false,
+      duplicateReferenceIds: ["DH1"],
+    });
   });
 
   it("把审核漏项单独识别为不完整，而不是伪装成标题重复", () => {
@@ -100,6 +184,7 @@ describe("原生标题批次语义新颖度审核", () => {
     expect(prompt).toContain("必须区分“方法固有形式”和“真实母题”");
     expect(prompt).toContain("岗位匹配清单");
     expect(prompt).toContain("投递优先级清单");
+    expect(prompt).toContain("novel=false 必须同时给出至少一个真正同题");
   });
 
   it("语义新颖但被判为残句的标题不能放行", () => {
