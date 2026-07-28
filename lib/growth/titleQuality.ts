@@ -93,6 +93,8 @@ const UNNATURAL_JARGON_PATTERNS: RegExp[] = [
   /邪修/gu,
   /(?:一|二|三|四|五|六|七|八|九|十|\d+)步漏斗/gu,
   /饭局判胜算/gu,
+  // “投了没信”是模型常见的机械压缩，不是自然的中文标题表达。
+  /投(?:了|完)?没信/gu,
   /(?:玄学|黑话|邪门)[^，。！？?；;]{0,8}(?:漏斗|胜算|定价)/gu,
 ];
 
@@ -268,6 +270,29 @@ function diceCoefficient(left: Set<string>, right: Set<string>) {
 }
 
 /**
+ * 计算两个短标题的最长连续共同片段。换一批标题时，若主句只替换后半段，
+ * 即使分类器没能抽到足够语义标签，也必须作为同一方向拦下。
+ */
+function longestCommonContiguousSegmentLength(left: string, right: string) {
+  const a = Array.from(normalizeTitleForComparison(left));
+  const b = Array.from(normalizeTitleForComparison(right));
+  if (!a.length || !b.length) return 0;
+  let longest = 0;
+  let previous = new Array<number>(b.length + 1).fill(0);
+  for (let index = 1; index <= a.length; index += 1) {
+    const current = new Array<number>(b.length + 1).fill(0);
+    for (let otherIndex = 1; otherIndex <= b.length; otherIndex += 1) {
+      if (a[index - 1] === b[otherIndex - 1]) {
+        current[otherIndex] = previous[otherIndex - 1] + 1;
+        longest = Math.max(longest, current[otherIndex]);
+      }
+    }
+    previous = current;
+  }
+  return longest;
+}
+
+/**
  * 判定“换一批”是否只是换了少量措辞。
  * 同时命中受众、场景、冲突时，即使词面相差较大，也属于同一标题方向。
  */
@@ -291,12 +316,15 @@ export function evaluateTitleSemanticDuplicate(leftTitle: string, rightTitle: st
     left[field] !== "open" && left[field] === right[field]
   ));
   const bigramScore = diceCoefficient(bigrams(leftTitle), bigrams(rightTitle));
+  const commonSegmentLength = longestCommonContiguousSegmentLength(leftTitle, rightTitle);
   const coreMatches = ["audience", "scenario", "conflict"].filter((field) => (
     left[field as keyof TitleSemanticSignature] !== "open"
     && left[field as keyof TitleSemanticSignature] === right[field as keyof TitleSemanticSignature]
   ));
 
-  if (coreMatches.length === 3 && (left.frame === right.frame || left.promise === right.promise || bigramScore >= 0.22)) {
+  if (commonSegmentLength >= 9) {
+    reasons.push(`连续核心短语重复（${commonSegmentLength}字）`);
+  } else if (coreMatches.length === 3 && (left.frame === right.frame || left.promise === right.promise || bigramScore >= 0.22)) {
     reasons.push("受众、场景和冲突相同");
   } else if (matched.length >= 4 && bigramScore >= 0.18) {
     reasons.push("标题结构和核心语义高度重合");

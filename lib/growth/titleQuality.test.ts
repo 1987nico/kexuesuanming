@@ -26,6 +26,7 @@ describe("标题质量门禁", () => {
     expect(hasGarbledLatinCjkMix("38岁gangga离开小公司，尴尬")).toBe(true);
     expect(evaluateGrowthTitleQuality("38岁gangga离开小公司，尴尬").reasons).toContain("garbled_latin_cjk");
     expect(evaluateGrowthTitleQuality("离体制邪修六步漏斗，饭局判胜算").reasons).toContain("unnatural_jargon");
+    expect(evaluateGrowthTitleQuality("花百万留学，不敢跟爸妈说投了没信").reasons).toContain("unnatural_jargon");
     expect(evaluateGrowthTitleQuality("AI筛简历后，先查岗位").acceptable).toBe(true);
   });
 
@@ -63,6 +64,15 @@ describe("标题语义去重", () => {
       "攥着期权的总监，不敢提转行",
       "攥着工牌的总监，不敢换赛道",
     )).toBe(true);
+  });
+
+  it("把只替换后半句的长核心短语判为重复", () => {
+    const result = evaluateTitleSemanticDuplicate(
+      "花百万留学，不敢跟爸妈说秋招没方向",
+      "花百万留学，不敢跟爸妈说投了没信",
+    );
+    expect(result.duplicate).toBe(true);
+    expect(result.reasons.some((reason) => reason.includes("连续核心短语重复"))).toBe(true);
   });
 
   it("允许同一业务下材料和冲突都不同的标题", () => {
