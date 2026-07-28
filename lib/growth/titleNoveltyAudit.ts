@@ -254,9 +254,11 @@ export async function auditNativeTitleBatchNovelty(
   const requestAudit = async (items: NativeTitleNoveltyCandidate[]) => llmJSON<unknown>({
       system: `${GROWTH_SYSTEM_PROMPT}\n\n你只负责标题语义新颖度审核，不生成任何标题。`,
       user: buildNativeTitleNoveltyAuditPrompt({ ...input, candidates: items, references }),
-      // 这只是极短的逐条判定。首轮每槽位只审一题，二审才补替代题；较小
-      // 负载降低漏项率，同时两轮均有明确上限，不会再叠成无休止重试链。
-      maxTokens: Math.max(320, Math.min(600, items.length * 70)),
+      // 每条 decision 都带候选、历史和批内冲突编号。12 条候选的合法 JSON
+      // 本身就会超过 600 token；旧上限会把结尾截断成半个 JSON，继而把一次
+      // 正常生成误判为“审核未完成”。按候选数留足结构化输出预算，而不是
+      // 靠额外审核请求修复被截断的回答。
+      maxTokens: Math.max(480, Math.min(1_600, 80 + items.length * 125)),
       temperature: 0,
       timeoutMs: 10_000,
       jsonRetries: 0,
