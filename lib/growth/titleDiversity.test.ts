@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  attemptedTitleExactProblems,
   buildGrowthTitleFingerprint,
   buildTopicDiversitySignature,
   classifyTitleSentenceFrame,
@@ -34,6 +35,18 @@ const topic = (
 });
 
 describe("标题四层多样性签名", () => {
+  it("失败草稿只禁止原样重放，不封杀同一方向的修正版", () => {
+    const failedDraft = "以前陪娃办学生签，现在核工签资格";
+    expect(attemptedTitleExactProblems(
+      topic("nostalgia", failedDraft, "讲清留学身份变化"),
+      [failedDraft],
+    )).not.toHaveLength(0);
+    expect(attemptedTitleExactProblems(
+      topic("nostalgia", "以前陪娃办学生签，现在陪娃核工签", "讲清家长陪伴场景的变化"),
+      [failedDraft],
+    )).toHaveLength(0);
+  });
+
   it("识别常见句式，而不是只看标题文字", () => {
     expect(classifyTitleSentenceFrame("以前管20人，现在投简历没人理")).toBe("past_present");
     expect(classifyTitleSentenceFrame("回大厂拿年薪，还是低风险创业？")).toBe("direct_choice");

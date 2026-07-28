@@ -1225,6 +1225,24 @@ function topicCandidateDuplicateProblems(
   return problems;
 }
 
+/**
+ * 失败草稿不参与语义去重，但也不能被模型原样再次交付。
+ *
+ * `attemptedTitles` 同时包含正式历史和失败候选；这里只检查标题指纹是否相同，
+ * 不做近义或母题判断。语义历史仍由 topicCandidateDuplicateProblems 单独处理。
+ */
+export function attemptedTitleExactProblems(
+  topic: Pick<TopicCandidate, "method_id" | "title">,
+  attemptedTitles: string[],
+) {
+  const duplicate = attemptedTitles.find((item) =>
+    titlesHaveSameHistoryFingerprint(topic.title, item)
+  );
+  return duplicate
+    ? [`${topic.method_id}:与此前尝试标题“${duplicate}”实质相同`]
+    : [];
+}
+
 export function topicBatchDuplicateProblems(
   topics: TopicCandidate[],
   historyTitles: string[],
@@ -1646,8 +1664,11 @@ export async function generateTopicBatch(input: {
   }
   const historyTitles = Array.from(new Set([
     ...(input.historyTitles ?? []),
-    ...(input.excludeTitles ?? []),
     ...(input.currentTitles ?? []),
+  ].filter(Boolean)));
+  const attemptedTitles = Array.from(new Set([
+    ...(input.excludeTitles ?? []),
+    ...historyTitles,
   ].filter(Boolean)));
   const historyTopics = input.historyTopics ?? [];
   const rejectedTitles: string[] = [];
@@ -1733,7 +1754,7 @@ export async function generateTopicBatch(input: {
             methods: chunk, generationMode,
             sources: chunk.map((method) => sources.get(method.id)).filter(Boolean) as TopicSourceSnapshot[],
             structureCards: chunk.map((method) => structureCards.get(method.id)).filter(Boolean) as BenchmarkStructureCard[],
-            excludeTitles: historyTitles,
+            excludeTitles: attemptedTitles,
             priorityExcludeTitles: [
               ...[...accepted.values()].map((topic) => topic.title),
               ...rejectedTitles.slice().reverse(),
@@ -1855,16 +1876,19 @@ export async function generateTopicBatch(input: {
             const qualityProblems = titleQualityProblems(topic, input.account);
             const duplicateProblems = qualityProblems.length
               ? []
-              : topicCandidateDuplicateProblems(
-              topic,
-              historyTitles,
-              historyTopics,
-              [...accepted.values()],
-              {
-                preserveDirection: Boolean(directionLock),
-                businessLine: input.account.business_line ?? "executive",
-              },
-            );
+              : [
+                ...attemptedTitleExactProblems(topic, attemptedTitles),
+                ...topicCandidateDuplicateProblems(
+                  topic,
+                  historyTitles,
+                  historyTopics,
+                  [...accepted.values()],
+                  {
+                    preserveDirection: Boolean(directionLock),
+                    businessLine: input.account.business_line ?? "executive",
+                  },
+                ),
+              ];
             const migrationProblems = qualityProblems.length || duplicateProblems.length
               ? []
               : sourceMigrationProblems([topic], sources, structureCards);
@@ -2040,6 +2064,7 @@ export async function generateTopicBatch(input: {
       topic.hook = topic.title;
       const problems = [
         ...titleQualityProblems(topic, input.account),
+        ...attemptedTitleExactProblems(topic, attemptedTitles),
         ...topicCandidateDuplicateProblems(
           topic,
           historyTitles,
@@ -2095,7 +2120,7 @@ export async function generateTopicBatch(input: {
           generationMode,
           sources: [],
           structureCards: [],
-          excludeTitles: historyTitles,
+          excludeTitles: attemptedTitles,
           priorityExcludeTitles: [
             ...[...accepted.values()].map((topic) => topic.title),
             ...rejectedTitles.slice().reverse(),
@@ -2171,6 +2196,7 @@ export async function generateTopicBatch(input: {
           }
           const problems = [
             ...titleQualityProblems(topic, input.account),
+            ...attemptedTitleExactProblems(topic, attemptedTitles),
             ...(rejectedTitles.some((rejectedTitle) => (
               normalizeTitleForComparison(rejectedTitle) === normalizeTitleForComparison(topic.title)
             )) ? [`${method.id}:定向补题原样重复本轮失败候选`] : []),
@@ -2606,7 +2632,7 @@ export async function generateTopicBatch(input: {
               generationMode,
               sources: [],
               structureCards: [],
-              excludeTitles: historyTitles,
+              excludeTitles: attemptedTitles,
               priorityExcludeTitles: [
                 ...[...accepted.values()].map((topic) => topic.title),
                 ...rejectedTitles.slice().reverse(),
@@ -2672,6 +2698,7 @@ export async function generateTopicBatch(input: {
               topic.validation_checks = validateTopicCandidate(topic, input.account.persona);
               const problems = [
                 ...titleQualityProblems(topic, input.account),
+                ...attemptedTitleExactProblems(topic, attemptedTitles),
                 ...(rejectedTitles.some((rejectedTitle) => (
                   normalizeTitleForComparison(rejectedTitle) === normalizeTitleForComparison(topic.title)
                 )) ? [`${method.id}:定向补题原样重复本轮失败候选`] : []),

@@ -539,13 +539,19 @@ export async function POST(req: Request) {
   }
   const learningBrief = buildLearningBrief({ account, notes, reviews, weekly: weeklyReview });
   const currentTitles = latestRun?.topic_pool.map((topic) => topic.title) ?? [];
-  // 当前账号就是“业务×视角”隔离空间；读取全部批次、编辑历史和正文标题，永不只截最近120条。
-  const historyTitles = Array.from(new Set([
-    ...runsNewestFirst.flatMap((item) => [
-    ...(item.seen_titles ?? []),
-    ...item.topic_pool.map((topic) => topic.title),
-    ]),
+  // 标题历史分成两层：
+  // 1. 已经真正交付到页面或进入正文的标题，继续执行严格语义去重；
+  // 2. 失败批次里被门禁拒绝的草稿，只禁止原样再次出现，并用于提示模型换角度。
+  //
+  // 旧实现把 seen_titles 全部并入正式历史。失败草稿因此会在下一次请求中
+  // 拥有和已交付标题相同的语义否决权，连补齐身份后的正确版本也会被挡住。
+  const deliveredHistoryTitles = Array.from(new Set([
+    ...runsNewestFirst.flatMap((item) => item.topic_pool.map((topic) => topic.title)),
     ...notesNewestFirst.map((draft) => draft.title),
+  ].filter(Boolean)));
+  const attemptedHistoryTitles = Array.from(new Set([
+    ...runsNewestFirst.flatMap((item) => item.seen_titles ?? []),
+    ...deliveredHistoryTitles,
   ].filter(Boolean)));
   // 单槽换题和换母题会把未变化的槽位复制到新 run。这里按“方法×标题指纹”
   // 去重，避免同一个旧标题被误算成近5批里重复使用了很多次。
@@ -594,8 +600,8 @@ export async function POST(req: Request) {
     account: account!,
     week: parsed.data.week ?? latestRun?.week ?? 1,
     generationMode,
-    excludeTitles: historyTitles,
-    historyTitles,
+    excludeTitles: attemptedHistoryTitles,
+    historyTitles: deliveredHistoryTitles,
     historyTopics,
     currentTitles,
     learningBrief,
