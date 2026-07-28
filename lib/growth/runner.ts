@@ -406,6 +406,7 @@ const NATIVE_EMERGENCY_TITLE_VARIANTS: Record<
       "回国求职前，先看这5项",
       "网申前，先补这5个信息",
       "毕业季，先排这5个优先级",
+      "面试前，整理这5段项目经历",
     ],
   },
 };
@@ -560,7 +561,7 @@ const EXECUTIVE_MOTHER_TOPICS: Array<[string, RegExp]> = [
 ];
 
 const OVERSEAS_MOTHER_TOPICS: Array<[string, RegExp]> = [
-  ["parent_child_conflict", /家长|妈妈|爸爸|孩子|陪跑|帮倒忙|添乱|闹僵/],
+  ["parent_child_conflict", /家长|妈妈|爸爸|爸妈|父母|家里|孩子|陪跑|帮倒忙|添乱|闹僵/],
   ["stay_or_return", /留英|留海外|留伦敦|回国|回沪|国内|工签|两个时区/],
   ["mass_application", /海投|投了|投递|没回音|零回应|回复/],
   ["recruiting_timeline", /秋招|提前批|截止|时间表|节奏|节点|窗口/],

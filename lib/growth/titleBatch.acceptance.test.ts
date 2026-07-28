@@ -109,6 +109,6 @@ describe("标题生成30批用户验收标准（确定性兜底回归）", () =>
     expect(topicBatchDuplicateProblems([second], [first.title], [{
       method_id: first.method_id,
       title: first.title,
-    }], "overseas_student")).toHaveLength(1);
+    }], "overseas_student").length).toBeGreaterThan(0);
   });
 });

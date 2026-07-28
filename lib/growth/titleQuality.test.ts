@@ -81,9 +81,9 @@ describe("标题语义去重", () => {
       "花爸妈钱留学，秋招不敢说没方向",
     );
     expect(result.duplicate).toBe(true);
-    expect(result.reasons).toContain("家庭投入后隐瞒求职困境的母题相同");
-    expect(result.left.conflict).toBe("family_funded_job_search_hiding");
-    expect(result.right.conflict).toBe("family_funded_job_search_hiding");
+    expect(result.reasons).toContain("父母压力下的求职困境母题相同");
+    expect(result.left.conflict).toBe("parent_job_search_pressure");
+    expect(result.right.conflict).toBe("parent_job_search_pressure");
   });
 
   it("把家庭投入后不敢说面试结果也判为同一母题", () => {
@@ -92,7 +92,7 @@ describe("标题语义去重", () => {
       "花爸妈钱留学，不敢说面试全挂",
     );
     expect(result.duplicate).toBe(true);
-    expect(result.reasons).toContain("家庭投入后隐瞒求职困境的母题相同");
+    expect(result.reasons).toContain("父母压力下的求职困境母题相同");
   });
 
   it("允许同一业务下材料和冲突都不同的标题", () => {

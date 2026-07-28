@@ -112,6 +112,24 @@ describe("标题完整历史语义去重", () => {
     expect(titlesAreNearDuplicate(candidate, history)).toBe(true);
     expect(findDuplicateTitle(candidate, [history])).toBe(history);
   });
+
+  it("父母压力母题换成另一种坏消息后仍必须拦截", () => {
+    const history = "花爸妈钱留学，不敢说面试全挂";
+    const candidate = {
+      method_id: "human_pain",
+      method_group: "native",
+      title: "爸妈以为我稳，其实秋招全乱投",
+      title_promise: "讲清父母压力下的留学生秋招困境",
+      origin_force: "秋招现场",
+      conflict_judgement: "父母认知与真实求职状态的落差",
+    } as any;
+    expect(topicBatchDuplicateProblems(
+      [candidate],
+      [history],
+      [{ method_id: "human_pain", title: history }],
+      "overseas_student",
+    ).length).toBeGreaterThan(0);
+  });
 });
 
 describe("标题批次长期去重范围", () => {
