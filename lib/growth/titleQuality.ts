@@ -80,6 +80,8 @@ const TRADITIONAL_MARKERS = new Set(Object.keys(TRADITIONAL_TO_SIMPLIFIED));
 
 const NUMBER_WORDS = "0-9一二三四五六七八九十百千万两";
 const MONEY_OR_RESULT_PATTERNS: RegExp[] = [
+  // “花了百万留学 / 投入十万”同样是需要业务事实支持的金额断言，不能因不是收入而放行。
+  /(?:花(?:了|费)?|投入|花费|成本)[^，。！？?；;]{0,8}[0-9一二三四五六七八九十百千万两]+(?:万|亿|千|w|W|k|K)/gu,
   /(?:营收|年薪|月薪|收入|成交|融资|估值|赚了?|盈利)[^，。！？?；;]{0,10}[0-9一二三四五六七八九十百千万两]+(?:万|亿|千|w|W|k|K)/gu,
   /(?:[0-9一二三四五六七八九十百千万两]+(?:万|亿|千|w|W|k|K))[^，。！？?；;]{0,8}(?:营收|年薪|月薪|收入|成交|融资|估值|利润)/gu,
   /(?:创业|入职|转行|离职)[^，。！？?；;]{0,8}(?:首年|一年内|三个月内|半年内)[^，。！？?；;]{0,12}(?:营收|年薪|收入|赚|盈利|融资)/gu,
@@ -135,6 +137,8 @@ const CONFLICT_PATTERNS: Array<[string, RegExp]> = [
   ["overseas_job_search_disclosure_shame", /(?=[\s\S]*(?:留(?:了)?学|留学生|海归|留英|海外))(?=[\s\S]*(?:秋招|求职|投(?:啥|什么|简历|递)|海投|待业))(?=[\s\S]*(?:不敢.{0,8}(?:说|讲|告诉|面对|接)|怕.{0,8}(?:说|讲|告诉|接)))[\s\S]+/gu],
   // “早投晚投 / 投错节奏”指向同一个招聘节奏误判，不是新的反认知题。
   ["recruitment_timing_mismatch", /早投|晚投|投错节奏|节奏错|招聘节奏|投递节奏/gu],
+  // “过去拼学校/背景、现在拼项目/证据”是同一条学历光环失效后的怀旧叙事。
+  ["credential_to_evidence_shift", /(?:以前|过去|当年).*(?:拼学校|拼背景|拼学历|看学校|看背景).*(?:现在|如今).*(?:项目|表达|证据|经历|能力)|(?:现在|如今).*(?:项目|表达|证据|经历|能力).*(?:以前|过去|当年).*(?:拼学校|拼背景|拼学历|看学校|看背景)/gu],
   // “死磕对口/目标岗”与“先接一个 offer 保底”是同一类职业求职两难，不能只改两个词继续交付。
   ["target_role_or_offer_safety", /(?:死磕|冲|坚持).{0,6}(?:目标|对口|理想|心仪).{0,6}(?:岗|岗位).*(?:还是|or|vs|VS).*(?:先|拿|接).{0,6}offer|(?:先|拿|接).{0,6}offer.*(?:还是|or|vs|VS).*(?:死磕|冲|坚持).{0,6}(?:目标|对口|理想|心仪).{0,6}(?:岗|岗位)/giu],
   ["internship_or_autumn_recruitment", /(?:实习|补实习).*(?:还是|or|vs|VS).*(?:秋招|校招)|(?:秋招|校招).*(?:还是|or|vs|VS).*(?:实习|补实习)/giu],
@@ -343,6 +347,8 @@ export function evaluateTitleSemanticDuplicate(leftTitle: string, rightTitle: st
     && right.conflict === "overseas_job_search_disclosure_shame";
   const isSameRecruitmentTimingMismatchTheme = left.conflict === "recruitment_timing_mismatch"
     && right.conflict === "recruitment_timing_mismatch";
+  const isSameCredentialToEvidenceShiftTheme = left.conflict === "credential_to_evidence_shift"
+    && right.conflict === "credential_to_evidence_shift";
   const isSameRoleMismatchTheme = left.scenario === "job_targeting"
     && right.scenario === "job_targeting"
     && left.conflict === "role_mismatch"
@@ -359,6 +365,8 @@ export function evaluateTitleSemanticDuplicate(leftTitle: string, rightTitle: st
     reasons.push("留学求职中不敢说出口的困境母题相同");
   } else if (isSameRecruitmentTimingMismatchTheme) {
     reasons.push("招聘投递节奏错位母题相同");
+  } else if (isSameCredentialToEvidenceShiftTheme) {
+    reasons.push("学历背景转向项目证据的怀旧母题相同");
   } else if (isSameRoleMismatchTheme) {
     reasons.push("岗位方向错位的反认知母题相同");
   } else if (coreMatches.length === 3 && (left.frame === right.frame || left.promise === right.promise || bigramScore >= 0.22)) {

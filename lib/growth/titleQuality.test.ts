@@ -28,6 +28,7 @@ describe("标题质量门禁", () => {
     expect(evaluateGrowthTitleQuality("离体制邪修六步漏斗，饭局判胜算").reasons).toContain("unnatural_jargon");
     expect(evaluateGrowthTitleQuality("花百万留学，不敢跟爸妈说投了没信").reasons).toContain("unnatural_jargon");
     expect(evaluateGrowthTitleQuality("海归投简历没信，不敢跟爸妈说").reasons).toContain("unnatural_jargon");
+    expect(evaluateGrowthTitleQuality("留学花了百万，秋招连岗都投错").reasons).toContain("unsupported_factual_claim");
     expect(evaluateGrowthTitleQuality("求职没信心时，先收窄岗位").acceptable).toBe(true);
     expect(evaluateGrowthTitleQuality("AI筛简历后，先查岗位").acceptable).toBe(true);
   });
@@ -150,6 +151,15 @@ describe("标题语义去重", () => {
     );
     expect(result.duplicate).toBe(true);
     expect(result.reasons).toContain("招聘投递节奏错位母题相同");
+  });
+
+  it("把学历背景转向项目证据的怀旧换词判为重复", () => {
+    const result = evaluateTitleSemanticDuplicate(
+      "以前拼学校，现在拼岗位证据",
+      "过去拼背景，现在拼项目表达",
+    );
+    expect(result.duplicate).toBe(true);
+    expect(result.reasons).toContain("学历背景转向项目证据的怀旧母题相同");
   });
 
   it("把岗没选对归为方向错位，避免反认知题换词重复", () => {

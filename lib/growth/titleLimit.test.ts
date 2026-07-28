@@ -150,6 +150,12 @@ describe("标题完整历史语义去重", () => {
     expect(titlesAreNearDuplicate(candidate, history)).toBe(true);
   });
 
+  it("学历背景转向项目证据的怀旧换词后仍必须拦截", () => {
+    const history = "以前拼学校，现在拼岗位证据";
+    const candidate = "过去拼背景，现在拼项目表达";
+    expect(titlesAreNearDuplicate(candidate, history)).toBe(true);
+  });
+
   it("父母压力母题换成另一种坏消息后仍必须拦截", () => {
     const history = "花爸妈钱留学，不敢说面试全挂";
     const candidate = {
