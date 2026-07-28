@@ -1558,7 +1558,7 @@ export async function generateTopicBatch(input: {
     for (const topic of accepted.values()) addReference(`S${references.length + 1}`, topic.title, "selected");
 
     try {
-      // 只增加一次、9 秒上限的批次审核。它只负责拒绝同义重复，候选选择和
+      // 只增加一次、12 秒上限的批次审核。它只负责拒绝同义重复，候选选择和
       // 事实/来源/身份等硬门禁仍由本地确定性规则负责。
       const audit = await auditNativeTitleBatchNovelty({
         businessLine: input.account.business_line ?? "executive",

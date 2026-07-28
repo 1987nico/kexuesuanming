@@ -193,7 +193,7 @@ export async function auditNativeTitleBatchNovelty(
     user: buildNativeTitleNoveltyAuditPrompt({ ...input, candidates, references }),
     maxTokens: 1800,
     temperature: 0,
-    timeoutMs: 9_000,
+    timeoutMs: 12_000,
     jsonRetries: 0,
     allowFallback: false,
   });
