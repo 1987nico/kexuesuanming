@@ -471,6 +471,51 @@ describe("标题语义去重", () => {
       "盘点个人品牌可带走的资产",
       "送个人品牌资产表，分清能带走什么",
     ],
+    [
+      "human_pain",
+      "HR问入职日，娃还没搞定答辩",
+      "招聘官问入职日，孩子还没答辩",
+    ],
+    [
+      "human_pain",
+      "猎头来电，正开部门会不敢接",
+      "猎头来电，我却不敢接",
+    ],
+    [
+      "inventory",
+      "盘点家庭现金流，算换挡空窗期",
+      "盘点家庭现金流，扛得住空窗吗",
+    ],
+    [
+      "scarce_material",
+      "送风险红旗卡，筛方向暗坑",
+      "送风险红旗卡，筛转型暗坑",
+    ],
+    [
+      "tug_of_war",
+      "要高头衔，还是要完整利润责任",
+      "高头衔低权，还是低头衔高权",
+    ],
+    [
+      "human_pain",
+      "团队离不开你，市场没回应",
+      "旧团队缺你，外头没回音",
+    ],
+    [
+      "contrarian",
+      "决策快的人，转型更容易漏事",
+      "决策快，转型反倒容易漏变量",
+    ],
+    [
+      "superlative",
+      "留学生求职签证最易看错的到期日",
+      "签证最易看错准确到期日",
+    ],
+    [
+      "superlative",
+      "试错窗口最耗人的隐形消耗",
+      "试错窗口最容易耗在方向摇摆",
+    ],
   ])("把%s方法的线上同题样本判为重复：%s / %s", (methodId, left, right) => {
     expect(nativeTitleSemanticTopicKeys(methodId, left).length).toBeGreaterThan(0);
     expect(titlesAreMethodAwareSemanticDuplicates(methodId, left, right)).toBe(true);
