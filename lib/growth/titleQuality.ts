@@ -589,6 +589,18 @@ export function nativeTitleSemanticTopicKeys(methodId: string, value: string) {
       && /(?:孩子|娃|儿子|女儿).{0,7}(?:没|未).{0,4}(?:答辩|论文)/u.test(title),
   );
   add(
+    "scene:school_email_expiry_active_applications",
+    /学校邮箱/u.test(title)
+      && /(?:快停|停用|到期|失效)/u.test(title)
+      && /(?:申请|网申|求职)/u.test(title)
+      && /(?:没结束|未结束|还没完|没完成|没收尾)/u.test(title),
+  );
+  add(
+    "scene:city_settlement_uncertainty",
+    /(?:座城|城市|好多城|多座城|十座城)/u.test(title)
+      && /(?:不知搬哪|不知道搬哪|没一座想|没有一座想|不想落脚|不想留下)/u.test(title),
+  );
+  add(
     "scene:board_praise_then_exit",
     /董事会/u.test(title)
       && /(?:夸|认可|表扬)/u.test(title)
@@ -705,6 +717,28 @@ export function nativeTitleSemanticTopicKeys(methodId: string, value: string) {
       && /(?:转型|方向|暗坑|止损|风险)/u.test(title),
   );
   add(
+    "material:online_assessment_equipment_check",
+    /(?:在线测评|测评)/u.test(title)
+      && /(?:设备|软硬件|摄像头|收音|网络)/u.test(title)
+      && /(?:单|清单|排查|检查|先查)/u.test(title),
+  );
+  add(
+    "material:family_constraints_transition_capacity",
+    /家庭约束/u.test(title)
+      && /(?:换挡|转型|承受|边界|盘点|约束单)/u.test(title),
+  );
+  add(
+    "material:direction_decision_coordinate",
+    /(?:方向决策|行业适配|方向适配)/u.test(title)
+      && /(?:坐标|坐标系|地图)/u.test(title)
+      && /(?:筛|定|选|判断)/u.test(title),
+  );
+  add(
+    "inventory:failure_autopsy_risks",
+    /(?:失败验尸|前置验尸|失败风险)/u.test(title)
+      && /(?:维度|风险点|踩坑|判断|盘点)/u.test(title),
+  );
+  add(
     "inventory:bilingual_expression_samples",
     /(?:中英|双语|中文版|英文版)/u.test(comparable)
       && /(?:表达|汇报|话术)/u.test(comparable)
@@ -732,6 +766,13 @@ export function nativeTitleSemanticTopicKeys(methodId: string, value: string) {
     /(?:高头衔|头衔|名头)/u.test(title)
       && /(?:决策权|权限|权责|利润责任|经营责任|低权|高权)/u.test(title)
       && /(?:还是|要|选|不如)/u.test(title),
+  );
+  add(
+    "superlative:role_authority_mismatch",
+    /(?:新岗|转岗|岗位|职位)/u.test(title)
+      && /(?:最易|最容易|最隐蔽|容易)/u.test(title)
+      && /(?:决策权|权限|权责|权力)/u.test(title)
+      && /(?:错配|不匹配|误判|不对等|信号)/u.test(title),
   );
   add(
     "contrarian:industry_depth_cross_role_needs_evidence",
@@ -762,6 +803,13 @@ export function nativeTitleSemanticTopicKeys(methodId: string, value: string) {
       && /(?:没回应|没回音|不回应|没有回应)/u.test(title),
   );
   add(
+    "scene:clients_recognize_company_not_person",
+    /客户/u.test(title)
+      && /(?:只认|认的是|认可)/u.test(title)
+      && /公司/u.test(title)
+      && /(?:不认我|个人价值|换赛道|没人理|个人)/u.test(title),
+  );
+  add(
     "contrarian:fast_decision_misses_transition_variables",
     /决策快/u.test(title)
       && /转型/u.test(title)
@@ -778,6 +826,20 @@ export function nativeTitleSemanticTopicKeys(methodId: string, value: string) {
     "superlative:trial_window_consumption",
     /试错窗口/u.test(title)
       && /(?:耗|消耗|耗光|耗在)/u.test(title),
+  );
+  add(
+    "contrarian:management_span_slows_problem_solving",
+    /管理半径/u.test(title)
+      && /(?:大|扩大|更大)/u.test(title)
+      && /(?:解决问题|亲自解决|处理问题)/u.test(title)
+      && /(?:慢|更慢|未必快|反而慢)/u.test(title),
+  );
+  add(
+    "nostalgia:client_satisfaction_to_personal_repeat",
+    /(?:以前|过去|当年)/u.test(title)
+      && /客户满意度/u.test(title)
+      && /(?:现在|如今)/u.test(title)
+      && /(?:个人复购|回头客|复购率)/u.test(title),
   );
 
   return keys;

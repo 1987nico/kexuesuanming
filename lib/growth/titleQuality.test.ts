@@ -516,6 +516,56 @@ describe("标题语义去重", () => {
       "试错窗口最耗人的隐形消耗",
       "试错窗口最容易耗在方向摇摆",
     ],
+    [
+      "human_pain",
+      "学校邮箱快停，娃还有申请没结束",
+      "孩子学校邮箱快停，申请还没结束",
+    ],
+    [
+      "human_pain",
+      "租约快到，我却不知搬哪座城",
+      "投了好多城，没一座想真落脚",
+    ],
+    [
+      "scarce_material",
+      "测评设备单，提前排查软硬件",
+      "在线测评设备单，先查软硬件",
+    ],
+    [
+      "scarce_material",
+      "送家庭约束单，划换挡承受边界",
+      "盘点家庭约束项，看换挡承受力",
+    ],
+    [
+      "scarce_material",
+      "送方向决策坐标，筛适配赛道",
+      "送行业适配坐标，定下一步方向",
+    ],
+    [
+      "inventory",
+      "盘点失败验尸维度，避换挡踩坑",
+      "盘点失败风险点，做前置验尸判断",
+    ],
+    [
+      "human_pain",
+      "客户只认公司，个人价值怎么算",
+      "客户只认公司，我换赛道没人理",
+    ],
+    [
+      "superlative",
+      "新岗最易误判的决策权匹配",
+      "岗位错配最隐蔽的一项权责信号",
+    ],
+    [
+      "contrarian",
+      "管理半径大，亲解决问题更慢",
+      "管理半径大，解决问题未必快",
+    ],
+    [
+      "nostalgia",
+      "以前看客户满意度，现在算回头客多少",
+      "以前看客户满意度，如今看个人复购率",
+    ],
   ])("把%s方法的线上同题样本判为重复：%s / %s", (methodId, left, right) => {
     expect(nativeTitleSemanticTopicKeys(methodId, left).length).toBeGreaterThan(0);
     expect(titlesAreMethodAwareSemanticDuplicates(methodId, left, right)).toBe(true);
