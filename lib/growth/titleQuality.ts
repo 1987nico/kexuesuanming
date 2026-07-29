@@ -460,10 +460,24 @@ export function evaluateTitleSemanticDuplicate(leftTitle: string, rightTitle: st
     left[field as keyof TitleSemanticSignature] !== "open"
     && left[field as keyof TitleSemanticSignature] === right[field as keyof TitleSemanticSignature]
   ));
+  const isExplicitFamilyDisclosurePressure = (title: string) => (
+    /(?:爸妈|父母|家里)/u.test(title)
+    && /(?:不敢.{0,8}(?:说|讲|告诉)|怕接|不敢接)/u.test(title)
+  );
   const isSameParentJobSearchPressureTheme = left.audience === "parent"
     && right.audience === "parent"
     && left.conflict === "parent_job_search_pressure"
-    && right.conflict === "parent_job_search_pressure";
+    && right.conflict === "parent_job_search_pressure"
+    // “家长焦虑”只是行业人性痛点的方法大类，不是一个可以永久占用的
+    // 具体母题。只有两条还落在同一求职阶段时才硬判同题；面试撞答辩与
+    // 简历没回音属于不同事件，不能因都出现“不敢”就一起拦掉。
+    && (
+      (left.scenario !== "open" && left.scenario === right.scenario)
+      || (
+        isExplicitFamilyDisclosurePressure(leftTitle)
+        && isExplicitFamilyDisclosurePressure(rightTitle)
+      )
+    );
   const isSameTargetRoleOrOfferSafetyTheme = left.conflict === "target_role_or_offer_safety"
     && right.conflict === "target_role_or_offer_safety";
   const isSameOverseasJobSearchDisclosureShameTheme = left.conflict === "overseas_job_search_disclosure_shame"

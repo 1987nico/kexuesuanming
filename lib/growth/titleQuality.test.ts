@@ -181,6 +181,13 @@ describe("标题语义去重", () => {
     expect(result.reasons).toContain("家长视角下留学后秋招方向焦虑的母题相同");
   });
 
+  it("不会把不同求职阶段的家长焦虑都误判成同一母题", () => {
+    expect(titlesAreSemanticDuplicates(
+      "孩子面试撞答辩，两边都不敢放",
+      "孩子投简历没回音，我不敢再问",
+    )).toBe(false);
+  });
+
   it("不会把留学家庭的秋招时间建议误判为方向焦虑重复", () => {
     expect(titlesAreSemanticDuplicates(
       "娃留完学，秋招前先理清时间线",
