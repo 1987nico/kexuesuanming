@@ -36,6 +36,13 @@ describe("标题质量门禁", () => {
     expect(evaluateGrowthTitleQuality("跟风投管培，还是蹲对口秋招岗？").reasons).toContain("unnatural_jargon");
     expect(evaluateGrowthTitleQuality("背景看着光鲜，投岗全没回音").reasons).toContain("unnatural_jargon");
     expect(evaluateGrowthTitleQuality("以前找教授写推，如今备背调").reasons).toContain("unnatural_jargon");
+    expect(evaluateGrowthTitleQuality("送项目证据账本，估个人胜算").reasons).toContain("unnatural_jargon");
+    expect(evaluateGrowthTitleQuality("送内推跟进看板，筛高胜算转型机会").reasons).toContain("unnatural_jargon");
+    expect(evaluateGrowthTitleQuality("盘点老板承诺，辨留任真假意").reasons).toContain("unnatural_jargon");
+    expect(evaluateGrowthTitleQuality("材料翻译最易失效认证日期").reasons).toContain("unnatural_jargon");
+    expect(evaluateGrowthTitleQuality("岗名好听，还是活扎实更重要").reasons).toContain("unnatural_jargon");
+    expect(evaluateGrowthTitleQuality("社团职位高，定位反而更难准").reasons).toContain("unnatural_jargon");
+    expect(evaluateGrowthTitleQuality("送你一份岗位核验表").acceptable).toBe(true);
     expect(evaluateGrowthTitleQuality("我替孩子找内推，不如先对岗位").reasons).toContain("incomplete_sentence");
     expect(evaluateGrowthTitleQuality("我替孩子找内推，不如先看岗位匹配").acceptable).toBe(true);
     expect(evaluateGrowthTitleQuality("从前等机会，现在先做准备").reasons).toContain("generic_title");
