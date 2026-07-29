@@ -59,7 +59,7 @@ describe("原生标题语义审核候选预算", () => {
     }
   });
 
-  it("二次审核逐法取下一条未审候选，并始终保持轻量", () => {
+  it("二次审核优先取未审安全候选，避免连续只审模型近似题", () => {
     const methods = methodsForPersona("buyer", "default").filter((method) => !method.sourceRequired);
     expect(methods).toHaveLength(4);
     const candidatesByMethod = new Map(methods.map((method) => [method.id, [
@@ -85,7 +85,7 @@ describe("原生标题语义审核候选预算", () => {
     });
     const total = methods.flatMap((method) => retry.get(method.id) ?? []);
     expect(total).toHaveLength(4);
-    expect(total.some((item) => item.audit.kind === "model")).toBe(true);
+    expect(total.every((item) => item.audit.kind === "fallback")).toBe(true);
     expect(total.every((item) => !audited.has(normalizeTitleForComparison(item.topic.title)))).toBe(true);
   });
 

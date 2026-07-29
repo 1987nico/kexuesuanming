@@ -2087,6 +2087,8 @@ export function compactNativeAuditOptions(input: {
   auditedTitleFingerprints?: Set<string>;
   /** 仅用于让多波次返回的短 candidate id 不互相混淆。 */
   idPrefix?: string;
+  /** 二审优先看已通过本地硬门禁的安全候选，避免连续只审模型近似题。 */
+  preferFallback?: boolean;
 }) {
   const byMethod = new Map<TitleMethodId, NativeTitleCandidateOption[]>();
   let sequence = 1;
@@ -2105,13 +2107,12 @@ export function compactNativeAuditOptions(input: {
     const fallbacks = options.filter((option) => option.audit.kind === "fallback");
     // 静态兜底存在时，才为它预留一个审核名额。定向补题只含模型候选，
     // 旧写法仍硬留 fallback 位，导致专家视角每个槽位只审到第一个候选。
-    const modelLimit = Math.min(
-      models.length,
-      fallbacks.length ? Math.max(1, perMethodLimit - 1) : perMethodLimit,
-    );
+    const preferred = input.preferFallback ? fallbacks : models;
+    const secondary = input.preferFallback ? models : fallbacks;
+    const preferredLimit = Math.min(preferred.length, perMethodLimit);
     const shortlist = [
-      ...models.slice(0, modelLimit),
-      ...fallbacks.slice(0, perMethodLimit - modelLimit),
+      ...preferred.slice(0, preferredLimit),
+      ...secondary.slice(0, perMethodLimit - preferredLimit),
     ].map((option) => ({
         ...option,
         audit: { ...option.audit, id: `${input.idPrefix ?? "N"}${sequence++}` },
@@ -2136,6 +2137,7 @@ export function compactNativeAuditRetryOptions(input: {
     candidatesByMethod: input.candidatesByMethod,
     auditedTitleFingerprints: input.auditedTitleFingerprints,
     idPrefix: "R",
+    preferFallback: true,
   });
 }
 

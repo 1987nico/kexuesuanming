@@ -71,7 +71,7 @@ describe("原生标题语义审核二次恢复", () => {
     llmJSONMock.mockReset();
   });
 
-  it("首审全部拒绝后，二审会审核未审模型替代题并完成整批交付", async () => {
+  it("首审全部拒绝后，二审会优先审核安全候选并完成整批交付", async () => {
     const auditBatches: Array<Array<{ candidate_id: string; method_id: string; title: string }>> = [];
     llmJSONMock.mockImplementation(async (input: { user: string }) => {
       if (!input.user.includes("语义新颖度终审")) return modelResponse(generatedTopics());
@@ -104,8 +104,11 @@ describe("原生标题语义审核二次恢复", () => {
       expect(firstAuditTitles.has(topic.title)).toBe(false);
       expect(secondAuditTitles.has(topic.title)).toBe(true);
     }
-    expect(auditBatches[1].some((candidate) => candidate.title === "职位升了，反而不敢换公司")).toBe(true);
-    expect(auditBatches[1].some((candidate) => candidate.title === "留在原岗，还是出去面试？")).toBe(true);
+    const modelTitles = new Set(generatedTopics().topics.flatMap((topic) => [
+      topic.title,
+      ...topic.alternative_titles,
+    ]));
+    expect(auditBatches[1].every((candidate) => !modelTitles.has(candidate.title))).toBe(true);
   });
 
   it("语义审核传输超时时，用严格本地门禁交付动态候选而不整批失败", async () => {
