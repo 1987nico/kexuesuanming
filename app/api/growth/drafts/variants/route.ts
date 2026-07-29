@@ -37,6 +37,7 @@ const bodySchema = z.object({
 });
 
 export async function POST(req: Request) {
+  const requestStartedAt = Date.now();
   const guard = await requireMianbaApiAuth();
   if ("response" in guard) return guard.response;
 
@@ -73,13 +74,15 @@ export async function POST(req: Request) {
   }
   const generationAccount = accountForBusinessGeneration(account);
 
-  const notes = await store.listDrafts(account.id);
-  const runs = await store.listRuns(account.id);
+  const [notes, runs] = await Promise.all([
+    store.listDrafts(account.id),
+    store.listRuns(account.id),
+  ]);
   const historicalBodies = [
     ...bodyHistoryReferences({ drafts: notes, runs }),
     ...(parsed.data.excludeBodies ?? []).map((body) => ({ body })),
   ];
-  const reviews = await store.listReviewsByAccount(account.id);
+  const reviews = await store.listReviewsByAccount(account.id, notes.map((draft) => draft.id));
   let weeklyReview = account.weekly_review ?? account.stage_review;
   if (!weeklyReview || isWeeklyReviewStale(weeklyReview, reviews)) {
     weeklyReview = buildWeeklyReviewResult({ account, notes, reviews });
@@ -188,6 +191,8 @@ export async function POST(req: Request) {
     persona: account.persona,
     methodId: topic.method_id,
     requestedVersion: parsed.data.bodyVersion ?? "both",
+    parallelRaceEnabled: process.env.GROWTH_PARALLEL_DRAFT_RACE !== "false",
+    totalDurationMs: Date.now() - requestStartedAt,
     drafts: drafts.map((draft) => ({
       version: draft.selected_body_version,
       status: draft.validation_report?.status ?? "failed",
@@ -214,5 +219,7 @@ export async function POST(req: Request) {
   // 生成过但尚未选用的正文也进入账号历史，防止用户反复点击后再次拿到同一篇。
   await store.saveRun(appendBodyGenerationHistory(run, drafts));
 
-  return NextResponse.json({ drafts, topic, learningTrace: learningBrief.trace });
+  const response = NextResponse.json({ drafts, topic, learningTrace: learningBrief.trace });
+  response.headers.set("Server-Timing", `growth-draft-variants;dur=${Date.now() - requestStartedAt}`);
+  return response;
 }

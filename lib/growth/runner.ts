@@ -172,6 +172,25 @@ function resultUsage(result: any) {
   };
 }
 
+function mergeGenerationUsage(
+  ...records: Array<Record<string, unknown> | undefined>
+): Record<string, unknown> | undefined {
+  const usable = records.filter(Boolean) as Array<Record<string, unknown>>;
+  if (!usable.length) return undefined;
+  const providers = [...new Set(usable.map((item) => String(item.provider ?? "")).filter(Boolean))];
+  const models = [...new Set(usable.map((item) => String(item.model ?? "")).filter(Boolean))];
+  const sum = (key: "input_tokens" | "output_tokens") => usable.reduce(
+    (total, item) => total + (typeof item[key] === "number" ? item[key] as number : 0),
+    0,
+  );
+  return {
+    provider: providers.length === 1 ? providers[0] : providers.join("+") || undefined,
+    model: models.length === 1 ? models[0] : models.join("+") || undefined,
+    input_tokens: sum("input_tokens") || undefined,
+    output_tokens: sum("output_tokens") || undefined,
+  };
+}
+
 export function enforceTitleLimit(raw: string): string {
   let title = String(raw ?? "").trim().split(/\s*[|｜]\s*|\s*[—-]{2,}\s*|\s+·\s+/)[0].trim();
   if (Array.from(title).length <= 20) return title;
@@ -4818,6 +4837,7 @@ async function generateSingleDraft(input: {
   blueprint: DraftBlueprintContext; fallbackBlueprint: DraftBlueprintContext; spec: PromiseDeliverySpec;
   historicalBodies?: BodyUniquenessReference[];
   currentPairBodies?: string[];
+  candidateIndex?: number;
 }) {
   const generationStartedAt = Date.now();
   let payload: any;
@@ -4850,8 +4870,8 @@ async function generateSingleDraft(input: {
           titlePromise: input.topic.title_promise, testVariable: input.topic.test_variable,
           expectedSignal: input.topic.expected_signal, followReason: input.topic.follow_reason,
           variantHint: input.bodyVersion === "short"
-            ? `当前只写短版：150—300字，用更少的段落直接交付结论和必要动作，不展开背景解释。这是第${attempt}次内部尝试，必须更换开头场景、叙事顺序和表达。`
-            : `当前只写长版：600—900字。在同一核心判断下补充现场、判断依据、执行细节和避坑说明；不得复用短版原句或只做同义改写。这是第${attempt}次内部尝试，必须使用不同的现场和论证顺序。`,
+            ? `当前只写短版：150—300字，用更少的段落直接交付结论和必要动作，不展开背景解释。这是第${attempt}次内部尝试、并行候选${input.candidateIndex ?? 1}；${input.candidateIndex === 2 ? "优先从反常结果切入，再快速交付判断。" : "优先从具体动作或冲突切入，再交付必要动作。"}必须更换开头场景、叙事顺序和表达。`
+            : `当前只写长版：600—900字。在同一核心判断下补充现场、判断依据、执行细节和避坑说明；不得复用短版原句或只做同义改写。这是第${attempt}次内部尝试、并行候选${input.candidateIndex ?? 1}；${input.candidateIndex === 2 ? "优先按问题—判断—验证—避坑展开。" : "优先按现场—转折—依据—行动展开。"}必须使用不同的现场和论证顺序。`,
           learningGuidance: input.learningBrief ? formatLearningBrief(input.learningBrief) : undefined,
           excludeBodies: promptExclusions, blueprint: input.blueprint,
           deliveryRule: input.spec.rule, ctaType: cta,
@@ -4995,18 +5015,93 @@ export async function generateDraftVariants(input: {
     });
     return { drafts: [generated.draft], usage: generated.usage || planned.usage };
   }
-  const short = await generateSingleDraft({
-    ...shared,
-    bodyVersion: "short",
-    historicalBodies: input.historicalBodies,
-  });
-  const long = await generateSingleDraft({
-    ...shared,
-    bodyVersion: "long",
-    historicalBodies: input.historicalBodies,
-    currentPairBodies: [short.draft.body],
-    excludeBodies: [...(input.excludeBodies ?? []), short.draft.body],
-  });
+
+  const parallelRaceEnabled = process.env.GROWTH_PARALLEL_DRAFT_RACE !== "false";
+  let shortCandidates: Awaited<ReturnType<typeof generateSingleDraft>>[] = [];
+  let longCandidates: Awaited<ReturnType<typeof generateSingleDraft>>[] = [];
+
+  if (parallelRaceEnabled) {
+    const attempts = await Promise.allSettled([
+      ...([1, 2] as const).map((candidateIndex) => generateSingleDraft({
+        ...shared,
+        bodyVersion: "short" as const,
+        historicalBodies: input.historicalBodies,
+        candidateIndex,
+      })),
+      ...([1, 2] as const).map((candidateIndex) => generateSingleDraft({
+        ...shared,
+        bodyVersion: "long" as const,
+        historicalBodies: input.historicalBodies,
+        candidateIndex,
+      })),
+    ]);
+    shortCandidates = attempts.slice(0, 2)
+      .filter((result): result is PromiseFulfilledResult<Awaited<ReturnType<typeof generateSingleDraft>>> =>
+        result.status === "fulfilled")
+      .map((result) => result.value);
+    longCandidates = attempts.slice(2)
+      .filter((result): result is PromiseFulfilledResult<Awaited<ReturnType<typeof generateSingleDraft>>> =>
+        result.status === "fulfilled")
+      .map((result) => result.value);
+
+    // 某一侧竞速全部失败时只补这一侧，不让已经通过认证的版本重新生成。
+    if (!shortCandidates.length) {
+      shortCandidates = [await generateSingleDraft({
+        ...shared,
+        bodyVersion: "short",
+        historicalBodies: input.historicalBodies,
+        candidateIndex: 3,
+      })];
+    }
+    if (!longCandidates.length) {
+      longCandidates = [await generateSingleDraft({
+        ...shared,
+        bodyVersion: "long",
+        historicalBodies: input.historicalBodies,
+        currentPairBodies: shortCandidates.map((candidate) => candidate.draft.body),
+        excludeBodies: [
+          ...(input.excludeBodies ?? []),
+          ...shortCandidates.map((candidate) => candidate.draft.body),
+        ],
+        candidateIndex: 3,
+      })];
+    }
+  } else {
+    const short = await generateSingleDraft({
+      ...shared,
+      bodyVersion: "short",
+      historicalBodies: input.historicalBodies,
+    });
+    const long = await generateSingleDraft({
+      ...shared,
+      bodyVersion: "long",
+      historicalBodies: input.historicalBodies,
+      currentPairBodies: [short.draft.body],
+      excludeBodies: [...(input.excludeBodies ?? []), short.draft.body],
+    });
+    shortCandidates = [short];
+    longCandidates = [long];
+  }
+
+  const rankedPairs = shortCandidates.flatMap((short) =>
+    longCandidates.map((long) => ({
+      short,
+      long,
+      score:
+        (short.draft.validation_report?.attempts ?? 0)
+        + (long.draft.validation_report?.attempts ?? 0)
+        + Math.abs(Array.from(short.draft.body).length - 240) / 1000
+        + Math.abs(Array.from(long.draft.body).length - 750) / 1000,
+    })))
+    .sort((a, b) => a.score - b.score);
+  const selectedPair = rankedPairs.find(({ short, long }) =>
+    draftVariantOrderIsValid(short.draft, long.draft)
+    && !draftBodiesAreTooSimilar(short.draft.body, long.draft.body))
+    ?? rankedPairs[0];
+  if (!selectedPair) throw pipelineFailure("model_unavailable", "并行候选没有返回可用正文");
+
+  const short = selectedPair.short;
+  const long = selectedPair.long;
   let shortDraft = short.draft;
   let longDraft = long.draft;
   // 共享身份、核心判断和转化合同是正确行为；先自动拉开篇幅与展开层次，再做最终差异判断。
@@ -5046,7 +5141,14 @@ export async function generateDraftVariants(input: {
     const duplicate = bodyUniquenessProblem(draft.body, input.historicalBodies ?? []);
     if (duplicate) throw pipelineFailure("history_duplicate", duplicate.reason);
   }
-  return { drafts: [shortDraft, longDraft], usage: long.usage || short.usage || planned.usage };
+  return {
+    drafts: [shortDraft, longDraft],
+    usage: mergeGenerationUsage(
+      planned.usage,
+      ...shortCandidates.map((candidate) => candidate.usage),
+      ...longCandidates.map((candidate) => candidate.usage),
+    ),
+  };
 }
 
 async function rebuildVariantForLengthOrder(input: {

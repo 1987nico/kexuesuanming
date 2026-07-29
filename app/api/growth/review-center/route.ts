@@ -21,10 +21,8 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "forbidden" }, { status: 403 });
   }
 
-  const [drafts, reviews] = await Promise.all([
-    store.listDrafts(account.id),
-    store.listReviewsByAccount(account.id),
-  ]);
+  const drafts = await store.listDrafts(account.id);
+  const reviews = await store.listReviewsByAccount(account.id, drafts.map((draft) => draft.id));
   const reviewByDraft = new Map(reviews.map((review) => [review.draft_id, review]));
   const currentDrafts = drafts.filter((draft) =>
     draft.schema_version !== "legacy_v1"

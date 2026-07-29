@@ -57,6 +57,8 @@ import {
 } from "@/lib/growth/titleEditing";
 
 interface BootstrapData {
+  loadedScopes: WorkspaceScope[];
+  persona: GrowthPersona;
   businessLine: GrowthBusinessLine;
   businessPosition: GrowthBusinessPosition;
   businessPositions: Record<GrowthBusinessLine, GrowthBusinessPosition>;
@@ -189,6 +191,12 @@ const TOPIC_GENERATION_STAGES = [
   "正在检查标题质量与历史重复…",
   "正在保存这一批可交付标题…",
 ];
+const BODY_GENERATION_STAGES = [
+  "正在锁定标题承诺和同一核心判断…",
+  "正在并行生成短版和长版候选…",
+  "正在检查身份、兑现、自然转化与历史重复…",
+  "正在选择差异足够、可以直接使用的最佳组合…",
+];
 
 async function requestJSON<T>(url: string, options?: RequestInit): Promise<T> {
   const response = await fetch(url, {
@@ -298,6 +306,53 @@ const workspaceKey = (businessLine: GrowthBusinessLine, persona: GrowthPersona) 
   `${businessLine}:${persona}`;
 
 type WorkflowStep = "0" | "1" | "2" | "3" | "4" | "5";
+type WorkspaceScope = "core" | "content" | "review";
+
+function workspaceHasScope(data: BootstrapData | undefined, scope: WorkspaceScope) {
+  return Boolean(data?.loadedScopes?.includes(scope));
+}
+
+function mergeWorkspaceData(
+  current: BootstrapData | undefined,
+  incoming: BootstrapData,
+): BootstrapData {
+  if (
+    !current
+    || current.businessLine !== incoming.businessLine
+    || current.persona !== incoming.persona
+  ) return incoming;
+  const incomingScopes = new Set(incoming.loadedScopes ?? []);
+  const loadedScopes = [...new Set([
+    ...(current.loadedScopes ?? []),
+    ...(incoming.loadedScopes ?? []),
+  ])] as WorkspaceScope[];
+  const replacesContent = incomingScopes.has("content");
+  const replacesReview = incomingScopes.has("review");
+  return {
+    ...current,
+    ...incoming,
+    loadedScopes,
+    plan: incoming.plan ?? current.plan,
+    account: incomingScopes.has("core") || replacesContent
+      ? incoming.account
+      : current.account,
+    runs: replacesContent ? incoming.runs : current.runs,
+    drafts: replacesContent || replacesReview ? incoming.drafts : current.drafts,
+    currentDrafts: replacesContent || replacesReview
+      ? incoming.currentDrafts
+      : current.currentDrafts,
+    historicalDrafts: replacesContent || replacesReview
+      ? incoming.historicalDrafts
+      : current.historicalDrafts,
+    reviews: replacesReview ? incoming.reviews : current.reviews,
+    threeDayReviewCycles: replacesReview
+      ? incoming.threeDayReviewCycles
+      : current.threeDayReviewCycles,
+    learningSummary: replacesReview
+      ? incoming.learningSummary
+      : current.learningSummary,
+  };
+}
 
 type WorkspaceTransient = {
   variants: ContentDraft[];
@@ -342,6 +397,7 @@ export default function GrowthPage() {
   const [busy, setBusy] = useState<string | null>("load");
   const [message, setMessage] = useState("");
   const [topicMessage, setTopicMessage] = useState("");
+  const [bodyProgressMessage, setBodyProgressMessage] = useState("");
   const [reviewDraft, setReviewDraft] = useState<ContentDraft | null>(null);
   const [reviewWindow, setReviewWindow] = useState<GrowthReviewWindow>("content_24h");
   const [reviewTab, setReviewTab] = useState<"tasks" | "single" | "strategy">("tasks");
@@ -368,6 +424,7 @@ export default function GrowthPage() {
   const workspaceCache = useRef(new Map<string, BootstrapData>());
   const workspaceTransients = useRef(new Map<string, WorkspaceTransient>());
   const workspaceRequests = useRef(new Map<string, Promise<BootstrapData>>());
+  const workspaceControllers = useRef(new Map<string, AbortController>());
   const titleSaveRequests = useRef(new Map<string, {
     title: string;
     promise: Promise<{ run: GrowthRun; topic: TopicCandidate }>;
@@ -376,7 +433,6 @@ export default function GrowthPage() {
   // 服务端再用 requestId 做最终幂等保护。
   const topicGenerationInFlight = useRef(false);
   const activeWorkspace = useRef(workspaceKey("overseas_student", "buyer"));
-  const prefetchStarted = useRef(false);
 
   const applyWorkspaceData = useCallback((next: BootstrapData | null, transient?: WorkspaceTransient) => {
     setData(next);
@@ -395,6 +451,7 @@ export default function GrowthPage() {
     setSourceEditorMethod(null);
     setSource(emptySource);
     setTopicMessage("");
+    setBodyProgressMessage("");
     setReviewDraft(null);
     setReviewWindow("content_24h");
     setReviewTab("tasks");
@@ -415,14 +472,35 @@ export default function GrowthPage() {
     if (next?.businessPosition) setBusinessPositionForm(next.businessPosition);
   }, []);
 
-  const fetchWorkspace = useCallback((nextBusinessLine: GrowthBusinessLine, nextPersona: GrowthPersona) => {
+  const fetchWorkspace = useCallback((
+    nextBusinessLine: GrowthBusinessLine,
+    nextPersona: GrowthPersona,
+    scope: WorkspaceScope,
+    force = false,
+  ) => {
     const key = workspaceKey(nextBusinessLine, nextPersona);
-    const existing = workspaceRequests.current.get(key);
+    const requestKey = `${key}:${scope}`;
+    if (force) {
+      workspaceControllers.current.get(requestKey)?.abort();
+      workspaceRequests.current.delete(requestKey);
+    }
+    const existing = workspaceRequests.current.get(requestKey);
     if (existing) return existing;
-    const request = requestJSON<BootstrapData>(
-      `/api/growth/bootstrap?businessLine=${nextBusinessLine}&persona=${nextPersona}`,
-    ).finally(() => workspaceRequests.current.delete(key));
-    workspaceRequests.current.set(key, request);
+    const controller = new AbortController();
+    workspaceControllers.current.set(requestKey, controller);
+    let request: Promise<BootstrapData>;
+    request = requestJSON<BootstrapData>(
+      `/api/growth/bootstrap?businessLine=${nextBusinessLine}&persona=${nextPersona}&scope=${scope}`,
+      { signal: controller.signal },
+    ).finally(() => {
+      if (workspaceRequests.current.get(requestKey) === request) {
+        workspaceRequests.current.delete(requestKey);
+      }
+      if (workspaceControllers.current.get(requestKey) === controller) {
+        workspaceControllers.current.delete(requestKey);
+      }
+    });
+    workspaceRequests.current.set(requestKey, request);
     return request;
   }, []);
 
@@ -434,47 +512,82 @@ export default function GrowthPage() {
     const key = workspaceKey(nextBusinessLine, nextPersona);
     activeWorkspace.current = key;
     const cached = workspaceCache.current.get(key);
-    if (cached && !force) {
+    if (cached && workspaceHasScope(cached, "core") && !force) {
       applyWorkspaceData(cached, workspaceTransients.current.get(key));
       setBusy(null);
       return;
+    }
+    for (const [requestKey, controller] of workspaceControllers.current) {
+      if (!requestKey.startsWith(`${key}:`)) controller.abort();
     }
     if (!cached) applyWorkspaceData(null);
     setBusy("load");
     setMessage("");
     try {
-      const next = await fetchWorkspace(nextBusinessLine, nextPersona);
+      const incoming = await fetchWorkspace(nextBusinessLine, nextPersona, "core", force);
+      const next = mergeWorkspaceData(cached, incoming);
       workspaceCache.current.set(key, next);
-      if (activeWorkspace.current === key) applyWorkspaceData(next, workspaceTransients.current.get(key));
-
-      if (!prefetchStarted.current) {
-        prefetchStarted.current = true;
-        const remaining = GROWTH_BUSINESS_LINES.flatMap((line) =>
-          GROWTH_PERSONAS.map((view) => ({ line, view })))
-          .filter((item) => workspaceKey(item.line, item.view) !== key);
-        void (async () => {
-          for (const item of remaining) {
-            const backgroundKey = workspaceKey(item.line, item.view);
-            if (workspaceCache.current.has(backgroundKey)) continue;
-            try {
-              const background = await fetchWorkspace(item.line, item.view);
-              workspaceCache.current.set(backgroundKey, background);
-            } catch {
-              // 后台预取失败不影响当前页面；切换时会自动重试。
-            }
-          }
-        })();
+      if (activeWorkspace.current === key) {
+        applyWorkspaceData(next, workspaceTransients.current.get(key));
       }
     } catch (error) {
+      if ((error as Error).name === "AbortError") return;
       if (activeWorkspace.current === key) setMessage((error as Error).message);
     } finally {
       if (activeWorkspace.current === key) setBusy(null);
     }
   }, [applyWorkspaceData, fetchWorkspace]);
 
+  const ensureWorkspaceScope = useCallback(async (
+    scope: Exclude<WorkspaceScope, "core">,
+    force = false,
+  ) => {
+    const key = workspaceKey(businessLine, persona);
+    const cached = workspaceCache.current.get(key);
+    if (!force && workspaceHasScope(cached, scope)) return;
+    setBusy(`load-${scope}`);
+    try {
+      const incoming = await fetchWorkspace(businessLine, persona, scope, force);
+      const next = mergeWorkspaceData(workspaceCache.current.get(key), incoming);
+      workspaceCache.current.set(key, next);
+      if (activeWorkspace.current === key) {
+        setData(next);
+        if (scope === "content") {
+          setChosen((current) =>
+            current ?? next.currentDrafts.find((draft) => draft.status === "ready") ?? null);
+          setActiveRunIds((current) => ({
+            default: current.default
+              ?? next.runs.find((run) => run.generation_mode === "default")?.id,
+            explore: current.explore
+              ?? next.runs.find((run) => run.generation_mode === "explore")?.id,
+          }));
+        }
+      }
+    } catch (error) {
+      if ((error as Error).name !== "AbortError" && activeWorkspace.current === key) {
+        setMessage((error as Error).message);
+      }
+    } finally {
+      if (activeWorkspace.current === key) setBusy(null);
+    }
+  }, [businessLine, fetchWorkspace, persona]);
+
   useEffect(() => {
     void load(businessLine, persona);
   }, [businessLine, persona, load]);
+
+  useEffect(() => {
+    if (!data?.account) return;
+    if (visibleStep === "3" || visibleStep === "4") {
+      void ensureWorkspaceScope("content");
+    } else if (visibleStep === "5") {
+      void ensureWorkspaceScope("review");
+    }
+  }, [data?.account, ensureWorkspaceScope, visibleStep]);
+
+  useEffect(() => () => {
+    for (const controller of workspaceControllers.current.values()) controller.abort();
+  }, []);
 
   useEffect(() => {
     if (data) workspaceCache.current.set(workspaceKey(businessLine, persona), data);
@@ -536,7 +649,7 @@ export default function GrowthPage() {
     ["0", "业务定位"], ["1", "三家视角"], ["2", "人设"], ["3", "选题"],
     ["4", "正文"], ["5", "三日复盘"],
   ] as const;
-  const currentTaskStatus = busy === "load" ? "正在读取当前业务"
+  const currentTaskStatus = busy?.startsWith("load") ? "正在读取当前步骤"
     : !data?.account ? "待完善人设"
       : chosen?.status === "published" ? "已发布，等待三日复盘"
         : chosen ? "正文可复制"
@@ -1217,6 +1330,12 @@ export default function GrowthPage() {
     setBusy(`body-${topic.id}`);
     setVariants([]);
     setChosen(null);
+    let stageIndex = 0;
+    setBodyProgressMessage(BODY_GENERATION_STAGES[stageIndex]);
+    const stageTimer = window.setInterval(() => {
+      stageIndex = Math.min(stageIndex + 1, BODY_GENERATION_STAGES.length - 1);
+      setBodyProgressMessage(BODY_GENERATION_STAGES[stageIndex]);
+    }, 7_000);
     try {
       const editedTitle = titleEdits[topic.id] ?? topic.title;
       const saved = await persistTopicTitle(run, topic, editedTitle);
@@ -1238,11 +1357,14 @@ export default function GrowthPage() {
       });
       setVariants(result.drafts);
       setMessage("短版和长版已完成系统认证，可以直接选择使用。");
+      setBodyProgressMessage("");
       setBodyVersionView(result.drafts.some((draft) => draft.selected_body_version !== "long") ? "short" : "long");
       goToStep("4");
     } catch (error) {
       setMessage((error as Error).message);
     } finally {
+      window.clearInterval(stageTimer);
+      setBodyProgressMessage("");
       setBusy(null);
     }
   }
@@ -1945,7 +2067,7 @@ export default function GrowthPage() {
                     busy === `body-${selectedTopic.topic.id}` ? (
                       <div className="rounded-2xl border border-sky-200 bg-sky-50 p-5 text-sm text-slate-600">
                         <div className="font-semibold text-slate-900">正在生成可交付正文</div>
-                        <p className="mt-2 leading-6">系统正在内部完成正文合同、短长版生成、定点修复和最终认证；无需重复点击。</p>
+                        <p className="mt-2 leading-6">{bodyProgressMessage || "系统正在内部完成正文合同、短长版生成、定点修复和最终认证；无需重复点击。"}</p>
                       </div>
                     ) : (
                       <div className="rounded-2xl border border-dashed border-slate-300 p-5 text-sm text-slate-500">

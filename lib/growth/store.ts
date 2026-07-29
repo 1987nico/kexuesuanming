@@ -54,7 +54,7 @@ export interface GrowthStore {
   listDrafts(accountId: string): Promise<ContentDraft[]>;
   saveReview(review: GrowthReview): Promise<void>;
   getReviewByDraft(draftId: string): Promise<GrowthReview | null>;
-  listReviewsByAccount(accountId: string): Promise<GrowthReview[]>;
+  listReviewsByAccount(accountId: string, knownDraftIds?: string[]): Promise<GrowthReview[]>;
   saveUsage(event: Omit<UsageEvent, "id" | "created_at">): Promise<void>;
   getBusinessSettings(tenantId: string): Promise<BusinessSettings>;
   saveBusinessSettings(settings: BusinessSettings): Promise<void>;
@@ -214,10 +214,10 @@ class MemoryGrowthStore implements GrowthStore {
     );
   }
 
-  async listReviewsByAccount(accountId: string) {
-    const draftIds = new Set(
+  async listReviewsByAccount(accountId: string, knownDraftIds?: string[]) {
+    const draftIds = new Set(knownDraftIds ?? (
       [...this.drafts.values()].filter((d) => d.account_id === accountId).map((d) => d.id)
-    );
+    ));
     return canonicalReviews([...this.reviews.values()].filter((review) => draftIds.has(review.draft_id)));
   }
 
@@ -472,9 +472,8 @@ class SupabaseGrowthStore implements GrowthStore {
     return (data?.payload as GrowthReview) ?? null;
   }
 
-  async listReviewsByAccount(accountId: string) {
-    const drafts = await this.listDrafts(accountId);
-    const draftIds = drafts.map((d) => d.id);
+  async listReviewsByAccount(accountId: string, knownDraftIds?: string[]) {
+    const draftIds = knownDraftIds ?? (await this.listDrafts(accountId)).map((d) => d.id);
     if (draftIds.length === 0) return [];
     const { data, error } = await this.db
       .from("growth_reviews")

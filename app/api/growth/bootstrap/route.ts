@@ -26,6 +26,8 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const DEFAULT_TENANT_ID = "mianbajun";
+const WORKSPACE_SCOPES = ["core", "content", "review", "full"] as const;
+type WorkspaceScope = (typeof WORKSPACE_SCOPES)[number];
 
 const personaSchema = z.enum(["merchant", "buyer", "expert"]);
 
@@ -50,13 +52,22 @@ function resolveBusinessLine(value: string | null): GrowthBusinessLine {
     : "executive";
 }
 
+function resolveWorkspaceScope(value: string | null): WorkspaceScope {
+  return (WORKSPACE_SCOPES as readonly string[]).includes(value ?? "")
+    ? value as WorkspaceScope
+    : "full";
+}
+
 export async function GET(req: Request) {
+  const requestStartedAt = Date.now();
   const guard = await requireMianbaApiAuth();
   if ("response" in guard) return guard.response;
 
   const url = new URL(req.url);
   const persona = resolvePersona(url.searchParams.get("persona"));
   const businessLine = resolveBusinessLine(url.searchParams.get("businessLine"));
+  const requestedScope = resolveWorkspaceScope(url.searchParams.get("scope"));
+  const scope = process.env.GROWTH_LIGHT_BOOTSTRAP === "false" ? "full" : requestedScope;
   const store = growthStore();
   // 工作台隔离：操作者只取「自己的或未归属」账号；管理员不限
   const ownerScope = guard.auth.role === "admin" ? undefined : guard.auth.user.id;
@@ -69,16 +80,37 @@ export async function GET(req: Request) {
   // 旧账号没有 business_line；响应给工作台前先补齐并清洗生成上下文，
   // 但不回写历史原始载荷。
   const workspaceAccount = account ? accountForBusinessGeneration(account) : null;
-  const [plan, runs, drafts, reviewList, threeDayReviewCycles] = workspaceAccount
-    ? await Promise.all([
-      store.getLatestPlan(workspaceAccount.id),
-      store.listRuns(workspaceAccount.id),
-      store.listDrafts(workspaceAccount.id),
-      store.listReviewsByAccount(workspaceAccount.id),
-      reviewWorkspaceAccounts(store, workspaceAccount, guard.auth.user.id)
-        .then(mergeThreeDayReviewCycles),
-    ])
-    : [null, [], [], [], []] as const;
+  let plan: Awaited<ReturnType<typeof store.getLatestPlan>> = null;
+  let runs: Awaited<ReturnType<typeof store.listRuns>> = [];
+  let drafts: Awaited<ReturnType<typeof store.listDrafts>> = [];
+  let reviewList: Awaited<ReturnType<typeof store.listReviewsByAccount>> = [];
+  let threeDayReviewCycles: Awaited<ReturnType<typeof mergeThreeDayReviewCycles>> = [];
+
+  if (workspaceAccount) {
+    const includeContent = scope === "content" || scope === "full";
+    const includeReview = scope === "review" || scope === "full";
+    const includePlan = scope === "core" || includeContent;
+    const [nextPlan, nextRuns, nextDrafts, nextCycles] = await Promise.all([
+      includePlan ? store.getLatestPlan(workspaceAccount.id) : Promise.resolve(null),
+      includeContent ? store.listRuns(workspaceAccount.id) : Promise.resolve([]),
+      includeContent || includeReview ? store.listDrafts(workspaceAccount.id) : Promise.resolve([]),
+      includeReview
+        ? reviewWorkspaceAccounts(store, workspaceAccount, guard.auth.user.id)
+          .then(mergeThreeDayReviewCycles)
+        : Promise.resolve([]),
+    ]);
+    plan = nextPlan;
+    runs = nextRuns;
+    drafts = nextDrafts;
+    threeDayReviewCycles = nextCycles;
+    if (includeReview && drafts.length) {
+      // 正文已经读取过，复盘查询直接复用其 ID，避免 Supabase 再读取同一批正文。
+      reviewList = await store.listReviewsByAccount(
+        workspaceAccount.id,
+        drafts.map((draft) => draft.id),
+      );
+    }
+  }
   const responseAccount = workspaceAccount
     ? withHistoricalBenchmarkSourceUsage(workspaceAccount, [...runs])
     : null;
@@ -107,9 +139,10 @@ export async function GET(req: Request) {
     const generatable = methods.filter((method) => !method.sourceRequired || (responseAccount.topic_sources ?? []).some((item) => item.method_id === method.id && sourceIsUsable(item))).length;
     return [mode, { configured: methods.length, generatable, blockedBySource: methods.length - generatable }];
   })) : { default: { configured: 0, generatable: 0, blockedBySource: 0 }, explore: { configured: 0, generatable: 0, blockedBySource: 0 } };
-  return NextResponse.json({
+  const response = NextResponse.json({
     persona,
     businessLine,
+    loadedScopes: scope === "full" ? ["core", "content", "review"] : [scope],
     businessPosition: businessPositions[businessLine],
     businessPositions,
     account: responseAccount,
@@ -135,6 +168,9 @@ export async function GET(req: Request) {
       explanation: "旧版有效样本只展示为历史证据；v3.2方法学习从0重新累计。",
     },
   });
+  response.headers.set("Server-Timing", `growth-bootstrap;dur=${Date.now() - requestStartedAt}`);
+  response.headers.set("X-Growth-Workspace-Scope", scope);
+  return response;
 }
 
 export async function POST(req: Request) {

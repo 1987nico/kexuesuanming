@@ -21,8 +21,7 @@ export function supabaseServer(): SupabaseClient {
         fetch(input, {
           ...init,
           cache: "no-store",
-          next: { revalidate: 0 },
-        } as RequestInit & { next: { revalidate: number } }),
+        }),
     },
   });
   return _server;
