@@ -1842,12 +1842,26 @@ export function fallbackTitleCandidates(account: GrowthAccount, methodId: TitleM
       ? OVERSEAS_STUDENT_FALLBACK_TITLE_VARIANTS[methodId]
       : EXECUTIVE_FALLBACK_TITLE_VARIANTS[methodId];
   const emergency = NATIVE_EMERGENCY_TITLE_VARIANTS[account.business_line ?? "executive"][methodId] ?? [];
+  // “送稀缺资料/盘点”扩展池的前五条是早期兼容模板，主要用于承接旧数据。
+  // 新批次应先消费后续带明确资料对象和判断变量的候选，避免连续出现
+  // “这张表/这份地图/这5项”的同壳标题。
+  const prioritizedEmergency = methodId === "scarce_material"
+    ? [...emergency.slice(5), ...emergency.slice(0, 5)]
+    : methodId === "inventory"
+      // 盘点与资料池前半段按同一业务对象成对编写；再错开五个具体对象，
+      // 避免同一批出现“竞业补偿卡”+“逐项核对竞业补偿”这种跨方法换皮。
+      ? [...emergency.slice(10), ...emergency.slice(0, 10)]
+      : emergency;
   const parentEmergency = OVERSEAS_STUDENT_PARENT_BUYER_EMERGENCY_TITLE_VARIANTS[methodId] ?? [];
   // 亲子账号绝不能在兜底时退回泛“留学生本人”标题；否则模型波动会让
   // 选题页重新出现正确正文、错误标题的视角串线。
   const candidates = isOverseasParentBuyer
     ? [...variants, ...parentEmergency]
-    : [primary, ...variants, ...emergency];
+    // 其他空间优先使用带具体处境、判断对象或交付物的扩展候选。过去把
+    // “路线图/时间表/查5项”等通用主模板放在最前，模型短时不可用时，
+    // 用户连续换批就会先看到几批高度相似的标题，明明更具体的候选仍在
+    // 后面却没有机会出场。
+    : [...prioritizedEmergency, primary, ...variants];
   return Array.from(new Set(candidates)).map((title) => ({
     title,
     title_promise: fallbackCandidatePromise(methodId, title, primary, primaryPromise),

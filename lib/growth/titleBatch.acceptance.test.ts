@@ -161,6 +161,57 @@ describe("标题生成30批用户验收标准（确定性兜底回归）", () =>
     }
   });
 
+  it("非家长空间优先交付具体场景与具体工具，不先消费泛化主模板", () => {
+    const genericTitles = new Set([
+      "中高管转型路线图公开",
+      "高管转型，我只看这张表",
+      "离职前，把这份清单算完",
+      "中高管离职前查这5项",
+      "高管转型前必算的5笔账",
+      "离开平台前，盘点这5样",
+      "离职前，我只看这张表",
+      "转型时，先写这份判断单",
+      "换赛道前，先做一页盘点",
+      "高管求职，先补这张地图",
+      "职业选择卡住时，先看清单",
+      "转型前，先查这5个信号",
+      "离职前，盘点这5笔成本",
+      "换赛道前，写下这5个问题",
+      "高管求职前，先看这5项",
+      "重新选方向，先算这5笔账",
+      "留学生求职路线图公开",
+      "海归秋招时间表，我摊开了",
+      "回国求职前先看这张表",
+      "留学生投简历前查这5项",
+      "海归秋招前必查的5个日期",
+      "回国投递前先盘点这5样",
+      "秋招前，先看这张时间表",
+      "回国求职，先补这份地图",
+      "网申卡住时，先用这张清单",
+      "留学生求职，先写一页盘点",
+      "毕业前，先整理这份路径表",
+      "秋招前，先查这5个日期",
+      "投简历前，盘点这5件事",
+      "回国求职前，先看这5项",
+      "网申前，先补这5个信息",
+      "毕业季，先排这5个优先级",
+    ]);
+
+    for (const businessLine of ["overseas_student", "executive"] as GrowthBusinessLine[]) {
+      for (const persona of ["merchant", "expert"] as GrowthPersona[]) {
+        for (const methodId of ["scarce_material", "inventory"] as TitleMethodId[]) {
+          const firstFive = fallbackTitleCandidates(account(businessLine, persona), methodId).slice(0, 5);
+          expect(firstFive).toHaveLength(5);
+          expect(
+            firstFive.some((candidate) => genericTitles.has(candidate.title)),
+            `${businessLine}/${persona}/${methodId} 的首批候选不应再从泛化旧模板开始`,
+          ).toBe(false);
+          expect(new Set(firstFive.map((candidate) => candidate.premise_key)).size).toBe(5);
+        }
+      }
+    }
+  });
+
   it("六个业务×视角空间各连续五批：原生槽位始终交付新、自然、无换皮标题", () => {
     const spaces: Array<[GrowthBusinessLine, GrowthPersona, number]> = [
       ["overseas_student", "buyer", 4],
