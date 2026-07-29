@@ -511,7 +511,7 @@ const OVERSEAS_SCARCE_MATERIAL_ANGLES: ContrarianAngle[] = [
   { cue: "雇主担保核验页：确认公司真实资格", usedWhen: /雇主担保.*核验|公司.*担保.*资格/u },
   { cue: "岗位级别解码卡：对齐名称与职责", usedWhen: /岗位级别.*解码|名称.*职责.*卡/u },
   { cue: "在线测评设备单：提前排查软硬件", usedWhen: /测评.*设备.*单|软硬件.*测评/u },
-  { cue: "时区换算拨盘：统一面试准确时刻", usedWhen: /时区.*换算|面试.*准确时刻/u },
+  { cue: "时区换算表：统一面试准确时刻", usedWhen: /时区.*换算|面试.*准确时刻/u },
   { cue: "税后收入计算器：比较两地到手薪资", usedWhen: /税后.*计算|到手薪资.*两地/u },
   { cue: "Offer到期日历：安排回复与追问", usedWhen: /Offer.*到期.*日历|回复.*追问.*日历/iu },
   { cue: "试用期反问单：核清前三月任务", usedWhen: /试用期.*反问|前三月.*任务/u },

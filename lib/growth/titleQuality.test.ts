@@ -42,6 +42,11 @@ describe("标题质量门禁", () => {
     expect(evaluateGrowthTitleQuality("材料翻译最易失效认证日期").reasons).toContain("unnatural_jargon");
     expect(evaluateGrowthTitleQuality("岗名好听，还是活扎实更重要").reasons).toContain("unnatural_jargon");
     expect(evaluateGrowthTitleQuality("社团职位高，定位反而更难准").reasons).toContain("unnatural_jargon");
+    expect(evaluateGrowthTitleQuality("娃留兼职赚钱，还是辞了专心求职？").reasons).toContain("unnatural_jargon");
+    expect(evaluateGrowthTitleQuality("获奖经历多，简历对齐反而偏方向").reasons).toContain("unnatural_jargon");
+    expect(evaluateGrowthTitleQuality("盘点六步决策漏斗，定换挡下一步").reasons).toContain("unnatural_jargon");
+    expect(evaluateGrowthTitleQuality("简历投得勤，不如先填项目证据账本").reasons).toContain("unnatural_jargon");
+    expect(evaluateGrowthTitleQuality("时区换算拨盘，锁定面试时刻").reasons).toContain("unnatural_jargon");
     expect(evaluateGrowthTitleQuality("送你一份岗位核验表").acceptable).toBe(true);
     expect(evaluateGrowthTitleQuality("我替孩子找内推，不如先对岗位").reasons).toContain("incomplete_sentence");
     expect(evaluateGrowthTitleQuality("我替孩子找内推，不如先看岗位匹配").acceptable).toBe(true);
