@@ -47,6 +47,9 @@ describe("标题质量门禁", () => {
     expect(evaluateGrowthTitleQuality("盘点六步决策漏斗，定换挡下一步").reasons).toContain("unnatural_jargon");
     expect(evaluateGrowthTitleQuality("简历投得勤，不如先填项目证据账本").reasons).toContain("unnatural_jargon");
     expect(evaluateGrowthTitleQuality("时区换算拨盘，锁定面试时刻").reasons).toContain("unnatural_jargon");
+    expect(evaluateGrowthTitleQuality("学历核验最易混淆学位等级").reasons).toContain("unnatural_jargon");
+    expect(evaluateGrowthTitleQuality("投递漏斗复盘页，找方向筛选偏差").reasons).toContain("unnatural_jargon");
+    expect(evaluateGrowthTitleQuality("最容易混淆的学位等级").acceptable).toBe(true);
     expect(evaluateGrowthTitleQuality("送你一份岗位核验表").acceptable).toBe(true);
     expect(evaluateGrowthTitleQuality("我替孩子找内推，不如先对岗位").reasons).toContain("incomplete_sentence");
     expect(evaluateGrowthTitleQuality("我替孩子找内推，不如先看岗位匹配").acceptable).toBe(true);

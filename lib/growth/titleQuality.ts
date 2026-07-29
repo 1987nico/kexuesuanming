@@ -123,6 +123,9 @@ const UNNATURAL_JARGON_PATTERNS: RegExp[] = [
   /偏方向/gu,
   /填项目证据账本/gu,
   /时区换算拨盘/gu,
+  /最易(?:混淆|错判)(?!的)/gu,
+  /投递漏斗(?:复盘页)?/gu,
+  /找方向筛选偏差/gu,
   /(?:玄学|黑话|邪门)[^，。！？?；;]{0,8}(?:漏斗|胜算|定价)/gu,
 ];
 
@@ -466,7 +469,7 @@ export function evaluateTitleSemanticDuplicate(leftTitle: string, rightTitle: st
   ));
   const isExplicitFamilyDisclosurePressure = (title: string) => (
     /(?:爸妈|父母|家里)/u.test(title)
-    && /(?:不敢.{0,8}(?:说|讲|告诉)|怕接|不敢接)/u.test(title)
+    && /(?:不敢.{0,8}(?:说|讲|告诉)|怕接|不敢接|以为.{0,6}(?:稳|顺|没事|还好).{0,6}(?:其实|但|却))/u.test(title)
   );
   const isSameParentJobSearchPressureTheme = left.audience === "parent"
     && right.audience === "parent"

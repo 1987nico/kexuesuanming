@@ -13,7 +13,7 @@ const NATIVE_METHODS = {
   expert: ["human_pain", "tug_of_war", "scarce_material", "superlative", "contrarian", "inventory"],
   merchant: ["human_pain", "scarce_material", "inventory"],
 };
-const SPACES = [
+const ALL_SPACES = [
   ["overseas_student", "buyer"],
   ["overseas_student", "merchant"],
   ["overseas_student", "expert"],
@@ -21,6 +21,15 @@ const SPACES = [
   ["executive", "merchant"],
   ["executive", "expert"],
 ];
+const requestedSpaceKeys = new Set(
+  String(process.env.GROWTH_STRESS_SPACES || "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean),
+);
+const SPACES = requestedSpaceKeys.size
+  ? ALL_SPACES.filter(([businessLine, persona]) => requestedSpaceKeys.has(`${businessLine}/${persona}`))
+  : ALL_SPACES;
 
 function titleFingerprint(value) {
   return String(value || "")
@@ -605,7 +614,7 @@ function validateNewBatch(state, response, round) {
 
 const ledger = {
   objective: `正式部署上的6空间×${ROUNDS}批真实用户标题验收`,
-  deployment: "dpl_ACu95N35J3fSuLBUBmG8UZfHjdmG",
+  deployment: "dpl_9Bk8QKK5aXHvHScFQwzRA38GWxyU",
   started_at: new Date().toISOString(),
   status: "running",
   batches_passed: 0,

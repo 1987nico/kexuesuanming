@@ -100,7 +100,8 @@ describe("来源型标题生成合同", () => {
 
     expect(prompt).toContain("三种不同的资料载体与决策任务");
     expect(prompt).toContain("岗位JD拆解卡");
-    expect(prompt).toContain("投递漏斗复盘页");
+    expect(prompt).toContain("投递结果复盘页");
+    expect(prompt).not.toContain("投递漏斗复盘页");
     expect(prompt).toContain("不要连续输出“某某表/清单/路线图”");
   });
 
