@@ -326,6 +326,42 @@ async function loadSpace(businessLine, persona) {
   };
 }
 
+async function requestCompletedTopicBatch(state, round) {
+  const startedAt = Date.now();
+  const requestId = `stress-${state.businessLine}-${state.persona}-${round}-${crypto.randomUUID()}`;
+  const body = {
+    accountId: state.accountId,
+    businessLine: state.businessLine,
+    persona: state.persona,
+    generationMode: "default",
+    action: "regenerate_titles",
+    requestId,
+  };
+  while (Date.now() - startedAt < 125_000) {
+    const remainingMs = 125_000 - (Date.now() - startedAt);
+    const response = await request("/api/growth/topics", {
+      method: "POST",
+      timeoutMs: Math.max(1_000, remainingMs),
+      body,
+    });
+    response.elapsedMs = Date.now() - startedAt;
+    if (!response.ok || response.data.status !== "generating") return response;
+    await new Promise((resolve) => setTimeout(
+      resolve,
+      Math.max(800, Math.min(response.data.retryAfterMs ?? 1_500, 3_000)),
+    ));
+  }
+  return {
+    ok: false,
+    status: 504,
+    elapsedMs: Date.now() - startedAt,
+    data: {
+      error: "generation_poll_timeout",
+      message: "同一批标题在125秒内仍未完成。",
+    },
+  };
+}
+
 function validateNewBatch(state, response, round) {
   if (response.elapsedMs > 120_000) {
     throw Object.assign(new Error("标题批次超过120秒交付上限"), {
@@ -455,7 +491,7 @@ function validateNewBatch(state, response, round) {
 
 const ledger = {
   objective: `正式部署上的6空间×${ROUNDS}批真实用户标题验收`,
-  deployment: "dpl_6eoAnWCse6vztPqXQsD4aZZQjZ33",
+  deployment: "dpl_55rZPLTmaEMHeNHFHZJyZRUeW4de",
   started_at: new Date().toISOString(),
   status: "running",
   batches_passed: 0,
@@ -479,20 +515,12 @@ try {
     // 平台资源抖动误判成用户功能故障，也不符合真实操作路径。
     for (let offset = 0; offset < states.length; offset += 1) {
       const group = states.slice(offset, offset + 1);
-      const responses = await Promise.all(group.map((state) => request("/api/growth/topics", {
-        method: "POST",
-        // 给客户端留少量网络收尾时间，但正式验收仍由上面的 120 秒硬门槛
-        // 判定；超过 120 秒即失败，不能把“最终返回了”算作通过。
-        timeoutMs: 125_000,
-        body: {
-          accountId: state.accountId,
-          businessLine: state.businessLine,
-          persona: state.persona,
-          generationMode: "default",
-          action: "regenerate_titles",
-          requestId: `stress-${state.businessLine}-${state.persona}-${round}-${crypto.randomUUID()}`,
-        },
-      })));
+      // 与真实页面保持一致：边缘网络若把同一请求重放，接口会先返回
+      // generating；验收必须拿同一个 requestId 继续查询同一批，不能把正常
+      // 的幂等恢复误判成“六个槽位同时空返回”。
+      const responses = await Promise.all(group.map((state) =>
+        requestCompletedTopicBatch(state, round)
+      ));
       for (let index = 0; index < group.length; index += 1) {
         const state = group[index];
         const response = responses[index];
