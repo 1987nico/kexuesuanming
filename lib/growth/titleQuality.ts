@@ -542,6 +542,17 @@ export function titlesAreSemanticDuplicates(leftTitle: string, rightTitle: strin
  */
 export function titleForMethodSemanticComparison(methodId: string, value: string) {
   const canonical = canonicalizeGrowthTitle(value);
+  if (methodId === "nostalgia") {
+    // 怀旧法天然会重复“以前/如今、陪娃”等时间与身份外壳。若把外壳计入
+    // 相似度，长期账号会把“办交通卡→算通勤”和“写论文→做作品集”等
+    // 完全不同的今昔场景全部误杀。这里只剥离方法固定外壳；真正同题的
+    // 学历→面试、录取→等面试等母题仍由上面的强语义规则识别。
+    return canonical
+      .replace(/(?:以前|当年|过去|从前|那年|如今|现在|后来)/gu, "")
+      .replace(/(?:我家|我们家|陪孩子|陪娃|孩子|娃|儿子|女儿)/gu, "")
+      .replace(/^[，,:：\s]+|[，,:：\s]+$/gu, "")
+      || canonical;
+  }
   if (methodId !== "inventory" && methodId !== "scarce_material") return canonical;
   return canonical
     .replace(/^(?:留学生求职|海归求职|秋招陪跑|高管转型|中高管转型|职业转型)[，,:：]*/u, "")

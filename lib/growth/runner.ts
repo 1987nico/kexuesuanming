@@ -1506,7 +1506,7 @@ function titlesAreMethodAwareNearDuplicate(
   right: string,
 ) {
   if (titlesAreMethodAwareSemanticDuplicates(methodId, left, right)) return true;
-  if (methodId !== "inventory" && methodId !== "scarce_material") {
+  if (methodId !== "inventory" && methodId !== "scarce_material" && methodId !== "nostalgia") {
     return titlesAreNearDuplicate(left, right);
   }
   return titlesAreNearDuplicate(

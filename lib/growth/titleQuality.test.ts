@@ -273,6 +273,22 @@ describe("标题语义去重", () => {
     expect(result.reasons).toContain("当年录取、如今等面试的怀旧反差母题相同");
   });
 
+  it("怀旧法去掉固定今昔外壳后，不会误杀不同生活物件与求职任务", () => {
+    expect(titlesAreMethodAwareSemanticDuplicates(
+      "nostalgia",
+      "陪娃办交通卡，如今算通勤月成本",
+      "陪娃改论文脚注，如今改简历要点",
+    )).toBe(false);
+  });
+
+  it("怀旧法去掉固定外壳后，真正相同的社团经历转工作证据仍会拦截", () => {
+    expect(titlesAreMethodAwareSemanticDuplicates(
+      "nostalgia",
+      "以前陪娃写社团职位，现在证工作结果",
+      "陪娃写社团经历，如今证明工作结果",
+    )).toBe(true);
+  });
+
   it("不会把录取后的面试准备误判为等面试消息的怀旧对照", () => {
     expect(titlesAreSemanticDuplicates(
       "当年收录取通知，现在等面试信",
