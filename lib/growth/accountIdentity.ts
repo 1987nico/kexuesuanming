@@ -28,9 +28,12 @@ export function resolveProfileIdentity(account: GrowthAccount): GrowthProfileIde
   if (account.persona === "expert") return "professional_expert";
   if (account.business_line === "executive") return "executive_self";
 
-  const primaryEvidence = [
+  const profileEvidence = [
     account.profile_name,
     account.one_liner,
+  ].filter(Boolean).join(" ");
+  const primaryEvidence = [
+    profileEvidence,
     account.name,
     account.persona_specific?.identity,
   ].filter(Boolean).join(" ");
@@ -42,8 +45,8 @@ export function resolveProfileIdentity(account: GrowthAccount): GrowthProfileIde
   // 都明确是本人求职记录，则把这个旧默认值视作兼容脏数据，而非人工选择。
   if (
     account.profile_identity === "overseas_student_parent"
-    && STUDENT_SELF_SIGNAL.test(primaryEvidence)
-    && !PARENT_SIGNAL.test(primaryEvidence)
+    && STUDENT_SELF_SIGNAL.test(profileEvidence)
+    && !PARENT_SIGNAL.test(profileEvidence)
   ) {
     return "overseas_student_self";
   }

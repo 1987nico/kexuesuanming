@@ -56,6 +56,7 @@ describe("account profile identity", () => {
     const account = buyer({
       profile_name: "留子回国求职踩坑实录｜边找方向边更新",
       one_liner: "留子回国求职踩坑实录｜边找方向边更新",
+      name: "留学生家长",
       profile_identity: "overseas_student_parent",
     });
     expect(resolveProfileIdentity(account)).toBe("overseas_student_self");
