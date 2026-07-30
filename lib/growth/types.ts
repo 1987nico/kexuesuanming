@@ -590,6 +590,18 @@ export interface GrowthAccount {
   /** 旧账号未保存该字段时根据人设内容兼容识别业务线。 */
   business_line?: GrowthBusinessLine;
   persona: GrowthPersona;
+  /** 面向运营展示的账号人设名称；旧数据为空时由系统按业务与视角补默认名。 */
+  profile_name?: string;
+  /** 归档只隐藏账号人设，不删除其标题、正文与复盘历史。 */
+  profile_status?: "active" | "archived";
+  /** 同一业务与视角下首次进入时优先选择的账号人设。 */
+  is_default_profile?: boolean;
+  display_order?: number;
+  last_used_at?: string;
+  /** 新建账号人设请求的幂等键，防止网络重试产生重复账号。 */
+  profile_creation_request_id?: string;
+  /** 只保存小红书账号标识，不保存密码、Cookie 或登录凭据。 */
+  platform_binding?: GrowthPlatformBinding;
   name: string;
   target_user: string;
   core_problem: string;
@@ -625,6 +637,30 @@ export interface GrowthAccount {
   three_day_review_cycles?: ThreeDayReviewCycle[];
   // 旧字段兼容：历史数据仍能打开，新代码统一写入 weekly_review。
   stage_review?: StageReviewResult;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface GrowthPlatformBinding {
+  platform: "xiaohongshu";
+  account_name: string;
+  account_uid?: string;
+  profile_url?: string;
+  binding_status: "bound" | "unbound";
+  bound_at?: string;
+}
+
+export interface GrowthAccountSummary {
+  id: string;
+  business_line: GrowthBusinessLine;
+  persona: GrowthPersona;
+  profile_name: string;
+  one_liner: string;
+  profile_status: "active" | "archived";
+  is_default_profile: boolean;
+  display_order: number;
+  last_used_at: string;
+  platform_binding: GrowthPlatformBinding;
   created_at: string;
   updated_at: string;
 }

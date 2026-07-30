@@ -5,6 +5,7 @@ import MianbaLogoutButton from "@/app/mianba/MianbaLogoutButton";
 import type {
   ContentDraft,
   GrowthAccount,
+  GrowthAccountSummary,
   GrowthBusinessLine,
   GrowthBusinessPosition,
   GrowthPersona,
@@ -63,6 +64,8 @@ interface BootstrapData {
   businessPosition: GrowthBusinessPosition;
   businessPositions: Record<GrowthBusinessLine, GrowthBusinessPosition>;
   account: GrowthAccount | null;
+  accountProfiles: GrowthAccountSummary[];
+  selectedAccountId: string | null;
   plan: GrowthPlan | null;
   runs: GrowthRun[];
   drafts: ContentDraft[];
@@ -71,13 +74,17 @@ interface BootstrapData {
   reviews: Record<string, GrowthReview>;
   threeDayReviewCycles: ThreeDayReviewCycle[];
   weeklyReview: WeeklyReviewResult | null;
-  capabilities: { reviewScreenshot: boolean };
+  capabilities: { reviewScreenshot: boolean; multiAccountPersona?: boolean };
   preview: { enabled: boolean; banner?: string; productionDataConnected?: boolean };
   sourceCounts: Record<MethodGenerationMode, { configured: number; generatable: number; blockedBySource: number }>;
   learningSummary: { historicalEffectiveSamples: number; newLearningSamples: number; explanation: string };
 }
 
 interface AccountForm {
+  profile_name: string;
+  platform_account_name: string;
+  platform_account_uid: string;
+  platform_profile_url: string;
   name: string;
   one_liner: string;
   target_user: string;
@@ -135,6 +142,10 @@ const businessReviewFields = [
 const numericReviewFields = [...contentReviewFields, ...businessReviewFields] as const;
 
 const emptyAccount: AccountForm = {
+  profile_name: "",
+  platform_account_name: "",
+  platform_account_uid: "",
+  platform_profile_url: "",
   name: "面霸君",
   one_liner: "",
   target_user: "",
@@ -222,6 +233,10 @@ function asLocalDateTime(value = new Date().toISOString()) {
 
 function accountForm(account: GrowthAccount): AccountForm {
   return {
+    profile_name: account.profile_name || account.one_liner || account.name,
+    platform_account_name: account.platform_binding?.account_name || "",
+    platform_account_uid: account.platform_binding?.account_uid || "",
+    platform_profile_url: account.platform_binding?.profile_url || "",
     name: account.name,
     one_liner: account.one_liner || "",
     target_user: account.target_user,
@@ -302,8 +317,11 @@ function sourceForRunMethod(
   return topicSource ?? latestSourceForMethod(sources, methodId);
 }
 
-const workspaceKey = (businessLine: GrowthBusinessLine, persona: GrowthPersona) =>
-  `${businessLine}:${persona}`;
+const workspaceKey = (
+  businessLine: GrowthBusinessLine,
+  persona: GrowthPersona,
+  accountId: string | null = null,
+) => `${businessLine}:${persona}:${accountId || "auto"}`;
 
 type WorkflowStep = "0" | "1" | "2" | "3" | "4" | "5";
 type WorkspaceScope = "core" | "content" | "review";
@@ -320,6 +338,8 @@ function mergeWorkspaceData(
     !current
     || current.businessLine !== incoming.businessLine
     || current.persona !== incoming.persona
+    || (current.selectedAccountId && incoming.selectedAccountId
+      && current.selectedAccountId !== incoming.selectedAccountId)
   ) return incoming;
   const incomingScopes = new Set(incoming.loadedScopes ?? []);
   const loadedScopes = [...new Set([
@@ -365,9 +385,11 @@ type WorkspaceTransient = {
 
 type PendingContextSwitch =
   | { type: "business"; value: GrowthBusinessLine }
-  | { type: "persona"; value: GrowthPersona };
+  | { type: "persona"; value: GrowthPersona }
+  | { type: "account"; value: string };
 
 const PERSONA_SUGGESTION_LABELS: Partial<Record<keyof AccountForm, string>> = {
+  profile_name: "账号人设名称",
   name: "人设名称",
   one_liner: "一句话人设",
   target_user: "目标人群",
@@ -383,6 +405,7 @@ const PERSONA_SUGGESTION_LABELS: Partial<Record<keyof AccountForm, string>> = {
 export default function GrowthPage() {
   const [businessLine, setBusinessLine] = useState<GrowthBusinessLine>("overseas_student");
   const [persona, setPersona] = useState<GrowthPersona>("buyer");
+  const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
   const [data, setData] = useState<BootstrapData | null>(null);
   const [form, setForm] = useState<AccountForm>(emptyAccount);
   const [source, setSource] = useState<SourceForm>(emptySource);
@@ -410,6 +433,11 @@ export default function GrowthPage() {
   const [personaOpen, setPersonaOpen] = useState(false);
   const [personaEditing, setPersonaEditing] = useState(false);
   const [personaSuggestion, setPersonaSuggestion] = useState<GrowthAccount | null>(null);
+  const [newProfileOpen, setNewProfileOpen] = useState(false);
+  const [newProfileName, setNewProfileName] = useState("");
+  const [newPlatformName, setNewPlatformName] = useState("");
+  const [newPlatformUid, setNewPlatformUid] = useState("");
+  const [newPlatformUrl, setNewPlatformUrl] = useState("");
   const [acceptedPersonaSuggestions, setAcceptedPersonaSuggestions] = useState<Record<string, boolean>>({});
   const [businessEditOpen, setBusinessEditOpen] = useState(false);
   const [visibleStep, setVisibleStep] = useState<WorkflowStep>("0");
@@ -436,6 +464,7 @@ export default function GrowthPage() {
 
   const applyWorkspaceData = useCallback((next: BootstrapData | null, transient?: WorkspaceTransient) => {
     setData(next);
+    setSelectedAccountId(next?.selectedAccountId ?? next?.account?.id ?? null);
     setForm(next?.account ? accountForm(next.account) : { ...emptyAccount });
     setVariants(transient?.variants ?? []);
     setSelectedTopic(transient?.selectedTopic ?? null);
@@ -465,6 +494,7 @@ export default function GrowthPage() {
     setPersonaEditing(false);
     setPersonaSuggestion(null);
     setAcceptedPersonaSuggestions({});
+    setNewProfileOpen(false);
     setBusinessEditOpen(false);
     if (transient?.visibleStep) setVisibleStep(transient.visibleStep);
     setMethodGroupView("native");
@@ -477,8 +507,9 @@ export default function GrowthPage() {
     nextPersona: GrowthPersona,
     scope: WorkspaceScope,
     force = false,
+    nextAccountId: string | null = null,
   ) => {
-    const key = workspaceKey(nextBusinessLine, nextPersona);
+    const key = workspaceKey(nextBusinessLine, nextPersona, nextAccountId);
     const requestKey = `${key}:${scope}`;
     if (force) {
       workspaceControllers.current.get(requestKey)?.abort();
@@ -490,7 +521,7 @@ export default function GrowthPage() {
     workspaceControllers.current.set(requestKey, controller);
     let request: Promise<BootstrapData>;
     request = requestJSON<BootstrapData>(
-      `/api/growth/bootstrap?businessLine=${nextBusinessLine}&persona=${nextPersona}&scope=${scope}`,
+      `/api/growth/bootstrap?businessLine=${nextBusinessLine}&persona=${nextPersona}&scope=${scope}${nextAccountId ? `&accountId=${encodeURIComponent(nextAccountId)}` : ""}`,
       { signal: controller.signal },
     ).finally(() => {
       if (workspaceRequests.current.get(requestKey) === request) {
@@ -508,8 +539,9 @@ export default function GrowthPage() {
     nextBusinessLine: GrowthBusinessLine,
     nextPersona: GrowthPersona,
     force = false,
+    nextAccountId: string | null = null,
   ) => {
-    const key = workspaceKey(nextBusinessLine, nextPersona);
+    const key = workspaceKey(nextBusinessLine, nextPersona, nextAccountId);
     activeWorkspace.current = key;
     const cached = workspaceCache.current.get(key);
     if (cached && workspaceHasScope(cached, "core") && !force) {
@@ -524,11 +556,14 @@ export default function GrowthPage() {
     setBusy("load");
     setMessage("");
     try {
-      const incoming = await fetchWorkspace(nextBusinessLine, nextPersona, "core", force);
+      const incoming = await fetchWorkspace(nextBusinessLine, nextPersona, "core", force, nextAccountId);
       const next = mergeWorkspaceData(cached, incoming);
+      const resolvedKey = workspaceKey(nextBusinessLine, nextPersona, incoming.selectedAccountId);
       workspaceCache.current.set(key, next);
+      workspaceCache.current.set(resolvedKey, next);
       if (activeWorkspace.current === key) {
-        applyWorkspaceData(next, workspaceTransients.current.get(key));
+        activeWorkspace.current = resolvedKey;
+        applyWorkspaceData(next, workspaceTransients.current.get(resolvedKey) ?? workspaceTransients.current.get(key));
       }
     } catch (error) {
       if ((error as Error).name === "AbortError") return;
@@ -542,12 +577,12 @@ export default function GrowthPage() {
     scope: Exclude<WorkspaceScope, "core">,
     force = false,
   ) => {
-    const key = workspaceKey(businessLine, persona);
+    const key = workspaceKey(businessLine, persona, selectedAccountId);
     const cached = workspaceCache.current.get(key);
     if (!force && workspaceHasScope(cached, scope)) return;
     setBusy(`load-${scope}`);
     try {
-      const incoming = await fetchWorkspace(businessLine, persona, scope, force);
+      const incoming = await fetchWorkspace(businessLine, persona, scope, force, selectedAccountId);
       const next = mergeWorkspaceData(workspaceCache.current.get(key), incoming);
       workspaceCache.current.set(key, next);
       if (activeWorkspace.current === key) {
@@ -570,7 +605,7 @@ export default function GrowthPage() {
     } finally {
       if (activeWorkspace.current === key) setBusy(null);
     }
-  }, [businessLine, fetchWorkspace, persona]);
+  }, [businessLine, fetchWorkspace, persona, selectedAccountId]);
 
   useEffect(() => {
     void load(businessLine, persona);
@@ -590,7 +625,7 @@ export default function GrowthPage() {
   }, []);
 
   useEffect(() => {
-    if (data) workspaceCache.current.set(workspaceKey(businessLine, persona), data);
+    if (data) workspaceCache.current.set(workspaceKey(businessLine, persona, data.account?.id ?? null), data);
   }, [businessLine, data, persona]);
 
   useEffect(() => {
@@ -646,7 +681,7 @@ export default function GrowthPage() {
       ?? variants[0];
   }, [bodyVersionView, chosen, variants]);
   const workflowSteps = [
-    ["0", "业务定位"], ["1", "三家视角"], ["2", "人设"], ["3", "选题"],
+    ["0", "业务定位"], ["1", "三家视角"], ["2", "账号人设"], ["3", "选题"],
     ["4", "正文"], ["5", "三日复盘"],
   ] as const;
   const currentTaskStatus = busy?.startsWith("load") ? "正在读取当前步骤"
@@ -670,7 +705,7 @@ export default function GrowthPage() {
     + (selectedTopic && !activeTopic ? 1 : 0) + (variants.length > 0 && !chosen ? 1 : 0);
 
   function rememberCurrentWorkspace() {
-    workspaceTransients.current.set(workspaceKey(businessLine, persona), {
+    workspaceTransients.current.set(workspaceKey(businessLine, persona, data?.account?.id ?? selectedAccountId), {
       variants,
       selectedTopic,
       activeTopic,
@@ -718,7 +753,7 @@ export default function GrowthPage() {
   }
 
   function performContextSwitch(target: PendingContextSwitch, preserve: boolean) {
-    const currentKey = workspaceKey(businessLine, persona);
+    const currentKey = workspaceKey(businessLine, persona, data?.account?.id ?? selectedAccountId);
     if (preserve) rememberCurrentWorkspace();
     else workspaceTransients.current.delete(currentKey);
     if (target.type === "business") {
@@ -726,14 +761,23 @@ export default function GrowthPage() {
       activeWorkspace.current = key;
       setBusinessPositionForm(workspaceCache.current.get(key)?.businessPosition ?? DEFAULT_BUSINESS_POSITIONS[target.value]);
       applyWorkspaceData(workspaceCache.current.get(key) ?? null, preserve ? workspaceTransients.current.get(key) : undefined);
+      setSelectedAccountId(null);
       setBusinessLine(target.value);
       setVisibleStep("0");
-    } else {
+    } else if (target.type === "persona") {
       const key = workspaceKey(businessLine, target.value);
       activeWorkspace.current = key;
       applyWorkspaceData(workspaceCache.current.get(key) ?? null, preserve ? workspaceTransients.current.get(key) : undefined);
+      setSelectedAccountId(null);
       setPersona(target.value);
       setVisibleStep("1");
+    } else {
+      const key = workspaceKey(businessLine, persona, target.value);
+      activeWorkspace.current = key;
+      setSelectedAccountId(target.value);
+      applyWorkspaceData(workspaceCache.current.get(key) ?? null, preserve ? workspaceTransients.current.get(key) : undefined);
+      setVisibleStep("2");
+      void load(businessLine, persona, false, target.value);
     }
     setPendingContextSwitch(null);
   }
@@ -756,6 +800,17 @@ export default function GrowthPage() {
       return;
     }
     const target = { type: "persona", value: next } as const;
+    if (transientDirtyCount) setPendingContextSwitch(target);
+    else performContextSwitch(target, true);
+  }
+
+  function switchAccount(nextAccountId: string) {
+    if (nextAccountId === data?.account?.id) return;
+    if (topicGenerationInFlight.current) {
+      setMessage("这一批标题仍在生成，请等待完成后再切换账号人设。");
+      return;
+    }
+    const target = { type: "account", value: nextAccountId } as const;
     if (transientDirtyCount) setPendingContextSwitch(target);
     else performContextSwitch(target, true);
   }
@@ -799,6 +854,88 @@ export default function GrowthPage() {
       setPersonaOpen(true);
       setPersonaEditing(true);
       setMessage(`系统提出了${changed.length}项人设修改建议；逐项确认后再保存，不会直接覆盖当前人设。`);
+    } catch (error) {
+      setMessage((error as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function createAccountProfile() {
+    if (!newProfileName.trim() || !newPlatformName.trim()) {
+      setMessage("请先填写账号人设名称和小红书账号名称。");
+      return;
+    }
+    setBusy("create-account-profile");
+    setMessage("");
+    try {
+      const result = await requestJSON<{ account: GrowthAccount; plan: GrowthPlan }>("/api/growth/bootstrap", {
+        method: "POST",
+        body: JSON.stringify({
+          businessLine,
+          persona,
+          mode: "create",
+          requestId: crypto.randomUUID(),
+          profileName: newProfileName.trim(),
+          accountName: newProfileName.trim(),
+          targetUser: businessPosition.target_user,
+          coreProblem: businessPosition.core_problem,
+          trustSource: businessPosition.trust_source,
+          platformBinding: {
+            platform: "xiaohongshu",
+            account_name: newPlatformName.trim(),
+            account_uid: newPlatformUid.trim() || undefined,
+            profile_url: newPlatformUrl.trim() || undefined,
+          },
+        }),
+      });
+      workspaceCache.current.delete(workspaceKey(businessLine, persona));
+      setNewProfileName("");
+      setNewPlatformName("");
+      setNewPlatformUid("");
+      setNewPlatformUrl("");
+      setNewProfileOpen(false);
+      await load(businessLine, persona, true, result.account.id);
+      setPersonaOpen(true);
+      setMessage("新账号人设已创建并切换。它的选题、正文和复盘会独立保存。");
+    } catch (error) {
+      setMessage((error as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function archiveCurrentProfile() {
+    if (!data?.account) return;
+    if (!window.confirm(`归档“${form.profile_name || form.one_liner}”后，其历史标题、正文和复盘仍会保留。确认归档吗？`)) return;
+    setBusy("archive-account-profile");
+    try {
+      await requestJSON(`/api/growth/accounts/${data.account.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ action: "archive" }),
+      });
+      workspaceCache.current.clear();
+      setSelectedAccountId(null);
+      await load(businessLine, persona, true);
+      setMessage("账号人设已归档，历史内容没有删除。");
+    } catch (error) {
+      setMessage((error as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function restoreProfile(accountId: string) {
+    setBusy(`restore-account-profile-${accountId}`);
+    setMessage("");
+    try {
+      await requestJSON(`/api/growth/accounts/${accountId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ action: "restore" }),
+      });
+      workspaceCache.current.clear();
+      await load(businessLine, persona, true, accountId);
+      setMessage("账号人设已恢复并切换，原来的标题、正文和复盘仍然保留。");
     } catch (error) {
       setMessage((error as Error).message);
     } finally {
@@ -870,9 +1007,28 @@ export default function GrowthPage() {
           filter_words: lines(form.filter_words),
           avoid_expressions: lines(form.avoid_expressions),
           persona_specific: form.persona_specific,
+          profile_name: form.profile_name,
+          platform_binding: {
+            platform: "xiaohongshu",
+            account_name: form.platform_account_name,
+            account_uid: form.platform_account_uid || undefined,
+            profile_url: form.platform_profile_url || undefined,
+            binding_status: form.platform_account_name ? "bound" : "unbound",
+            bound_at: data.account.platform_binding?.bound_at,
+          },
         }),
       });
-      setData({ ...data, account: result.account });
+      setData({
+        ...data,
+        account: result.account,
+        accountProfiles: data.accountProfiles.map((profile) => profile.id === result.account.id ? {
+          ...profile,
+          profile_name: result.account.profile_name || result.account.one_liner || result.account.name,
+          one_liner: result.account.one_liner || "",
+          platform_binding: result.account.platform_binding || profile.platform_binding,
+          updated_at: result.account.updated_at,
+        } : profile),
+      });
       setPersonaEditing(false);
       setMessage("人设已保存。");
     } catch (error) {
@@ -903,7 +1059,7 @@ export default function GrowthPage() {
           published_at: new Date(source.published_at).toISOString(),
         }),
       });
-      await load(businessLine, persona, true);
+      await load(businessLine, persona, true, data.account.id);
       goToStep("3");
       setMessage(`${result.validation.message}；${result.usable ? "已进入近期可用池" : "当前不参与标题生成"}。`);
     } catch (error) {
@@ -928,7 +1084,7 @@ export default function GrowthPage() {
         method: "PATCH",
         body: JSON.stringify({ accountId: data.account.id, verified_by_operator: verified }),
       });
-      await load(businessLine, persona, true);
+      await load(businessLine, persona, true, data.account.id);
       goToStep("3");
       setMessage(`${result.validation.message}；${result.usable ? "可参与生成" : "不参与生成"}。`);
     } catch (error) {
@@ -953,7 +1109,7 @@ export default function GrowthPage() {
     const account = data.account;
     // 标题请求永远归属发起时的“业务×视角”。异步返回后若操作者已经切换，
     // 旧结果只能留在原空间，绝不能回写到当前页面。
-    const requestWorkspace = workspaceKey(businessLine, persona);
+    const requestWorkspace = workspaceKey(businessLine, persona, account.id);
     const requestWorkspaceIsActive = () => activeWorkspace.current === requestWorkspace;
     const selectedIsAffected = Boolean(selectedTopic && (
       action === "regenerate_titles"
@@ -1169,7 +1325,7 @@ export default function GrowthPage() {
       if (errorMessage.includes("自动更换母题")) {
         // 后端可能已经清除了与方法不匹配的旧来源，即使完整批次最终没有生成成功，
         // 也要立即同步最新来源池，避免页面继续展示已被门禁拒绝的旧母题。
-        await load(businessLine, persona, true);
+        await load(businessLine, persona, true, account.id);
         setMethodGroupView(methodGroupView);
       }
       setTopicMessage(errorMessage);
@@ -1312,7 +1468,7 @@ export default function GrowthPage() {
   async function generateBodies(run: GrowthRun, topic: TopicCandidate) {
     const account = data?.account;
     if (!account
-      || activeWorkspace.current !== workspaceKey(businessLine, persona)
+      || activeWorkspace.current !== workspaceKey(businessLine, persona, account.id)
       || run.account_id !== account.id
       || !accountMatchesWorkspace(account, { accountId: account.id, businessLine, persona })) {
       setVariants([]);
@@ -1320,7 +1476,7 @@ export default function GrowthPage() {
       setActiveTopic(null);
       setChosen(null);
       setMessage("检测到业务或视角已经切换，已清空旧标题。请在当前业务重新选择标题。");
-      await load(businessLine, persona, true);
+      await load(businessLine, persona, true, account?.id ?? selectedAccountId);
       return;
     }
     if (topic.title_promise_status === "stale" || topic.title_promise_status === "invalid") {
@@ -1413,7 +1569,7 @@ export default function GrowthPage() {
         method: "POST",
         body: JSON.stringify({ published_at: new Date(publishedAt).toISOString() }),
       });
-      await load(businessLine, persona, true);
+      await load(businessLine, persona, true, draft.account_id);
       setMessage("已记录实际发布时间；这篇内容会进入下一轮三日复盘的官方Excel匹配范围。");
       goToStep("5");
     } catch (error) {
@@ -1511,7 +1667,7 @@ export default function GrowthPage() {
         { method: existing ? "PATCH" : "POST", body: JSON.stringify(payload) },
       );
       setReviewDraft(null);
-      await load(businessLine, persona, true);
+      await load(businessLine, persona, true, data?.account?.id ?? selectedAccountId);
       setMessage(`${reviewWindow === "content_24h" ? "24小时内容复盘" : reviewWindow === "business_7d" ? "7天商业结果" : "30天成交归因"}已保存；本次更新：${result.changedFields.join("、") || "无指标变化"}。`);
     } catch (error) {
       setMessage((error as Error).message);
@@ -1528,7 +1684,7 @@ export default function GrowthPage() {
         method: "POST",
         body: JSON.stringify({ accountId: data.account.id, snapshot: true }),
       });
-      await load(businessLine, persona, true);
+      await load(businessLine, persona, true, data.account.id);
       setReviewTab("strategy");
       setMessage("已保存固定周期快照；实时汇总不会覆盖上一周期。");
     } catch (error) {
@@ -1546,7 +1702,7 @@ export default function GrowthPage() {
         method: "PATCH",
         body: JSON.stringify({ accountId: data.account.id, status }),
       });
-      await load(businessLine, persona, true);
+      await load(businessLine, persona, true, data.account.id);
       setReviewTab("strategy");
       setMessage(status === "confirmed" ? "下一周期实验卡已确认，将作为下一轮选题生成依据。" : "实验卡已拒绝，不会影响下一轮选题。");
     } catch (error) {
@@ -1583,7 +1739,7 @@ export default function GrowthPage() {
         }),
       });
       setBackfillOpen(false);
-      await load(businessLine, persona, true);
+      await load(businessLine, persona, true, data.account.id);
       setReviewTab("tasks");
       setMessage(result.message);
     } catch (error) {
@@ -1608,13 +1764,16 @@ export default function GrowthPage() {
             <div className="text-xs font-semibold tracking-[0.24em] text-slate-500">小红书内容工厂</div>
             <h1 className="serif mt-3 text-4xl leading-tight md:text-5xl">小红书笔记</h1>
             <p className="mt-3 max-w-3xl text-sm leading-7 text-slate-600">
-              业务定位 → 三家视角 → 人设 → 选题 → 正文 → 三日复盘。人工确认后复制发布，系统不自动发帖。
+              业务定位 → 三家视角 → 账号人设 → 选题 → 正文 → 三日复盘。人工确认后复制发布，系统不自动发帖。
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
             <a className="rounded-full bg-white px-4 py-2 text-sm text-slate-600 shadow-sm" href="/mianba">返回首页</a>
             <MianbaLogoutButton className="rounded-full bg-white px-4 py-2 text-sm text-slate-600 shadow-sm disabled:opacity-50" />
-            <span className="rounded-full bg-slate-100 px-4 py-2 text-sm text-slate-700">{businessDefinition.label} · {GROWTH_PERSONA_LABELS[persona]}</span>
+            <span className="rounded-full bg-slate-100 px-4 py-2 text-sm text-slate-700">
+              {businessDefinition.label} · {GROWTH_PERSONA_LABELS[persona]}
+              {data?.account ? ` · ${form.profile_name || form.one_liner}` : ""}
+            </span>
             <span aria-live="polite" className="rounded-full bg-slate-900 px-4 py-2 text-sm text-white">{currentTaskStatus}</span>
           </div>
         </header>
@@ -1796,9 +1955,96 @@ export default function GrowthPage() {
           {visibleStep === "2" && (
             <Section
               number="2"
-              title={`${businessDefinition.personas[persona].role}人设`}
-              subtitle={`继承「${businessDefinition.label}」母定位；默认收起，只展示一句话人设。`}
+              title="选择账号人设"
+              subtitle={`同一视角可以管理多个账号人设；每个人设的选题、正文和复盘彼此独立。`}
             >
+              <div className="mb-5 grid gap-3 md:grid-cols-2 lg:grid-cols-3">
+                {(data?.accountProfiles ?? []).filter((profile) => profile.profile_status === "active").map((profile) => {
+                  const active = profile.id === data?.account?.id;
+                  return (
+                    <button
+                      type="button"
+                      key={profile.id}
+                      onClick={() => switchAccount(profile.id)}
+                      className={`rounded-2xl border p-4 text-left transition ${
+                        active ? "border-slate-900 bg-slate-900 text-white" : "border-slate-200 bg-white hover:border-slate-400"
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="font-semibold">{profile.profile_name}</div>
+                        {active && <span className="rounded-full bg-white/15 px-2 py-1 text-xs">当前账号</span>}
+                      </div>
+                      <div className={`mt-2 line-clamp-2 text-xs leading-5 ${active ? "text-slate-300" : "text-slate-500"}`}>
+                        {profile.one_liner || "尚未补充一句话人设"}
+                      </div>
+                      <div className={`mt-3 text-xs ${active ? "text-amber-200" : profile.platform_binding.binding_status === "bound" ? "text-emerald-700" : "text-amber-700"}`}>
+                        {profile.platform_binding.binding_status === "bound"
+                          ? `已绑定：${profile.platform_binding.account_name}`
+                          : "尚未绑定小红书账号"}
+                      </div>
+                    </button>
+                  );
+                })}
+                {data?.capabilities.multiAccountPersona !== false && (
+                  <button
+                    type="button"
+                    onClick={() => setNewProfileOpen((open) => !open)}
+                    className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-4 text-left hover:border-slate-500"
+                  >
+                    <div className="font-semibold">＋ 新建账号人设</div>
+                    <div className="mt-2 text-xs leading-5 text-slate-500">例如：留学生本人号、留学生家长号，或同一视角下的其他独立账号。</div>
+                  </button>
+                )}
+              </div>
+
+              {(data?.accountProfiles ?? []).some((profile) => profile.profile_status === "archived") && (
+                <details className="mb-5 rounded-2xl border border-slate-200 bg-slate-50">
+                  <summary className="cursor-pointer p-4 text-sm font-medium text-slate-700">
+                    已归档账号人设（{data!.accountProfiles.filter((profile) => profile.profile_status === "archived").length}）
+                  </summary>
+                  <div className="space-y-3 border-t border-slate-200 p-4">
+                    {data!.accountProfiles.filter((profile) => profile.profile_status === "archived").map((profile) => (
+                      <div key={profile.id} className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-white p-4 sm:flex-row sm:items-center sm:justify-between">
+                        <div>
+                          <div className="font-medium">{profile.profile_name}</div>
+                          <div className="mt-1 text-xs text-slate-500">
+                            历史选题、正文和复盘仍保留，不计入当前账号工作区。
+                          </div>
+                        </div>
+                        <SecondaryButton
+                          disabled={Boolean(busy)}
+                          onClick={() => restoreProfile(profile.id)}
+                        >
+                          {busy === `restore-account-profile-${profile.id}` ? "正在恢复…" : "恢复并切换"}
+                        </SecondaryButton>
+                      </div>
+                    ))}
+                  </div>
+                </details>
+              )}
+
+              {newProfileOpen && (
+                <div className="mb-5 rounded-2xl border border-amber-300 bg-amber-50 p-4">
+                  <div className="font-semibold">新建并绑定一个账号人设</div>
+                  <p className="mt-1 text-xs leading-5 text-slate-600">系统只保存公开账号标识，不会保存密码、Cookie 或登录信息。</p>
+                  <div className="mt-4 grid gap-4 md:grid-cols-2">
+                    <TextInput label="账号人设名称" value={newProfileName} onChange={setNewProfileName} placeholder="例如：留学生本人号" />
+                    <TextInput label="小红书账号名称" value={newPlatformName} onChange={setNewPlatformName} placeholder="例如：小雪的秋招日记" />
+                    <TextInput label="小红书号 / UID（选填）" value={newPlatformUid} onChange={setNewPlatformUid} />
+                    <TextInput label="主页链接（选填）" value={newPlatformUrl} onChange={setNewPlatformUrl} />
+                  </div>
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    <PrimaryButton disabled={Boolean(busy)} onClick={createAccountProfile}>
+                      {busy === "create-account-profile" ? "正在创建…" : "创建并系统生成人设"}
+                    </PrimaryButton>
+                    <SecondaryButton onClick={() => setNewProfileOpen(false)}>取消</SecondaryButton>
+                  </div>
+                </div>
+              )}
+
+              <div className="mb-3 text-sm font-semibold text-slate-700">
+                当前：{form.profile_name || businessDefinition.personas[persona].role}
+              </div>
               <div className="rounded-2xl bg-slate-50 p-4">
                 <div className="text-xs font-medium text-slate-500">一句话人设</div>
                 <div className="mt-2 min-h-7 text-lg font-semibold">{form.one_liner || (busy === "load" ? "—" : "尚未生成")}</div>
@@ -1819,8 +2065,12 @@ export default function GrowthPage() {
                 <div className="mt-5">
                   {personaEditing ? (
                     <div className="grid gap-4 md:grid-cols-2">
+                      <TextInput label="账号人设名称" value={form.profile_name} onChange={(value) => setForm({ ...form, profile_name: value })} />
                       <TextInput label="人设名称" value={form.name} onChange={(value) => setForm({ ...form, name: value })} />
                       <TextInput label="一句话人设" value={form.one_liner} onChange={(value) => setForm({ ...form, one_liner: value })} />
+                      <TextInput label="绑定的小红书账号名称" value={form.platform_account_name} onChange={(value) => setForm({ ...form, platform_account_name: value })} />
+                      <TextInput label="小红书号 / UID" value={form.platform_account_uid} onChange={(value) => setForm({ ...form, platform_account_uid: value })} />
+                      <TextInput label="小红书主页链接" value={form.platform_profile_url} onChange={(value) => setForm({ ...form, platform_profile_url: value })} />
                       <TextArea label="目标人群" value={visibleBusinessText(form.target_user, businessLine)} onChange={(value) => setForm({ ...form, target_user: value })} />
                       <TextArea label="核心问题" value={visibleBusinessText(form.core_problem, businessLine)} onChange={(value) => setForm({ ...form, core_problem: value })} />
                       <TextArea label="持续提供的价值" value={visibleBusinessText(form.account_value, businessLine)} onChange={(value) => setForm({ ...form, account_value: value })} />
@@ -1884,6 +2134,11 @@ export default function GrowthPage() {
                     <div className="sticky bottom-20 z-10 mt-5 flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-white/95 p-3 shadow-sm backdrop-blur sm:bottom-3">
                       <PrimaryButton disabled={Boolean(busy)} onClick={savePersona}>保存人设</PrimaryButton>
                       <SecondaryButton onClick={() => { setForm(accountForm(data.account!)); setPersonaEditing(false); }}>取消编辑</SecondaryButton>
+                      {(data.accountProfiles?.filter((profile) => profile.profile_status === "active").length ?? 0) > 1 && (
+                        <button type="button" disabled={Boolean(busy)} onClick={archiveCurrentProfile} className="min-h-11 rounded-xl px-4 text-sm font-medium text-red-700 hover:bg-red-50">
+                          归档当前账号人设
+                        </button>
+                      )}
                       <span aria-live="polite" className="text-xs text-slate-500">{personaDirtyCount ? `已修改${personaDirtyCount}项` : "没有未保存修改"}</span>
                     </div>
                   )}
@@ -1902,7 +2157,7 @@ export default function GrowthPage() {
                 >
                   <div className="flex flex-col gap-4 rounded-2xl bg-slate-50 p-4 sm:flex-row sm:items-center sm:justify-between">
                     <div>
-                      <div className="font-semibold">当前视角：{businessDefinition.personas[persona].role}</div>
+                      <div className="font-semibold">当前账号人设：{form.profile_name || businessDefinition.personas[persona].role}</div>
                       <div className="mt-1 text-sm text-slate-600">
                         默认 {defaultMethods.length} 个槽位 · 探索 {exploreMethods.length} 个槽位 · 不做标题评分
                       </div>
@@ -2103,12 +2358,8 @@ export default function GrowthPage() {
                     onRefresh={async () => {
                       // Excel导入和人工归属可能同时修改两条业务的子批次；六个
                       // 视角缓存必须一起失效，避免切换业务后仍看到导入前状态。
-                      for (const line of GROWTH_BUSINESS_LINES) {
-                        for (const view of GROWTH_PERSONAS) {
-                          workspaceCache.current.delete(workspaceKey(line, view));
-                        }
-                      }
-                      await load(businessLine, persona, true);
+                      workspaceCache.current.clear();
+                      await load(businessLine, persona, true, selectedAccountId);
                       goToStep("5");
                     }}
                   />
@@ -3242,7 +3493,7 @@ function ThreeDayReviewPanel({
       if (result.message) {
         onMessage(result.message);
       } else {
-        onMessage(`Excel已跨两条业务识别：留学生${result.businessCounts?.overseas_student || 0}篇，中高管${result.businessCounts?.executive || 0}篇，待确认归属${result.unassignedCount || 0}篇。`);
+        onMessage(`Excel已读取完成：当前账号人设识别${result.counts?.matched || 0}篇，待确认${result.counts?.suggested || 0}篇。`);
       }
     } catch (error) {
       onMessage((error as Error).message);
@@ -3294,7 +3545,7 @@ function ThreeDayReviewPanel({
       setCandidateSearchResults({ ...candidateSearchResults, [sourceKey]: result.candidates });
       setCandidateSearchMessages({
         ...candidateSearchMessages,
-        [sourceKey]: result.candidates.length ? `跨两条业务找到${result.candidates.length}篇。` : "两条业务都没有找到同标题正文，可换关键词重试。",
+        [sourceKey]: result.candidates.length ? `在当前账号人设找到${result.candidates.length}篇。` : "当前账号人设没有找到同标题正文，可换关键词重试。",
       });
       if (result.candidates[0]) {
         setSelectedCandidates({ ...selectedCandidates, [sourceKey]: result.candidates[0].draft_id });
@@ -3355,9 +3606,23 @@ function ThreeDayReviewPanel({
     .flatMap((cycle) => cycle.notes)
     .filter((note) => note.commercial_eligible)
     .map((note) => note.draft_id || note.source_key)).size;
+  const reviewBindingReady = account.platform_binding?.binding_status === "bound"
+    && Boolean(account.platform_binding.account_name);
 
   return (
     <div className="space-y-5">
+      <div className={`rounded-2xl border p-4 text-sm ${
+        reviewBindingReady ? "border-emerald-200 bg-emerald-50" : "border-amber-300 bg-amber-50"
+      }`}>
+        <div className="font-semibold">
+          当前复盘账号：{account.profile_name || account.one_liner || account.name}
+        </div>
+        <p className="mt-1 text-xs leading-5 text-slate-600">
+          {reviewBindingReady
+            ? `已绑定小红书账号“${account.platform_binding?.account_name}”，Excel只会写入当前账号人设。`
+            : "尚未绑定小红书账号。请先回到“2 账号人设”补充账号名称，再上传官方Excel，避免数据串号。"}
+        </p>
+      </div>
       <div className={`rounded-2xl border p-5 ${due || active ? "border-amber-300 bg-amber-50" : "border-slate-200 bg-slate-50"}`}>
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
@@ -3388,12 +3653,12 @@ function ThreeDayReviewPanel({
           </div>
           <div className="mt-5 rounded-xl border border-dashed border-amber-300 bg-amber-50 p-4">
             <div className="text-sm font-semibold">提前上传官方Excel</div>
-            <p className="mt-1 text-xs leading-5 text-slate-600">现在可以完成跨业务识别、正文匹配和人工分流；到开放时间后再填写商业结果并完成复盘，无需重新上传。</p>
+            <p className="mt-1 text-xs leading-5 text-slate-600">现在可以完成当前账号人设的正文匹配；到开放时间后再填写商业结果并完成复盘，无需重新上传。</p>
             <input
               className="mt-3 block w-full text-sm"
               type="file"
               accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-              disabled={Boolean(busy)}
+              disabled={Boolean(busy) || !reviewBindingReady}
               onChange={(event) => {
                 void importOfficialExcel(event.target.files?.[0] ?? null);
                 event.currentTarget.value = "";
@@ -3406,12 +3671,12 @@ function ThreeDayReviewPanel({
       {!active && due && (
         <div className="rounded-2xl border border-dashed border-slate-300 p-5">
           <div className="font-semibold">1. 上传小红书官方Excel</div>
-          <p className="mt-2 text-sm leading-6 text-slate-600">只接受“笔记列表明细表.xlsx”。系统会读取官方13列，并同时在留学生、中高管两条业务的商家、买家、专家六个视角中查找对应笔记。</p>
+          <p className="mt-2 text-sm leading-6 text-slate-600">只接受“笔记列表明细表.xlsx”。系统会读取官方13列，并只在当前账号人设的已发布正文中查找对应笔记。</p>
           <input
             className="mt-4 block w-full text-sm"
             type="file"
             accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            disabled={Boolean(busy)}
+            disabled={Boolean(busy) || !reviewBindingReady}
             onChange={(event) => {
               void importOfficialExcel(event.target.files?.[0] ?? null);
               event.currentTarget.value = "";
@@ -3426,7 +3691,7 @@ function ThreeDayReviewPanel({
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div>
                 <div className="font-semibold">1. Excel数据已识别</div>
-                <p className="mt-1 text-sm text-slate-600">{active.source_file_name} · 已完整读取{batchTotalRows}条 · 当前业务子批次{active.source_row_count}条 · 上传于{formatDateTime(active.imported_at)}</p>
+                <p className="mt-1 text-sm text-slate-600">{active.source_file_name} · 已完整读取{batchTotalRows}条 · 当前账号{active.source_row_count}条 · 上传于{formatDateTime(active.imported_at)}</p>
               </div>
               <label className="cursor-pointer rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium">
                 重新上传
@@ -3434,6 +3699,7 @@ function ThreeDayReviewPanel({
                   className="hidden"
                   type="file"
                   accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                  disabled={Boolean(busy) || !reviewBindingReady}
                   onChange={(event) => void importOfficialExcel(event.target.files?.[0] ?? null)}
                 />
               </label>
@@ -3509,7 +3775,7 @@ function ThreeDayReviewPanel({
                         <div className={`mt-3 space-y-3 rounded-xl border p-3 ${note.match_status === "suggested" ? "border-amber-200 bg-amber-50" : "border-slate-200 bg-white"}`}>
                           <div className="grid gap-2 sm:grid-cols-[1fr_auto] sm:items-end">
                             <TextInput
-                              label="搜索两条业务全部正文"
+                              label="搜索当前账号人设的正文"
                               value={candidateQueries[note.source_key] || ""}
                               onChange={(value) => setCandidateQueries({ ...candidateQueries, [note.source_key]: value })}
                             />
@@ -3563,8 +3829,13 @@ function ThreeDayReviewPanel({
                           <div className="flex flex-wrap gap-2">
                             {!note.assigned_business_line && (
                               <>
-                                <SecondaryButton disabled={Boolean(busy)} onClick={() => void resolveNote(note.source_key, "assign_business", undefined, false, "overseas_student")}>归入留学生业务</SecondaryButton>
-                                <SecondaryButton disabled={Boolean(busy)} onClick={() => void resolveNote(note.source_key, "assign_business", undefined, false, "executive")}>归入中高管业务</SecondaryButton>
+                                <SecondaryButton disabled={Boolean(busy)} onClick={() => void resolveNote(
+                                  note.source_key,
+                                  "assign_business",
+                                  undefined,
+                                  false,
+                                  account.business_line || "executive",
+                                )}>确认归入当前账号</SecondaryButton>
                               </>
                             )}
                             {note.match_candidates?.length && !showCandidatePicker ? (
@@ -4077,11 +4348,17 @@ function Section({ number, title, subtitle, children }: { number: string; title:
   );
 }
 
-function TextInput({ label, value, onChange, type = "text" }: { label: string; value: string; onChange: (value: string) => void; type?: string }) {
+function TextInput({ label, value, onChange, type = "text", placeholder }: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  type?: string;
+  placeholder?: string;
+}) {
   return (
     <label className="block min-w-[180px] flex-1">
       <span className="mb-2 block text-xs font-medium text-slate-500">{label}</span>
-      <input type={type} value={value} onChange={(event) => onChange(event.target.value)} className="min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-base outline-none focus:border-amber-500 focus-visible:ring-2 focus-visible:ring-amber-400 sm:text-sm" />
+      <input type={type} value={value} placeholder={placeholder} onChange={(event) => onChange(event.target.value)} className="min-h-11 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-base outline-none focus:border-amber-500 focus-visible:ring-2 focus-visible:ring-amber-400 sm:text-sm" />
     </label>
   );
 }

@@ -482,6 +482,22 @@ alter table usage_events add column if not exists user_id uuid;
 create index if not exists idx_report_orders_owner on report_orders(tenant_id, owner_user_id, created_at desc);
 create index if not exists idx_assessment_profiles_owner on assessment_profiles(tenant_id, owner_user_id, created_at desc);
 create index if not exists idx_content_drafts_owner on content_drafts(tenant_id, owner_user_id, created_at desc);
+
+-- 增长系统 v4：同一业务×视角下的多账号人设（正式发布前先执行对应 migration）。
+alter table growth_accounts add column if not exists business_line text;
+alter table growth_accounts add column if not exists persona text;
+alter table growth_accounts add column if not exists profile_name text;
+alter table growth_accounts add column if not exists profile_status text not null default 'active';
+alter table growth_accounts add column if not exists is_default_profile boolean not null default false;
+alter table growth_accounts add column if not exists display_order integer not null default 0;
+alter table growth_accounts add column if not exists last_used_at timestamptz;
+alter table growth_accounts add column if not exists platform text;
+alter table growth_accounts add column if not exists platform_account_name text;
+alter table growth_accounts add column if not exists platform_account_uid text;
+alter table growth_accounts add column if not exists profile_creation_request_id text;
+
+create index if not exists growth_accounts_workspace_profiles_idx
+  on growth_accounts (tenant_id, owner_user_id, business_line, persona, profile_status, is_default_profile desc, display_order, last_used_at desc);
 create index if not exists idx_usage_events_user on usage_events(tenant_id, user_id, created_at desc);
 
 -- 操作流水：管理者视图的"谁在什么时候干了什么"直接读这张表

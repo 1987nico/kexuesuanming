@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireMianbaApiAuth } from "@/lib/auth/mianba";
 import { resolveAccountBusinessLine } from "@/lib/growth/businessCompatibility";
-import { mergeThreeDayReviewCycles, reviewOwnerAccounts, reviewWorkspaceAccounts } from "@/lib/growth/reviewCycleWorkspace";
+import { mergeThreeDayReviewCycles } from "@/lib/growth/reviewCycleWorkspace";
 import { growthStore } from "@/lib/growth/store";
 import { normalizeReviewTitle, reviewTitleSimilarity } from "@/lib/growth/threeDayReview";
 import type { ThreeDayMatchCandidate } from "@/lib/growth/types";
@@ -26,8 +26,8 @@ export async function GET(req: Request, { params }: { params: { cycleId: string 
   if (guard.auth.role !== "admin" && account.owner_user_id !== guard.auth.user.id) {
     return NextResponse.json({ error: "forbidden" }, { status: 403 });
   }
-  const workspaceAccounts = await reviewWorkspaceAccounts(store, account, guard.auth.user.id);
-  const ownerAccounts = await reviewOwnerAccounts(store, account, guard.auth.user.id);
+  const workspaceAccounts = [account];
+  const ownerAccounts = [account];
   const cycle = mergeThreeDayReviewCycles(workspaceAccounts).find((item) => item.id === params.cycleId);
   if (!cycle || cycle.status !== "draft") {
     return NextResponse.json({ error: "cycle_not_found", message: "当前待确认周期不存在。" }, { status: 404 });
@@ -53,7 +53,7 @@ export async function GET(req: Request, { params }: { params: { cycleId: string 
         time_delta_seconds: draft.published_at || draft.distributed_at
           ? Math.round(Math.abs(Date.parse(draft.published_at ?? draft.distributed_at!) - Date.parse(note.published_at)) / 1000)
           : undefined,
-        match_reason: "运营从两条业务、六个视角的全部正文中搜索并选择",
+        match_reason: "运营从当前账号人设的全部正文中搜索并选择",
       } satisfies ThreeDayMatchCandidate));
   }))).flat()
     .sort((a, b) => b.title_similarity - a.title_similarity || (b.published_at || "").localeCompare(a.published_at || ""))

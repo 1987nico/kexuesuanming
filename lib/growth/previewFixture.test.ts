@@ -4,15 +4,27 @@ import { assertGrowthPreviewIsSafe, createGrowthPreviewFixture, growthPreviewEna
 describe("growth v3.2 local preview fixture", () => {
   it("seeds two business lines with three isolated personas and keeps legacy samples separate", () => {
     const fixture = createGrowthPreviewFixture();
-    expect(fixture.accounts).toHaveLength(6);
+    expect(fixture.accounts).toHaveLength(7);
     expect(new Set(fixture.accounts.map((item) => item.business_line))).toEqual(new Set(["executive", "overseas_student"]));
     for (const businessLine of ["executive", "overseas_student"] as const) {
-      expect(fixture.accounts.filter((item) => item.business_line === businessLine).map((item) => item.persona).sort()).toEqual(["buyer", "expert", "merchant"]);
+      expect(new Set(fixture.accounts.filter((item) => item.business_line === businessLine).map((item) => item.persona))).toEqual(new Set(["buyer", "expert", "merchant"]));
     }
     expect(fixture.drafts.filter((item) => item.schema_version === "legacy_v1")).not.toHaveLength(0);
     expect(fixture.drafts.filter((item) => item.schema_version === "method_v3_2").every((item) => item.eligible_for_method_learning)).toBe(true);
     const legacy = fixture.drafts.find((item) => item.schema_version === "legacy_v1")!;
     expect(Object.prototype.hasOwnProperty.call(legacy, "method_id")).toBe(false);
+  });
+
+  it("seeds two isolated account personas under the overseas buyer perspective", () => {
+    const fixture = createGrowthPreviewFixture();
+    const profiles = fixture.accounts.filter((item) =>
+      item.business_line === "overseas_student" && item.persona === "buyer");
+    expect(profiles.map((item) => item.profile_name)).toEqual([
+      "留学生家长号",
+      "留学生本人号",
+    ]);
+    expect(profiles.filter((item) => item.is_default_profile)).toHaveLength(1);
+    expect(profiles.every((item) => item.platform_binding?.binding_status === "bound")).toBe(true);
   });
 
   it("enables only the explicit fixture flag and rejects production", () => {

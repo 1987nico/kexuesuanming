@@ -14,7 +14,6 @@ import { resolveAccountBusinessLine } from "@/lib/growth/businessCompatibility";
 import {
   mergeThreeDayReviewCycles,
   reviewAccountsForBusiness,
-  reviewOwnerAccounts,
   saveSharedReviewCycles,
 } from "@/lib/growth/reviewCycleWorkspace";
 import { GROWTH_BUSINESS_LINES, type GrowthBusinessLine, type ThreeDayReviewCycle } from "@/lib/growth/types";
@@ -54,12 +53,19 @@ export async function POST(req: Request) {
   if (guard.auth.role !== "admin" && account.owner_user_id !== guard.auth.user.id) {
     return NextResponse.json({ error: "forbidden" }, { status: 403 });
   }
+  if (account.platform_binding?.binding_status !== "bound" || !account.platform_binding.account_name) {
+    return NextResponse.json({
+      error: "platform_binding_required",
+      message: "请先在“2 账号人设”绑定当前小红书账号，再上传官方Excel。",
+    }, { status: 409 });
+  }
 
   try {
     const buffer = Buffer.from(await file.arrayBuffer());
     const sourceFileHash = createHash("sha256").update(buffer).digest("hex");
     const parsed = await parseOfficialNoteListExcel(buffer);
-    const ownerAccounts = await reviewOwnerAccounts(store, account, guard.auth.user.id);
+    // v4 多账号人设：复盘只读取当前账号人设的正文，不能跨账号自动匹配。
+    const ownerAccounts = [account];
     const draftContexts: ReviewDraftContext[] = (await Promise.all(ownerAccounts.map(async (ownerAccount) => {
       const drafts = await store.listDrafts(ownerAccount.id);
       return drafts.map((draft) => ({
@@ -133,11 +139,7 @@ export async function POST(req: Request) {
     }
 
     const importBatchId = crypto.randomUUID();
-    // Excel 属于同一操作者，而不是单一业务。只要该操作者在目标业务下
-    // 已有人设，就预先创建空子周期，保证后续人工归属可以直接移动笔记。
-    const businessesToCreate = GROWTH_BUSINESS_LINES.filter(
-      (businessLine) => reviewAccountsForBusiness(ownerAccounts, businessLine).length > 0,
-    );
+    const businessesToCreate = [currentBusinessLine];
     const cycleIds = Object.fromEntries(businessesToCreate.map((businessLine) => {
       const existing = activeThreeDayCycle(cyclesByBusiness.get(businessLine));
       return [businessLine, existing?.id ?? crypto.randomUUID()];

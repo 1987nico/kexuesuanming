@@ -19,13 +19,19 @@ import {
   resolveBusinessPosition,
 } from "@/lib/growth/businessPosition";
 import { accountForBusinessGeneration } from "@/lib/growth/businessCompatibility";
-import { mergeThreeDayReviewCycles, reviewWorkspaceAccounts } from "@/lib/growth/reviewCycleWorkspace";
+import { mergeThreeDayReviewCycles } from "@/lib/growth/reviewCycleWorkspace";
 import { withHistoricalBenchmarkSourceUsage } from "@/lib/growth/sourceRotation";
+import {
+  accountBelongsToProfileWorkspace,
+  chooseAccountProfile,
+  toAccountSummary,
+} from "@/lib/growth/accountProfiles";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const DEFAULT_TENANT_ID = "mianbajun";
+const multiAccountPersonaEnabled = () => process.env.GROWTH_MULTI_ACCOUNT_PERSONA_ENABLED !== "false";
 const WORKSPACE_SCOPES = ["core", "content", "review", "full"] as const;
 type WorkspaceScope = (typeof WORKSPACE_SCOPES)[number];
 
@@ -40,6 +46,15 @@ const bodySchema = z.object({
   trustSource: z.string().max(500).optional(),
   regenerateAccountId: z.string().min(1).optional(),
   previewOnly: z.boolean().optional(),
+  mode: z.enum(["regenerate_or_create", "create"]).default("regenerate_or_create"),
+  profileName: z.string().trim().min(1).max(80).optional(),
+  requestId: z.string().min(8).max(120).optional(),
+  platformBinding: z.object({
+    platform: z.literal("xiaohongshu").default("xiaohongshu"),
+    account_name: z.string().trim().min(1).max(100),
+    account_uid: z.string().trim().max(120).optional(),
+    profile_url: z.string().trim().url().max(500).optional(),
+  }).optional(),
 });
 
 function resolvePersona(value: string | null): GrowthPersona {
@@ -66,15 +81,33 @@ export async function GET(req: Request) {
   const url = new URL(req.url);
   const persona = resolvePersona(url.searchParams.get("persona"));
   const businessLine = resolveBusinessLine(url.searchParams.get("businessLine"));
+  const requestedAccountId = url.searchParams.get("accountId");
   const requestedScope = resolveWorkspaceScope(url.searchParams.get("scope"));
   const scope = process.env.GROWTH_LIGHT_BOOTSTRAP === "false" ? "full" : requestedScope;
   const store = growthStore();
   // 工作台隔离：操作者只取「自己的或未归属」账号；管理员不限
   const ownerScope = guard.auth.role === "admin" ? undefined : guard.auth.user.id;
-  const [account, settings] = await Promise.all([
-    store.getLatestAccountByPersona(DEFAULT_TENANT_ID, persona, ownerScope, businessLine),
+  const [allAccounts, settings] = await Promise.all([
+    store.listAccounts(DEFAULT_TENANT_ID, ownerScope, businessLine),
     store.getBusinessSettings(DEFAULT_TENANT_ID),
   ]);
+  const profileAccounts = allAccounts.filter((candidate) =>
+    candidate.persona === persona
+    && accountBelongsToProfileWorkspace(candidate, {
+      tenantId: DEFAULT_TENANT_ID,
+      ownerUserId: ownerScope,
+      businessLine,
+      persona,
+    }));
+  const account = multiAccountPersonaEnabled()
+    ? chooseAccountProfile(profileAccounts, requestedAccountId)
+    : profileAccounts.sort((a, b) => b.created_at.localeCompare(a.created_at))[0] ?? null;
+  if (requestedAccountId && !account) {
+    return NextResponse.json({
+      error: "account_profile_not_found",
+      message: "这个账号人设不存在、已归档，或不属于当前业务与视角。",
+    }, { status: 404 });
+  }
   const businessPositions = businessPositionsFromSettings(settings);
   // 人设确定后，计划、选题、正文和复盘彼此独立，并行读取以缩短切换等待。
   // 旧账号没有 business_line；响应给工作台前先补齐并清洗生成上下文，
@@ -95,8 +128,7 @@ export async function GET(req: Request) {
       includeContent ? store.listRuns(workspaceAccount.id) : Promise.resolve([]),
       includeContent || includeReview ? store.listDrafts(workspaceAccount.id) : Promise.resolve([]),
       includeReview
-        ? reviewWorkspaceAccounts(store, workspaceAccount, guard.auth.user.id)
-          .then(mergeThreeDayReviewCycles)
+        ? Promise.resolve(mergeThreeDayReviewCycles([workspaceAccount]))
         : Promise.resolve([]),
     ]);
     plan = nextPlan;
@@ -146,6 +178,10 @@ export async function GET(req: Request) {
     businessPosition: businessPositions[businessLine],
     businessPositions,
     account: responseAccount,
+    accountProfiles: (multiAccountPersonaEnabled() ? profileAccounts : account ? [account] : [])
+      .map(toAccountSummary)
+      .sort((a, b) => a.display_order - b.display_order || b.last_used_at.localeCompare(a.last_used_at)),
+    selectedAccountId: responseAccount?.id ?? null,
     plan,
     runs,
     drafts,
@@ -155,7 +191,10 @@ export async function GET(req: Request) {
     threeDayReviewCycles,
     weeklyReview,
     stageReview: weeklyReview,
-    capabilities: { reviewScreenshot: isVisionConfigured() },
+    capabilities: {
+      reviewScreenshot: isVisionConfigured(),
+      multiAccountPersona: multiAccountPersonaEnabled(),
+    },
     preview: growthPreviewEnabled() ? {
       enabled: true,
       banner: "本地脱敏预览，不连接生产数据",
@@ -182,15 +221,40 @@ export async function POST(req: Request) {
   if (!parsed.success) {
     return NextResponse.json({ error: "validation", issues: parsed.error.flatten() }, { status: 400 });
   }
+  if (parsed.data.mode === "create" && !multiAccountPersonaEnabled()) {
+    return NextResponse.json({
+      error: "feature_disabled",
+      message: "多账号人设功能当前已关闭。",
+    }, { status: 409 });
+  }
 
   const store = growthStore();
   // 原地重生成：保留 id 和 created_at，避免每次点新增账号、并让选题等关联数据不丢。
   let createdAt: string | undefined;
   let existingOwner: string | null = null;
   let existingAccount: Awaited<ReturnType<ReturnType<typeof growthStore>["getAccount"]>> = null;
+  const ownedProfiles = await store.listAccounts(
+    DEFAULT_TENANT_ID,
+    guard.auth.role === "admin" ? undefined : guard.auth.user.id,
+    parsed.data.businessLine,
+  );
+  const idempotentCreated = parsed.data.mode === "create" && parsed.data.requestId
+    ? ownedProfiles.find((candidate) =>
+      candidate.owner_user_id === guard.auth.user.id
+      && candidate.persona === parsed.data.persona
+      && candidate.profile_creation_request_id === parsed.data.requestId)
+    : null;
+  if (idempotentCreated) {
+    return NextResponse.json({
+      account: idempotentCreated,
+      plan: await store.getLatestPlan(idempotentCreated.id),
+      previewOnly: false,
+      idempotent: true,
+    });
+  }
   const existing = parsed.data.regenerateAccountId
     ? await store.getAccount(parsed.data.regenerateAccountId)
-    : !parsed.data.previewOnly
+    : parsed.data.mode !== "create" && !parsed.data.previewOnly
       ? await store.getLatestAccountByPersona(
         DEFAULT_TENANT_ID,
         parsed.data.persona,
@@ -239,6 +303,27 @@ export async function POST(req: Request) {
 
   // 数据归属：新账号归创建者；重生成保留原归属
   account.owner_user_id = existingAccount ? existingOwner : guard.auth.user.id;
+  if (!existingAccount) {
+    const existingActiveProfiles = ownedProfiles.filter((candidate) =>
+      candidate.owner_user_id === guard.auth.user.id
+      && candidate.persona === parsed.data.persona
+      && candidate.profile_status !== "archived");
+    account.profile_name = parsed.data.profileName || account.one_liner || account.name;
+    account.profile_status = "active";
+    account.is_default_profile = existingActiveProfiles.length === 0;
+    account.display_order = existingActiveProfiles.length;
+    account.last_used_at = new Date().toISOString();
+    account.profile_creation_request_id = parsed.data.requestId;
+    account.platform_binding = parsed.data.platformBinding ? {
+      ...parsed.data.platformBinding,
+      binding_status: "bound",
+      bound_at: new Date().toISOString(),
+    } : {
+      platform: "xiaohongshu",
+      account_name: "",
+      binding_status: "unbound",
+    };
+  }
   if (existingAccount) {
     // 生成只更新定位判断；所有历史字段、专属业务事实与高级事实都必须合并保留。
     account.content_directions = existingAccount.content_directions;
@@ -257,6 +342,13 @@ export async function POST(req: Request) {
     account.weekly_review_snapshots = existingAccount.weekly_review_snapshots;
     account.stage_review = existingAccount.stage_review;
     account.three_day_review_cycles = existingAccount.three_day_review_cycles;
+    account.profile_name = existingAccount.profile_name ?? parsed.data.profileName;
+    account.profile_status = existingAccount.profile_status;
+    account.is_default_profile = existingAccount.is_default_profile;
+    account.display_order = existingAccount.display_order;
+    account.last_used_at = new Date().toISOString();
+    account.profile_creation_request_id = existingAccount.profile_creation_request_id;
+    account.platform_binding = existingAccount.platform_binding;
   }
   plan.owner_user_id = account.owner_user_id;
 

@@ -216,6 +216,31 @@ function fallbackAccount(businessLine: GrowthBusinessLine, persona: GrowthPerson
     : EXECUTIVE_FALLBACK_ACCOUNT[persona];
 }
 
+function fallbackAccountForInput(input: {
+  businessLine: GrowthBusinessLine;
+  persona: GrowthPersona;
+  accountName: string;
+  targetUser?: string;
+  coreProblem?: string;
+}) {
+  const base = fallbackAccount(input.businessLine, input.persona);
+  const identityClues = `${input.accountName} ${input.targetUser || ""}`;
+  if (
+    input.businessLine === "overseas_student"
+    && input.persona === "buyer"
+    && /(留学生本人|学生本人|毕业生本人|我的秋招|本人求职)/u.test(identityClues)
+  ) {
+    return {
+      target: input.targetUser || "正在准备海外秋招或回国求职的留学生本人",
+      problem: input.coreProblem || "回国还是留当地、先定岗位还是先改简历，缺少可验证的选择依据",
+      value: "以留学生本人视角记录岗位选择、投递反馈和面试复盘",
+      one: "一个留学生亲自跑秋招的真实记录",
+      follow: "持续看见留学生本人如何验证方向、调整投递和复盘结果",
+    };
+  }
+  return base;
+}
+
 function fallbackWeeks() {
   return [
     { week: 1, theme: "方法基线", goal: "建立默认方法的有效咨询基线。", content_mix: "按当前视角默认方法生成并人工选择。", decision_rule: "不用单篇爆款下结论。" },
@@ -241,7 +266,13 @@ export async function generateAccountAndPlan(input: {
   const tenantId = input.tenantId ?? DEFAULT_TENANT_ID;
   const persona = input.persona ?? "expert";
   const businessLine = input.businessLine ?? "executive";
-  const fallback = fallbackAccount(businessLine, persona);
+  const fallback = fallbackAccountForInput({
+    businessLine,
+    persona,
+    accountName: input.accountName,
+    targetUser: input.targetUser,
+    coreProblem: input.coreProblem,
+  });
   const reportPrices = input.reportPrices ?? { lite: DEFAULT_BUSINESS_SETTINGS.report_lite_price, deep: DEFAULT_BUSINESS_SETTINGS.report_deep_price };
   let payload: any;
   let usage: Record<string, unknown> | undefined;
@@ -255,6 +286,11 @@ export async function generateAccountAndPlan(input: {
   const data = payload?.account ?? {};
   const timestamp = now();
   const accountId = input.regenerateAccountId || id();
+  const personaSpecific = mergePersonaSpecific(persona, data.persona_specific);
+  if (persona === "buyer") {
+    personaSpecific.identity ||= input.targetUser || fallback.target;
+    personaSpecific.struggle ||= input.coreProblem || fallback.problem;
+  }
   const account: GrowthAccount = {
     id: accountId,
     tenant_id: tenantId,
@@ -274,7 +310,7 @@ export async function generateAccountAndPlan(input: {
     avoid_expressions: Array.isArray(data.avoid_expressions) ? data.avoid_expressions.slice(0, 8) : ["逆袭", "暴富", "包成功"],
     compliance_redline: asText(data.compliance_redline) || input.businessPosition?.compliance_redline || "不夸大、不虚构、不诱导互动、不违规导流。",
     private_domain: asText(data.private_domain),
-    persona_specific: mergePersonaSpecific(persona, data.persona_specific),
+    persona_specific: personaSpecific,
     created_at: input.createdAt || timestamp,
     updated_at: timestamp,
   };

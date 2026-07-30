@@ -14,6 +14,7 @@ import { computeDerivedMetrics, evaluateReviewSample } from "./reviewLearning";
 import { methodsForPersona, type TitleMethodDefinition } from "./methods";
 
 export const GROWTH_PREVIEW_TENANT = "mianbajun";
+const GROWTH_PREVIEW_OWNER = "growth-preview-local-admin";
 
 export function growthPreviewEnabled(env: NodeJS.ProcessEnv = process.env) {
   return env.GROWTH_PREVIEW_MODE === "fixture";
@@ -66,9 +67,21 @@ function account(
   return {
     id,
     tenant_id: GROWTH_PREVIEW_TENANT,
-    owner_user_id: null,
+    owner_user_id: GROWTH_PREVIEW_OWNER,
     business_line: businessLine,
     persona,
+    profile_name: name,
+    profile_status: "active",
+    is_default_profile: true,
+    display_order: 0,
+    last_used_at: isoBefore(0),
+    platform_binding: {
+      platform: "xiaohongshu",
+      account_name: `${name}（脱敏）`,
+      account_uid: `${id}-xhs`,
+      binding_status: "bound",
+      bound_at: isoBefore(30),
+    },
     name,
     target_user: business.target,
     core_problem: overseas ? "回国还是留当地、选择什么岗位以及如何把招聘时间线排清楚" : "留在高位、转型还是重新定价，缺少低成本验证依据",
@@ -459,6 +472,27 @@ export function createGrowthPreviewFixture(): GrowthPreviewFixture {
     case_mode: "家长第一人称节点复盘",
     case_material: "专业选择、目标岗位、投递反馈和面试复盘的脱敏记录",
   });
+  overseasBuyer.profile_name = "留学生家长号";
+  const overseasStudentBuyer = account(
+    "overseas_student",
+    "buyer",
+    "preview-overseas-student-buyer",
+    "面霸君·留学生本人·买家视角",
+    {
+      identity: "正在英国读硕、同时准备海外秋招和回国求职的留学生本人",
+      struggle: "回国还是留当地、先投金融还是数据岗位",
+      growth_arc: "从盲目海投，到按岗位证据和招聘节奏逐步验证",
+      bridge: "记录本人真实求职过程，在具体卡点出现时承接站内适配判断",
+      case_mode: "留学生本人第一人称节点复盘",
+      case_material: "目标岗位、投递反馈、笔面试复盘与取舍过程的脱敏记录",
+    },
+  );
+  overseasStudentBuyer.profile_name = "留学生本人号";
+  overseasStudentBuyer.one_liner = "一个留学生亲自跑秋招的真实记录";
+  overseasStudentBuyer.target_user = "正在准备海外秋招或回国求职的留学生本人";
+  overseasStudentBuyer.account_value = "以留学生本人视角记录岗位选择、投递反馈和面试复盘";
+  overseasStudentBuyer.is_default_profile = false;
+  overseasStudentBuyer.display_order = 1;
   const overseasExpert = account("overseas_student", "expert", "preview-overseas-expert", "面霸君·留学生·专家视角", {
     expertise: "留学生回国求职定位、岗位地图与秋招节奏",
     methodology: "背景盘点 × 岗位匹配 × 小样本投递 × 面试复盘",
@@ -467,6 +501,7 @@ export function createGrowthPreviewFixture(): GrowthPreviewFixture {
   const accounts = [
     overseasMerchant,
     overseasBuyer,
+    overseasStudentBuyer,
     overseasExpert,
     executiveMerchant,
     executiveBuyer,

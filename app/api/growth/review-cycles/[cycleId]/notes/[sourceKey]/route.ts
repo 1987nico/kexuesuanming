@@ -6,7 +6,6 @@ import {
   createReviewSiblingCycle,
   mergeThreeDayReviewCycles,
   reviewAccountsForBusiness,
-  reviewOwnerAccounts,
   saveSharedReviewCycles,
 } from "@/lib/growth/reviewCycleWorkspace";
 import { growthStore } from "@/lib/growth/store";
@@ -59,7 +58,7 @@ export async function PATCH(
     return NextResponse.json({ error: "forbidden" }, { status: 403 });
   }
 
-  const ownerAccounts = await reviewOwnerAccounts(store, account, guard.auth.user.id);
+  const ownerAccounts = [account];
   const ownerAccountIds = new Set(ownerAccounts.map((item) => item.id));
   const workspaces = new Map<GrowthBusinessLine, { accounts: typeof ownerAccounts; cycles: ThreeDayReviewCycle[] }>();
   for (const businessLine of GROWTH_BUSINESS_LINES) {

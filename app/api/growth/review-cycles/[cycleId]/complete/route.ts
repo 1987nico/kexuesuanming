@@ -5,7 +5,6 @@ import { growthStore } from "@/lib/growth/store";
 import { completeThreeDayReviewCycle } from "@/lib/growth/threeDayReview";
 import {
   mergeThreeDayReviewCycles,
-  reviewWorkspaceAccounts,
   saveSharedReviewCycles,
 } from "@/lib/growth/reviewCycleWorkspace";
 
@@ -39,7 +38,7 @@ export async function POST(req: Request, { params }: { params: { cycleId: string
   if (guard.auth.role !== "admin" && account.owner_user_id !== guard.auth.user.id) {
     return NextResponse.json({ error: "forbidden" }, { status: 403 });
   }
-  const workspaceAccounts = await reviewWorkspaceAccounts(store, account, guard.auth.user.id);
+  const workspaceAccounts = [account];
   const cycles = mergeThreeDayReviewCycles(workspaceAccounts);
   const cycle = cycles.find((item) => item.id === params.cycleId);
   if (!cycle) return NextResponse.json({ error: "cycle_not_found", message: "本轮三日复盘不存在。" }, { status: 404 });

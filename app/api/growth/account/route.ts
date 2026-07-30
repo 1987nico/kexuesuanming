@@ -23,6 +23,15 @@ const bodySchema = z.object({
   compliance_redline: z.string().max(500).optional(),
   private_domain: z.string().max(500).optional(),
   persona_specific: z.record(z.string().max(500)).optional(),
+  profile_name: z.string().trim().min(1).max(80).optional(),
+  platform_binding: z.object({
+    platform: z.literal("xiaohongshu"),
+    account_name: z.string().trim().max(100),
+    account_uid: z.string().trim().max(120).optional(),
+    profile_url: z.string().trim().url().max(500).optional(),
+    binding_status: z.enum(["bound", "unbound"]),
+    bound_at: z.string().optional(),
+  }).optional(),
 });
 
 export async function PUT(req: Request) {
@@ -40,10 +49,39 @@ export async function PUT(req: Request) {
   if (!existing) {
     return NextResponse.json({ error: "account_not_found" }, { status: 404 });
   }
+  if (guard.auth.role !== "admin" && existing.owner_user_id !== guard.auth.user.id) {
+    return NextResponse.json({ error: "forbidden", message: "不能修改其他用户的账号人设。" }, { status: 403 });
+  }
+
+  const bindingUid = parsed.data.platform_binding?.account_uid?.trim();
+  if (bindingUid) {
+    const accounts = await store.listAccounts(existing.tenant_id, existing.owner_user_id ?? undefined);
+    const duplicate = accounts.find((candidate) =>
+      candidate.id !== existing.id
+      && candidate.profile_status !== "archived"
+      && candidate.platform_binding?.platform === "xiaohongshu"
+      && candidate.platform_binding.account_uid === bindingUid);
+    if (duplicate) {
+      return NextResponse.json({
+        error: "duplicate_platform_binding",
+        message: "这个小红书账号已经绑定到另一个账号人设，请先检查账号归属。",
+      }, { status: 409 });
+    }
+  }
 
   const account = {
     ...existing,
     ...parsed.data,
+    platform_binding: parsed.data.platform_binding
+      ? {
+        ...parsed.data.platform_binding,
+        binding_status: parsed.data.platform_binding.account_name ? "bound" as const : "unbound" as const,
+        bound_at: parsed.data.platform_binding.account_name
+          ? parsed.data.platform_binding.bound_at || new Date().toISOString()
+          : undefined,
+      }
+      : existing.platform_binding,
+    last_used_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   };
   await store.saveAccount(account);
