@@ -60,6 +60,14 @@ export type AccountBusinessAttribution = "confirmed" | "pending" | "conflict";
  * 不能再被当前页面自动收编。
  */
 export function accountBusinessAttribution(account: GrowthAccount): AccountBusinessAttribution {
+  const confirmation = account.profile_attribution_confirmation;
+  if (
+    confirmation
+    && confirmation.business_line === account.business_line
+    && confirmation.persona === account.persona
+  ) {
+    return "confirmed";
+  }
   if (!account.business_line) return "pending";
   const evidence = [
     account.profile_name,

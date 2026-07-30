@@ -6,6 +6,7 @@ import { resolveProfileIdentity } from "./accountIdentity";
 import type {
   GrowthAccount,
   GrowthAccountSummary,
+  GrowthPendingAccountProfileSummary,
   GrowthBusinessLine,
   GrowthPersona,
   GrowthPlatformBinding,
@@ -107,6 +108,33 @@ export interface AccountProfilePartition {
   duplicates: GrowthAccount[];
 }
 
+export function pendingAccountProfileSummary(
+  account: GrowthAccount,
+  hasHistory = false,
+): GrowthPendingAccountProfileSummary {
+  const missingBusinessLine = !account.business_line;
+  const suggestedBusinessLine = missingBusinessLine
+    ? accountForBusinessGeneration(account).business_line!
+    : account.business_line === "overseas_student"
+      ? "executive"
+      : "overseas_student";
+  return {
+    id: account.id,
+    profile_name: account.profile_name?.trim() || account.one_liner?.trim() || account.name,
+    one_liner: account.one_liner?.trim() || "",
+    source_business_line: account.business_line,
+    source_persona: account.persona,
+    suggested_business_line: suggestedBusinessLine,
+    reason: missingBusinessLine ? "missing_business_line" : "content_conflict",
+    reason_label: missingBusinessLine
+      ? "历史人设缺少明确的业务归属"
+      : "已保存的业务归属与人设内容存在冲突",
+    has_history: hasHistory,
+    created_at: account.created_at,
+    updated_at: account.updated_at,
+  };
+}
+
 /**
  * 用户在明确的“业务 × 视角”工作区主动新建的账号，以保存时的工作区归属
  * 为准。模型补全出来的某个文案字段即使暂时触发了兼容性检查，也不能把
@@ -173,6 +201,7 @@ export function partitionAccountProfiles(
     if (
       accountProfileStatus(account) === "archived"
       || Boolean(account.profile_creation_request_id)
+      || Boolean(account.profile_attribution_confirmation)
     ) {
       // 已归档记录由运营显式管理；带新建请求标记的记录是用户主动创建的
       // 独立账号。即使名称与旧账号相同，也必须单独展示，不能被历史去重

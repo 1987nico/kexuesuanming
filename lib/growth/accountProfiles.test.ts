@@ -3,6 +3,7 @@ import {
   accountBelongsToProfileWorkspace,
   accountPlatformBinding,
   chooseAccountProfile,
+  pendingAccountProfileSummary,
   partitionAccountProfiles,
   toAccountSummary,
 } from "./accountProfiles";
@@ -42,7 +43,7 @@ describe("account profiles", () => {
       "preview-overseas-buyer",
       "preview-overseas-student-buyer",
     ]);
-    expect(partition.pending).toEqual([]);
+    expect(partition.pending.map((item) => item.id)).toEqual(["preview-overseas-pending-buyer"]);
   });
 
   it("chooses the requested active profile and never chooses an archived one", () => {
@@ -213,5 +214,99 @@ describe("account profiles", () => {
 
     expect(partition.visible).toEqual([]);
     expect(partition.pending.map((item) => item.id)).toEqual(["legacy-conflict"]);
+  });
+
+  it("returns a recoverable pending summary without mutating the legacy account", () => {
+    const legacy = account("legacy-pending", {
+      business_line: undefined,
+      profile_name: "留学生家长秋招记录",
+      one_liner: "陪孩子走秋招",
+    });
+    const summary = pendingAccountProfileSummary(legacy, true);
+
+    expect(summary).toMatchObject({
+      id: "legacy-pending",
+      profile_name: "留学生家长秋招记录",
+      reason: "missing_business_line",
+      suggested_business_line: "overseas_student",
+      has_history: true,
+    });
+    expect(legacy.business_line).toBeUndefined();
+  });
+
+  it("shows a legacy conflict after an explicit attribution confirmation", () => {
+    const confirmed = account("confirmed-legacy", {
+      business_line: "overseas_student",
+      persona: "buyer",
+      profile_name: "旧账号人设",
+      target_user: "正在转型的中高管",
+      core_problem: "职业决策与裸辞方向",
+      profile_attribution_confirmation: {
+        business_line: "overseas_student",
+        persona: "buyer",
+        confirmed_at: "2026-07-31T00:00:00.000Z",
+        confirmed_by: "user-1",
+      },
+    });
+    const partition = partitionAccountProfiles([confirmed], {
+      tenantId: "mianbajun",
+      ownerUserId: "user-1",
+      businessLine: "overseas_student",
+      persona: "buyer",
+    });
+
+    expect(partition.visible.map((item) => item.id)).toEqual(["confirmed-legacy"]);
+    expect(partition.pending).toEqual([]);
+    expect(accountBelongsToProfileWorkspace(confirmed, {
+      tenantId: "mianbajun",
+      ownerUserId: "user-1",
+      businessLine: "overseas_student",
+      persona: "buyer",
+    })).toBe(true);
+  });
+
+  it("does not hide a confirmed legacy profile as a duplicate", () => {
+    const existing = account("existing", {
+      profile_name: "留学生家长号",
+    });
+    const recovered = account("recovered", {
+      profile_name: "留学生家长号",
+      profile_attribution_confirmation: {
+        business_line: "overseas_student",
+        persona: "buyer",
+        confirmed_at: "2026-07-31T00:00:00.000Z",
+        confirmed_by: "user-1",
+      },
+    });
+    const partition = partitionAccountProfiles([existing, recovered], {
+      tenantId: "mianbajun",
+      ownerUserId: "user-1",
+      businessLine: "overseas_student",
+      persona: "buyer",
+    });
+
+    expect(partition.visible.map((item) => item.id).sort()).toEqual(["existing", "recovered"]);
+    expect(partition.duplicates).toEqual([]);
+  });
+
+  it("keeps an attributed archived profile traceable without counting it as pending", () => {
+    const archived = account("archived-recovered", {
+      profile_status: "archived",
+      profile_attribution_confirmation: {
+        business_line: "overseas_student",
+        persona: "buyer",
+        confirmed_at: "2026-07-31T00:00:00.000Z",
+        confirmed_by: "user-1",
+      },
+    });
+    const partition = partitionAccountProfiles([archived], {
+      tenantId: "mianbajun",
+      ownerUserId: "user-1",
+      businessLine: "overseas_student",
+      persona: "buyer",
+    });
+
+    expect(partition.visible.map((item) => item.id)).toEqual(["archived-recovered"]);
+    expect(partition.pending).toEqual([]);
   });
 });

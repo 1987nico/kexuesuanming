@@ -605,6 +605,26 @@ export interface GrowthAccount {
   last_used_at?: string;
   /** 新建账号人设请求的幂等键，防止网络重试产生重复账号。 */
   profile_creation_request_id?: string;
+  /**
+   * 历史人设经操作者人工确认后的显式归属。只有确认记录与当前业务、视角一致时，
+   * 才能覆盖旧数据缺字段或文案冲突带来的自动隔离。
+   */
+  profile_attribution_confirmation?: {
+    business_line: GrowthBusinessLine;
+    persona: GrowthPersona;
+    confirmed_at: string;
+    confirmed_by: string;
+  };
+  /** 归属调整审计记录；只追加，不覆盖原始人设及其内容历史。 */
+  profile_attribution_history?: Array<{
+    action: "confirm" | "reassign" | "archive";
+    from_business_line?: GrowthBusinessLine;
+    from_persona: GrowthPersona;
+    to_business_line?: GrowthBusinessLine;
+    to_persona?: GrowthPersona;
+    operated_at: string;
+    operated_by: string;
+  }>;
   /** 只保存小红书账号标识，不保存密码、Cookie 或登录凭据。 */
   platform_binding?: GrowthPlatformBinding;
   name: string;
@@ -674,6 +694,24 @@ export interface GrowthAccountSummary {
   display_order: number;
   last_used_at: string;
   platform_binding: GrowthPlatformBinding;
+  created_at: string;
+  updated_at: string;
+}
+
+export type GrowthAccountAttributionReason =
+  | "missing_business_line"
+  | "content_conflict";
+
+export interface GrowthPendingAccountProfileSummary {
+  id: string;
+  profile_name: string;
+  one_liner: string;
+  source_business_line?: GrowthBusinessLine;
+  source_persona: GrowthPersona;
+  suggested_business_line: GrowthBusinessLine;
+  reason: GrowthAccountAttributionReason;
+  reason_label: string;
+  has_history: boolean;
   created_at: string;
   updated_at: string;
 }

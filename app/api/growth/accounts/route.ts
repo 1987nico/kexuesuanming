@@ -4,6 +4,7 @@ import { growthStore } from "@/lib/growth/store";
 import { growthPreviewEnabled } from "@/lib/growth/previewFixture";
 import {
   accountBelongsToProfileWorkspace,
+  pendingAccountProfileSummary,
   partitionAccountProfiles,
   toAccountSummary,
 } from "@/lib/growth/accountProfiles";
@@ -29,7 +30,8 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "validation", message: "业务或视角参数无效。" }, { status: 400 });
   }
   const ownerScope = growthPreviewEnabled() ? undefined : guard.auth.user.id;
-  const accounts = await growthStore().listAccounts(TENANT_ID, ownerScope);
+  const store = growthStore();
+  const accounts = await store.listAccounts(TENANT_ID, ownerScope);
   const partition = partitionAccountProfiles(accounts, {
     tenantId: TENANT_ID,
     ownerUserId: ownerScope,
@@ -48,6 +50,23 @@ export async function GET(req: Request) {
     review: {
       pendingCount: partition.pending.length,
       duplicateCount: partition.duplicates.length,
+      pendingProfiles: await Promise.all(partition.pending.map(async (account) => {
+        const [plan, runs, drafts] = await Promise.all([
+          store.getLatestPlan(account.id),
+          store.listRuns(account.id),
+          store.listDrafts(account.id),
+        ]);
+        return pendingAccountProfileSummary(
+          account,
+          Boolean(
+            plan
+            || runs.length
+            || drafts.length
+            || account.weekly_review
+            || account.three_day_review_cycles?.length,
+          ),
+        );
+      })),
     },
   });
 }

@@ -5,6 +5,7 @@ import MianbaLogoutButton from "@/app/mianba/MianbaLogoutButton";
 import type {
   ContentDraft,
   GrowthAccount,
+  GrowthPendingAccountProfileSummary,
   GrowthAccountSummary,
   GrowthBusinessLine,
   GrowthBusinessPosition,
@@ -71,7 +72,11 @@ interface BootstrapData {
   businessPositions: Record<GrowthBusinessLine, GrowthBusinessPosition>;
   account: GrowthAccount | null;
   accountProfiles: GrowthAccountSummary[];
-  accountProfileReview?: { pendingCount: number; duplicateCount: number };
+  accountProfileReview?: {
+    pendingCount: number;
+    duplicateCount: number;
+    pendingProfiles?: GrowthPendingAccountProfileSummary[];
+  };
   selectedAccountId: string | null;
   plan: GrowthPlan | null;
   runs: GrowthRun[];
@@ -503,6 +508,10 @@ export default function GrowthPage() {
   const [personaEditing, setPersonaEditing] = useState(false);
   const [personaSuggestion, setPersonaSuggestion] = useState<GrowthAccount | null>(null);
   const [newProfileOpen, setNewProfileOpen] = useState(false);
+  const [pendingProfileTargets, setPendingProfileTargets] = useState<Record<string, {
+    businessLine: GrowthBusinessLine;
+    persona: GrowthPersona;
+  }>>({});
   const [newProfileForm, setNewProfileForm] = useState<AccountForm>(() =>
     newAccountForm("overseas_student", "buyer", DEFAULT_BUSINESS_POSITIONS.overseas_student));
   const [acceptedPersonaSuggestions, setAcceptedPersonaSuggestions] = useState<Record<string, boolean>>({});
@@ -1052,6 +1061,78 @@ export default function GrowthPage() {
       workspaceCache.current.clear();
       await load(businessLine, persona, true, accountId);
       setMessage("账号人设已恢复并切换，原来的标题、正文和复盘仍然保留。");
+    } catch (error) {
+      setMessage((error as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function resolvePendingProfile(
+    profile: GrowthPendingAccountProfileSummary,
+    resolution: "confirm" | "reassign",
+    targetBusinessLine: GrowthBusinessLine,
+    targetPersona: GrowthPersona,
+  ) {
+    const sameWorkspace = targetBusinessLine === businessLine && targetPersona === persona;
+    if (
+      resolution === "reassign"
+      && !window.confirm(
+        `确认把“${profile.profile_name}”改归到“${GROWTH_BUSINESS_LINE_LABELS[targetBusinessLine]} · ${GROWTH_PERSONA_LABELS[targetPersona]}”吗？原有标题、正文和复盘都会保留。`,
+      )
+    ) return;
+    const busyKey = `resolve-pending-profile-${profile.id}`;
+    setBusy(busyKey);
+    setMessage("");
+    try {
+      await requestJSON(`/api/growth/accounts/${profile.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          action: "resolve_attribution",
+          resolution,
+          businessLine: targetBusinessLine,
+          persona: targetPersona,
+        }),
+      });
+      workspaceCache.current.clear();
+      setPendingProfileTargets((current) => {
+        const next = { ...current };
+        delete next[profile.id];
+        return next;
+      });
+      if (sameWorkspace) {
+        setSelectedAccountId(profile.id);
+        const loaded = await load(businessLine, persona, true, profile.id);
+        if (!loaded) throw new Error("人设归属已确认，但页面重新读取失败。请刷新页面，原数据不会丢失。");
+        setMessage("人设已回到当前列表并自动选中，原来的标题、正文和复盘都已保留。");
+      } else {
+        await load(businessLine, persona, true);
+        setMessage(`人设已改归“${GROWTH_BUSINESS_LINE_LABELS[targetBusinessLine]} · ${GROWTH_PERSONA_LABELS[targetPersona]}”，不会再出现在当前工作区。`);
+      }
+    } catch (error) {
+      setMessage((error as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function archivePendingProfile(profile: GrowthPendingAccountProfileSummary) {
+    if (!window.confirm(`确认归档“${profile.profile_name}”吗？它的历史标题、正文和复盘仍会保留。`)) return;
+    const busyKey = `archive-pending-profile-${profile.id}`;
+    setBusy(busyKey);
+    setMessage("");
+    try {
+      await requestJSON(`/api/growth/accounts/${profile.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          action: "archive_pending",
+          businessLine,
+          persona,
+        }),
+      });
+      workspaceCache.current.clear();
+      await load(businessLine, persona, true);
+      setMessage("待确认人设已归档，历史内容没有删除。");
     } catch (error) {
       setMessage((error as Error).message);
     } finally {
@@ -2112,16 +2193,136 @@ export default function GrowthPage() {
                   </button>
                 )}
               </div>
+              {Boolean(data?.accountProfileReview?.pendingProfiles?.length) && (
+                <details
+                  className="mb-5 rounded-2xl border border-amber-300 bg-amber-50"
+                  open={(data?.accountProfiles ?? []).filter((profile) => profile.profile_status === "active").length === 0}
+                >
+                  <summary className="cursor-pointer p-4 text-sm font-semibold text-amber-950">
+                    待确认人设（{data!.accountProfileReview!.pendingProfiles!.length}）
+                    <span className="ml-2 font-normal text-amber-800">数据仍在，确认归属后即可继续使用</span>
+                  </summary>
+                  <div className="space-y-4 border-t border-amber-200 p-4">
+                    {data!.accountProfileReview!.pendingProfiles!.map((profile) => {
+                      const target = pendingProfileTargets[profile.id] ?? {
+                        businessLine: profile.suggested_business_line,
+                        persona: profile.source_persona,
+                      };
+                      const itemBusy = busy === `resolve-pending-profile-${profile.id}`
+                        || busy === `archive-pending-profile-${profile.id}`;
+                      return (
+                        <div key={profile.id} className="rounded-xl border border-amber-200 bg-white p-4">
+                          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                            <div>
+                              <div className="font-semibold text-slate-900">{profile.profile_name}</div>
+                              {profile.one_liner && profile.one_liner !== profile.profile_name && (
+                                <div className="mt-1 text-xs leading-5 text-slate-500">{profile.one_liner}</div>
+                              )}
+                            </div>
+                            <span className="w-fit rounded-full bg-amber-100 px-3 py-1 text-xs text-amber-900">
+                              {profile.has_history ? "有关联历史内容" : "暂无历史内容"}
+                            </span>
+                          </div>
+                          <div className="mt-3 grid gap-2 text-xs leading-5 text-slate-600 sm:grid-cols-2">
+                            <div>
+                              原归属：
+                              {profile.source_business_line
+                                ? GROWTH_BUSINESS_LINE_LABELS[profile.source_business_line]
+                                : "未记录业务"}
+                              {" · "}
+                              {GROWTH_PERSONA_LABELS[profile.source_persona]}
+                            </div>
+                            <div>隔离原因：{profile.reason_label}</div>
+                          </div>
+                          <div className="mt-4 flex flex-wrap gap-2">
+                            <PrimaryButton
+                              disabled={Boolean(busy)}
+                              onClick={() => resolvePendingProfile(profile, "confirm", businessLine, persona)}
+                            >
+                              {itemBusy ? "处理中…" : "确认归入当前业务与视角"}
+                            </PrimaryButton>
+                            <SecondaryButton
+                              disabled={Boolean(busy)}
+                              onClick={() => archivePendingProfile(profile)}
+                            >
+                              归档
+                            </SecondaryButton>
+                          </div>
+                          <details className="mt-4 rounded-xl border border-slate-200 bg-slate-50">
+                            <summary className="cursor-pointer px-4 py-3 text-sm font-medium text-slate-700">
+                              改归其他业务或视角
+                            </summary>
+                            <div className="grid gap-3 border-t border-slate-200 p-4 sm:grid-cols-2">
+                              <label className="text-xs font-medium text-slate-600">
+                                业务
+                                <select
+                                  className="mt-2 min-h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-900"
+                                  value={target.businessLine}
+                                  onChange={(event) => setPendingProfileTargets((current) => ({
+                                    ...current,
+                                    [profile.id]: {
+                                      ...target,
+                                      businessLine: event.target.value as GrowthBusinessLine,
+                                    },
+                                  }))}
+                                >
+                                  {GROWTH_BUSINESS_LINES.map((line) => (
+                                    <option key={line} value={line}>{GROWTH_BUSINESS_LINE_LABELS[line]}</option>
+                                  ))}
+                                </select>
+                              </label>
+                              <label className="text-xs font-medium text-slate-600">
+                                视角
+                                <select
+                                  className="mt-2 min-h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-900"
+                                  value={target.persona}
+                                  onChange={(event) => setPendingProfileTargets((current) => ({
+                                    ...current,
+                                    [profile.id]: {
+                                      ...target,
+                                      persona: event.target.value as GrowthPersona,
+                                    },
+                                  }))}
+                                >
+                                  {GROWTH_PERSONAS.map((item) => (
+                                    <option key={item} value={item}>{GROWTH_PERSONA_LABELS[item]}</option>
+                                  ))}
+                                </select>
+                              </label>
+                              <div className="sm:col-span-2">
+                                <SecondaryButton
+                                  disabled={Boolean(busy)}
+                                  onClick={() => resolvePendingProfile(
+                                    profile,
+                                    "reassign",
+                                    target.businessLine,
+                                    target.persona,
+                                  )}
+                                >
+                                  确认改归所选业务与视角
+                                </SecondaryButton>
+                              </div>
+                            </div>
+                          </details>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </details>
+              )}
+
               {Boolean(
-                data?.accountProfileReview
-                && (data.accountProfileReview.pendingCount || data.accountProfileReview.duplicateCount),
+                data?.accountProfileReview?.pendingCount
+                && !data.accountProfileReview.pendingProfiles?.length,
               ) && (
                 <div className="mb-5 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-900">
-                  系统已隔离
-                  {data!.accountProfileReview!.pendingCount ? ` ${data!.accountProfileReview!.pendingCount} 条归属待确认的人设` : ""}
-                  {data!.accountProfileReview!.pendingCount && data!.accountProfileReview!.duplicateCount ? "，以及" : ""}
-                  {data!.accountProfileReview!.duplicateCount ? ` ${data!.accountProfileReview!.duplicateCount} 条重复人设` : ""}
-                  ；它们不会参与当前账号的选题、正文或复盘。
+                  系统发现 {data!.accountProfileReview!.pendingCount} 条待确认人设，但详情读取失败。请刷新页面后重试。
+                </div>
+              )}
+
+              {Boolean(data?.accountProfileReview?.duplicateCount) && (
+                <div className="mb-5 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm leading-6 text-slate-700">
+                  系统已隔离 {data!.accountProfileReview!.duplicateCount} 条重复人设；原始数据仍然保留。
                 </div>
               )}
 

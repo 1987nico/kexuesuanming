@@ -28,6 +28,7 @@ import { withHistoricalBenchmarkSourceUsage } from "@/lib/growth/sourceRotation"
 import {
   accountBelongsToProfileWorkspace,
   chooseAccountProfile,
+  pendingAccountProfileSummary,
   partitionAccountProfiles,
   toAccountSummary,
 } from "@/lib/growth/accountProfiles";
@@ -124,6 +125,23 @@ export async function GET(req: Request) {
     businessLine,
     persona,
   });
+  const pendingAccountProfiles = await Promise.all(profilePartition.pending.map(async (candidate) => {
+    const [storedPlan, runs, drafts] = await Promise.all([
+      store.getLatestPlan(candidate.id),
+      store.listRuns(candidate.id),
+      store.listDrafts(candidate.id),
+    ]);
+    return pendingAccountProfileSummary(
+      candidate,
+      Boolean(
+        storedPlan
+        || runs.length
+        || drafts.length
+        || candidate.weekly_review
+        || candidate.three_day_review_cycles?.length,
+      ),
+    );
+  }));
   const profileAccounts = profilePartition.visible.filter((candidate) =>
     accountBelongsToProfileWorkspace(candidate, {
       tenantId: DEFAULT_TENANT_ID,
@@ -228,6 +246,7 @@ export async function GET(req: Request) {
     accountProfileReview: {
       pendingCount: profilePartition.pending.length,
       duplicateCount: profilePartition.duplicates.length,
+      pendingProfiles: pendingAccountProfiles,
     },
     selectedAccountId: responseAccount?.id ?? null,
     plan,

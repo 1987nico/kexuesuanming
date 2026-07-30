@@ -618,5 +618,29 @@ export function createGrowthPreviewFixture(): GrowthPreviewFixture {
     return [...defaultBatches, explore];
   });
   const runs = [...titleRuns, ...contentRuns];
+  // 仅用于本地预览验收“待确认人设找回”闭环；生产数据不会读取这条记录。
+  const pendingLegacyBuyer = account(
+    "overseas_student",
+    "buyer",
+    "preview-overseas-pending-buyer",
+    "历史留学生家长号（待确认）",
+    {
+      identity: "陪留学生孩子准备秋招的家长",
+      struggle: "旧账号尚未补录明确业务归属",
+    },
+  );
+  pendingLegacyBuyer.profile_name = "历史留学生家长号（待确认）";
+  pendingLegacyBuyer.one_liner = "陪孩子走秋招的旧账号记录";
+  delete pendingLegacyBuyer.business_line;
+  accounts.push(pendingLegacyBuyer);
+  plans.push({
+    id: `${pendingLegacyBuyer.id}-plan`,
+    tenant_id: GROWTH_PREVIEW_TENANT,
+    account_id: pendingLegacyBuyer.id,
+    title: "历史账号计划（用于待确认恢复验收）",
+    weeks: [],
+    created_at: isoBefore(30),
+    updated_at: isoBefore(0),
+  });
   return { accounts, plans, runs, drafts, reviews };
 }

@@ -6,8 +6,10 @@ import { bodyProfileIdentityProblem } from "./runner";
 describe("growth v3.2 local preview fixture", () => {
   it("seeds two business lines with three isolated personas and keeps legacy samples separate", () => {
     const fixture = createGrowthPreviewFixture();
-    expect(fixture.accounts).toHaveLength(7);
-    expect(new Set(fixture.accounts.map((item) => item.business_line))).toEqual(new Set(["executive", "overseas_student"]));
+    const assignedAccounts = fixture.accounts.filter((item) => item.business_line);
+    expect(assignedAccounts).toHaveLength(7);
+    expect(fixture.accounts.filter((item) => !item.business_line)).toHaveLength(1);
+    expect(new Set(assignedAccounts.map((item) => item.business_line))).toEqual(new Set(["executive", "overseas_student"]));
     for (const businessLine of ["executive", "overseas_student"] as const) {
       expect(new Set(fixture.accounts.filter((item) => item.business_line === businessLine).map((item) => item.persona))).toEqual(new Set(["buyer", "expert", "merchant"]));
     }
@@ -53,7 +55,7 @@ describe("growth v3.2 local preview fixture", () => {
 describe("growth v3.3 preview fixture", () => {
   it("keeps three recoverable title batches per workspace", () => {
     const fixture = createGrowthPreviewFixture();
-    for (const account of fixture.accounts) {
+    for (const account of fixture.accounts.filter((item) => item.business_line)) {
       const batches = fixture.runs.filter((run) =>
         run.account_id === account.id
         && run.generation_mode === "default"
