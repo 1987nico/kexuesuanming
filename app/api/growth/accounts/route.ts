@@ -1,8 +1,10 @@
 import { NextResponse } from "next/server";
 import { requireMianbaApiAuth } from "@/lib/auth/mianba";
 import { growthStore } from "@/lib/growth/store";
+import { growthPreviewEnabled } from "@/lib/growth/previewFixture";
 import {
   accountBelongsToProfileWorkspace,
+  partitionAccountProfiles,
   toAccountSummary,
 } from "@/lib/growth/accountProfiles";
 import {
@@ -26,10 +28,16 @@ export async function GET(req: Request) {
   if (!GROWTH_BUSINESS_LINES.includes(businessLine) || !GROWTH_PERSONAS.includes(persona)) {
     return NextResponse.json({ error: "validation", message: "业务或视角参数无效。" }, { status: 400 });
   }
-  const ownerScope = guard.auth.role === "admin" ? undefined : guard.auth.user.id;
-  const accounts = await growthStore().listAccounts(TENANT_ID, ownerScope, businessLine);
+  const ownerScope = growthPreviewEnabled() ? undefined : guard.auth.user.id;
+  const accounts = await growthStore().listAccounts(TENANT_ID, ownerScope);
+  const partition = partitionAccountProfiles(accounts, {
+    tenantId: TENANT_ID,
+    ownerUserId: ownerScope,
+    businessLine,
+    persona,
+  });
   return NextResponse.json({
-    accounts: accounts
+    accounts: partition.visible
       .filter((account) => accountBelongsToProfileWorkspace(account, {
         tenantId: TENANT_ID,
         ownerUserId: ownerScope,
@@ -37,5 +45,9 @@ export async function GET(req: Request) {
         persona,
       }))
       .map(toAccountSummary),
+    review: {
+      pendingCount: partition.pending.length,
+      duplicateCount: partition.duplicates.length,
+    },
   });
 }

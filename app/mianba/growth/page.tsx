@@ -10,6 +10,7 @@ import type {
   GrowthBusinessPosition,
   GrowthPersona,
   GrowthPlan,
+  GrowthProfileIdentity,
   GrowthReview,
   GrowthReviewWindow,
   GrowthRun,
@@ -52,6 +53,11 @@ import {
 } from "@/lib/growth/reviewCenter";
 import { personaGenerationStrategy } from "@/lib/growth/personaCreation";
 import {
+  defaultProfileIdentity,
+  profileIdentityLabel,
+  resolveProfileIdentity,
+} from "@/lib/growth/accountIdentity";
+import {
   MANUAL_TITLE_MAX_LENGTH,
   manualTitleLength,
   manualTitleValidationError,
@@ -65,6 +71,7 @@ interface BootstrapData {
   businessPositions: Record<GrowthBusinessLine, GrowthBusinessPosition>;
   account: GrowthAccount | null;
   accountProfiles: GrowthAccountSummary[];
+  accountProfileReview?: { pendingCount: number; duplicateCount: number };
   selectedAccountId: string | null;
   plan: GrowthPlan | null;
   runs: GrowthRun[];
@@ -82,6 +89,7 @@ interface BootstrapData {
 
 interface AccountForm {
   profile_name: string;
+  profile_identity: GrowthProfileIdentity;
   platform_account_name: string;
   platform_account_uid: string;
   platform_profile_url: string;
@@ -143,6 +151,7 @@ const numericReviewFields = [...contentReviewFields, ...businessReviewFields] as
 
 const emptyAccount: AccountForm = {
   profile_name: "",
+  profile_identity: "overseas_student_parent",
   platform_account_name: "",
   platform_account_uid: "",
   platform_profile_url: "",
@@ -234,6 +243,7 @@ function asLocalDateTime(value = new Date().toISOString()) {
 function accountForm(account: GrowthAccount): AccountForm {
   return {
     profile_name: account.profile_name || account.one_liner || account.name,
+    profile_identity: resolveProfileIdentity(account),
     platform_account_name: account.platform_binding?.account_name || "",
     platform_account_uid: account.platform_binding?.account_uid || "",
     platform_profile_url: account.platform_binding?.profile_url || "",
@@ -402,6 +412,46 @@ const PERSONA_SUGGESTION_LABELS: Partial<Record<keyof AccountForm, string>> = {
   compliance_redline: "合规红线",
 };
 
+function accountProfileExamples(
+  businessLine: GrowthBusinessLine,
+  persona: GrowthPersona,
+): { helper: string; placeholder: string } {
+  if (businessLine === "overseas_student") {
+    if (persona === "buyer") {
+      return {
+        helper: "例如：留学生本人号、留学生家长号，或同一视角下的其他独立账号。",
+        placeholder: "例如：留学生本人号",
+      };
+    }
+    if (persona === "merchant") {
+      return {
+        helper: "例如：求职辅导服务号、案例交付号，或同一视角下的其他独立账号。",
+        placeholder: "例如：求职辅导服务号",
+      };
+    }
+    return {
+      helper: "例如：留学生求职老师号、岗位判断号，或同一视角下的其他独立账号。",
+      placeholder: "例如：留学生求职老师号",
+    };
+  }
+  if (persona === "buyer") {
+    return {
+      helper: "例如：转型记录号、创业探索号，或同一视角下的其他独立账号。",
+      placeholder: "例如：转型记录号",
+    };
+  }
+  if (persona === "merchant") {
+    return {
+      helper: "例如：职业决策服务号、案例拆解号，或同一视角下的其他独立账号。",
+      placeholder: "例如：职业决策服务号",
+    };
+  }
+  return {
+    helper: "例如：职业决策顾问号、方法论账号，或同一视角下的其他独立账号。",
+    placeholder: "例如：职业决策顾问号",
+  };
+}
+
 export default function GrowthPage() {
   const [businessLine, setBusinessLine] = useState<GrowthBusinessLine>("overseas_student");
   const [persona, setPersona] = useState<GrowthPersona>("buyer");
@@ -435,6 +485,7 @@ export default function GrowthPage() {
   const [personaSuggestion, setPersonaSuggestion] = useState<GrowthAccount | null>(null);
   const [newProfileOpen, setNewProfileOpen] = useState(false);
   const [newProfileName, setNewProfileName] = useState("");
+  const [newProfileIdentity, setNewProfileIdentity] = useState<GrowthProfileIdentity>("overseas_student_parent");
   const [newPlatformName, setNewPlatformName] = useState("");
   const [newPlatformUid, setNewPlatformUid] = useState("");
   const [newPlatformUrl, setNewPlatformUrl] = useState("");
@@ -516,7 +567,14 @@ export default function GrowthPage() {
       workspaceRequests.current.delete(requestKey);
     }
     const existing = workspaceRequests.current.get(requestKey);
-    if (existing) return existing;
+    const existingController = workspaceControllers.current.get(requestKey);
+    if (existing && !existingController?.signal.aborted) return existing;
+    // React 严格模式、快速切页或弱网重试会先取消旧请求。不能继续复用已经
+    // aborted 的 Promise，否则页面会永久停在“待完善人设/正在读取”。
+    if (existingController?.signal.aborted) {
+      workspaceRequests.current.delete(requestKey);
+      workspaceControllers.current.delete(requestKey);
+    }
     const controller = new AbortController();
     workspaceControllers.current.set(requestKey, controller);
     let request: Promise<BootstrapData>;
@@ -643,6 +701,7 @@ export default function GrowthPage() {
   }, []);
 
   const businessDefinition = GROWTH_BUSINESS_DEFINITIONS[businessLine];
+  const profileExamples = accountProfileExamples(businessLine, persona);
   const businessPosition = data?.businessPosition ?? DEFAULT_BUSINESS_POSITIONS[businessLine];
   const runsByMode = useMemo(() => ({
     default: (data?.runs ?? []).filter((run) => run.generation_mode === "default" && run.topic_pool.length > 0).slice(0, 3),
@@ -834,7 +893,11 @@ export default function GrowthPage() {
         body: JSON.stringify({
           businessLine,
           persona,
-          accountName: form.name || "面霸君",
+          accountName: form.profile_name || form.name || "面霸君",
+          profileName: form.profile_name || undefined,
+          profileIdentity: data?.account
+            ? form.profile_identity
+            : defaultProfileIdentity(businessLine, persona),
           targetUser: form.target_user || undefined,
           coreProblem: form.core_problem || undefined,
           trustSource: form.trust_source || undefined,
@@ -886,6 +949,9 @@ export default function GrowthPage() {
           mode: "create",
           requestId: crypto.randomUUID(),
           profileName: newProfileName.trim(),
+          profileIdentity: businessLine === "overseas_student" && persona === "buyer"
+            ? newProfileIdentity
+            : defaultProfileIdentity(businessLine, persona),
           accountName: newProfileName.trim(),
           targetUser: businessPosition.target_user,
           coreProblem: businessPosition.core_problem,
@@ -900,6 +966,7 @@ export default function GrowthPage() {
       });
       workspaceCache.current.delete(workspaceKey(businessLine, persona));
       setNewProfileName("");
+      setNewProfileIdentity(defaultProfileIdentity(businessLine, persona));
       setNewPlatformName("");
       setNewPlatformUid("");
       setNewPlatformUrl("");
@@ -1033,6 +1100,7 @@ export default function GrowthPage() {
         accountProfiles: data.accountProfiles.map((profile) => profile.id === result.account.id ? {
           ...profile,
           profile_name: result.account.profile_name || result.account.one_liner || result.account.name,
+          profile_identity: resolveProfileIdentity(result.account),
           one_liner: result.account.one_liner || "",
           platform_binding: result.account.platform_binding || profile.platform_binding,
           updated_at: result.account.updated_at,
@@ -1991,14 +2059,29 @@ export default function GrowthPage() {
                 {data?.capabilities.multiAccountPersona !== false && (
                   <button
                     type="button"
-                    onClick={() => setNewProfileOpen((open) => !open)}
+                    onClick={() => {
+                      setNewProfileIdentity(defaultProfileIdentity(businessLine, persona));
+                      setNewProfileOpen((open) => !open);
+                    }}
                     className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-4 text-left hover:border-slate-500"
                   >
                     <div className="font-semibold">＋ 新建账号人设</div>
-                    <div className="mt-2 text-xs leading-5 text-slate-500">例如：留学生本人号、留学生家长号，或同一视角下的其他独立账号。</div>
+                    <div className="mt-2 text-xs leading-5 text-slate-500">{profileExamples.helper}</div>
                   </button>
                 )}
               </div>
+              {Boolean(
+                data?.accountProfileReview
+                && (data.accountProfileReview.pendingCount || data.accountProfileReview.duplicateCount),
+              ) && (
+                <div className="mb-5 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-900">
+                  系统已隔离
+                  {data!.accountProfileReview!.pendingCount ? ` ${data!.accountProfileReview!.pendingCount} 条归属待确认的人设` : ""}
+                  {data!.accountProfileReview!.pendingCount && data!.accountProfileReview!.duplicateCount ? "，以及" : ""}
+                  {data!.accountProfileReview!.duplicateCount ? ` ${data!.accountProfileReview!.duplicateCount} 条重复人设` : ""}
+                  ；它们不会参与当前账号的选题、正文或复盘。
+                </div>
+              )}
 
               {(data?.accountProfiles ?? []).some((profile) => profile.profile_status === "archived") && (
                 <details className="mb-5 rounded-2xl border border-slate-200 bg-slate-50">
@@ -2031,7 +2114,18 @@ export default function GrowthPage() {
                   <div className="font-semibold">新建并绑定一个账号人设</div>
                   <p className="mt-1 text-xs leading-5 text-slate-600">系统只保存公开账号标识，不会保存密码、Cookie 或登录信息。</p>
                   <div className="mt-4 grid gap-4 md:grid-cols-2">
-                    <TextInput label="账号人设名称" value={newProfileName} onChange={setNewProfileName} placeholder="例如：留学生本人号" />
+                    <TextInput label="账号人设名称" value={newProfileName} onChange={setNewProfileName} placeholder={profileExamples.placeholder} />
+                    {businessLine === "overseas_student" && persona === "buyer" && (
+                      <Select
+                        label="这个账号由谁发声"
+                        value={newProfileIdentity}
+                        onChange={(value) => setNewProfileIdentity(value as GrowthProfileIdentity)}
+                        options={[
+                          { value: "overseas_student_self", label: "留学生本人" },
+                          { value: "overseas_student_parent", label: "留学生家长" },
+                        ]}
+                      />
+                    )}
                     <TextInput label="小红书账号名称" value={newPlatformName} onChange={setNewPlatformName} placeholder="例如：小雪的秋招日记" />
                     <TextInput label="小红书号 / UID（选填）" value={newPlatformUid} onChange={setNewPlatformUid} />
                     <TextInput label="主页链接（选填）" value={newPlatformUrl} onChange={setNewPlatformUrl} />
@@ -2069,6 +2163,17 @@ export default function GrowthPage() {
                   {personaEditing ? (
                     <div className="grid gap-4 md:grid-cols-2">
                       <TextInput label="账号人设名称" value={form.profile_name} onChange={(value) => setForm({ ...form, profile_name: value })} />
+                      {businessLine === "overseas_student" && persona === "buyer" && (
+                        <Select
+                          label="这个账号由谁发声"
+                          value={form.profile_identity}
+                          onChange={(value) => setForm({ ...form, profile_identity: value as GrowthProfileIdentity })}
+                          options={[
+                            { value: "overseas_student_self", label: "留学生本人" },
+                            { value: "overseas_student_parent", label: "留学生家长" },
+                          ]}
+                        />
+                      )}
                       <TextInput label="人设名称" value={form.name} onChange={(value) => setForm({ ...form, name: value })} />
                       <TextInput label="一句话人设" value={form.one_liner} onChange={(value) => setForm({ ...form, one_liner: value })} />
                       <TextInput label="绑定的小红书账号名称" value={form.platform_account_name} onChange={(value) => setForm({ ...form, platform_account_name: value })} />
@@ -2084,6 +2189,7 @@ export default function GrowthPage() {
                   ) : (
                     <div className="grid gap-4 md:grid-cols-2">
                       <PersonFact label="目标人群" value={visibleBusinessText(form.target_user, businessLine)} />
+                      <PersonFact label="账号发声身份" value={profileIdentityLabel(form.profile_identity)} />
                       <PersonFact label="核心问题" value={visibleBusinessText(form.core_problem, businessLine)} />
                       <PersonFact label="持续提供的价值" value={visibleBusinessText(form.account_value, businessLine)} />
                       <PersonFact label="信任来源" value={visibleBusinessText(form.trust_source, businessLine)} />

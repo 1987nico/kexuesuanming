@@ -66,11 +66,30 @@ describe("来源型标题生成合同", () => {
       context: {
         businessLine: "留学生求职辅导",
         oneLiner: "陪娃闯秋招的留学生家长真实记录",
+        profileIdentity: "overseas_student_parent",
       },
     });
 
     expect(prompt).toContain("每一个标题本身都必须包含孩子/娃/家长/我家/陪孩子/陪娃/儿女");
     expect(prompt).toContain("不能把家长身份只留给正文承诺");
+  });
+
+  it("留学生本人账号明确禁止家长叙事", () => {
+    const prompt = buildTopicPoolUserPrompt({
+      week: 1,
+      targetUser: "准备秋招的留学生与家长",
+      coreProblem: "求职方向与招聘节奏不清晰",
+      persona: "buyer",
+      methods: [TITLE_METHOD_BY_ID.human_pain],
+      generationMode: "default",
+      context: {
+        businessLine: "留学生求职辅导",
+        oneLiner: "留子回国求职踩坑实录｜边找方向边更新",
+        profileIdentity: "overseas_student_self",
+      },
+    });
+    expect(prompt).toContain("当前账号是留学生本人");
+    expect(prompt).toContain("不得出现“我家孩子、陪娃、家长、孩子秋招”");
   });
 
   it("每个模型候选标题必须携带自己独立的正文承诺", () => {

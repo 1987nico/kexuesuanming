@@ -1,7 +1,11 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireMianbaApiAuth } from "@/lib/auth/mianba";
-import { generateAccountAndPlan } from "@/lib/growth/runner";
+import {
+  bodyProfileIdentityProblem,
+  generateAccountAndPlan,
+  titlePersonaProblems,
+} from "@/lib/growth/runner";
 import { growthStore } from "@/lib/growth/store";
 import {
   GROWTH_BUSINESS_LINES,
@@ -24,8 +28,10 @@ import { withHistoricalBenchmarkSourceUsage } from "@/lib/growth/sourceRotation"
 import {
   accountBelongsToProfileWorkspace,
   chooseAccountProfile,
+  partitionAccountProfiles,
   toAccountSummary,
 } from "@/lib/growth/accountProfiles";
+import { isProfileTitleCompatible } from "@/lib/growth/accountIdentity";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -55,6 +61,13 @@ const bodySchema = z.object({
     account_uid: z.string().trim().max(120).optional(),
     profile_url: z.string().trim().url().max(500).optional(),
   }).optional(),
+  profileIdentity: z.enum([
+    "overseas_student_self",
+    "overseas_student_parent",
+    "executive_self",
+    "service_operator",
+    "professional_expert",
+  ]).optional(),
 });
 
 function resolvePersona(value: string | null): GrowthPersona {
@@ -85,15 +98,21 @@ export async function GET(req: Request) {
   const requestedScope = resolveWorkspaceScope(url.searchParams.get("scope"));
   const scope = process.env.GROWTH_LIGHT_BOOTSTRAP === "false" ? "full" : requestedScope;
   const store = growthStore();
-  // 工作台隔离：操作者只取「自己的或未归属」账号；管理员不限
-  const ownerScope = guard.auth.role === "admin" ? undefined : guard.auth.user.id;
+  // 增长工作台始终按当前登录人隔离。管理员若要处理历史未归属数据，应走
+  // 独立管理入口，不能让后台权限把其他操作者的人设混进日常生成页面。
+  const ownerScope = growthPreviewEnabled() ? undefined : guard.auth.user.id;
   const [allAccounts, settings] = await Promise.all([
-    store.listAccounts(DEFAULT_TENANT_ID, ownerScope, businessLine),
+    store.listAccounts(DEFAULT_TENANT_ID, ownerScope),
     store.getBusinessSettings(DEFAULT_TENANT_ID),
   ]);
-  const profileAccounts = allAccounts.filter((candidate) =>
-    candidate.persona === persona
-    && accountBelongsToProfileWorkspace(candidate, {
+  const profilePartition = partitionAccountProfiles(allAccounts, {
+    tenantId: DEFAULT_TENANT_ID,
+    ownerUserId: ownerScope,
+    businessLine,
+    persona,
+  });
+  const profileAccounts = profilePartition.visible.filter((candidate) =>
+    accountBelongsToProfileWorkspace(candidate, {
       tenantId: DEFAULT_TENANT_ID,
       ownerUserId: ownerScope,
       businessLine,
@@ -146,6 +165,13 @@ export async function GET(req: Request) {
   const responseAccount = workspaceAccount
     ? withHistoricalBenchmarkSourceUsage(workspaceAccount, [...runs])
     : null;
+  const visibleRuns = workspaceAccount
+    ? runs.map((run) => ({
+      ...run,
+      topic_pool: run.topic_pool.filter((topic) =>
+        titlePersonaProblems(topic, workspaceAccount).length === 0),
+    }))
+    : runs;
   // 以笔记为单元：返回每篇笔记对应的复盘（draftId -> review），供历史查看
   const reviews: Record<string, (typeof reviewList)[number]> = {};
   for (const review of reviewList) {
@@ -157,6 +183,10 @@ export async function GET(req: Request) {
   const historicalDrafts = drafts.filter((draft) => draft.schema_version === "legacy_v1" || !draft.schema_version);
   const currentDrafts = drafts
     .filter((draft) => draft.schema_version === "method_v3_2")
+    .filter((draft) => !workspaceAccount || (
+      isProfileTitleCompatible(draft.title, workspaceAccount)
+      && !bodyProfileIdentityProblem(draft.body, workspaceAccount)
+    ))
     .map((draft) => withDraftValidation(
       draft,
       persona,
@@ -181,9 +211,13 @@ export async function GET(req: Request) {
     accountProfiles: (multiAccountPersonaEnabled() ? profileAccounts : account ? [account] : [])
       .map(toAccountSummary)
       .sort((a, b) => a.display_order - b.display_order || b.last_used_at.localeCompare(a.last_used_at)),
+    accountProfileReview: {
+      pendingCount: profilePartition.pending.length,
+      duplicateCount: profilePartition.duplicates.length,
+    },
     selectedAccountId: responseAccount?.id ?? null,
     plan,
-    runs,
+    runs: visibleRuns,
     drafts,
     currentDrafts,
     historicalDrafts,
@@ -235,7 +269,7 @@ export async function POST(req: Request) {
   let existingAccount: Awaited<ReturnType<ReturnType<typeof growthStore>["getAccount"]>> = null;
   const ownedProfiles = await store.listAccounts(
     DEFAULT_TENANT_ID,
-    guard.auth.role === "admin" ? undefined : guard.auth.user.id,
+    growthPreviewEnabled() ? undefined : guard.auth.user.id,
     parsed.data.businessLine,
   );
   const idempotentCreated = parsed.data.mode === "create" && parsed.data.requestId
@@ -343,6 +377,9 @@ export async function POST(req: Request) {
     account.stage_review = existingAccount.stage_review;
     account.three_day_review_cycles = existingAccount.three_day_review_cycles;
     account.profile_name = existingAccount.profile_name ?? parsed.data.profileName;
+    account.profile_identity = existingAccount.profile_identity
+      ?? parsed.data.profileIdentity
+      ?? account.profile_identity;
     account.profile_status = existingAccount.profile_status;
     account.is_default_profile = existingAccount.is_default_profile;
     account.display_order = existingAccount.display_order;

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  bodyProfileIdentityProblem,
   attemptedTitleExactProblems,
   buildGrowthTitleFingerprint,
   buildTopicDiversitySignature,
@@ -204,5 +205,38 @@ describe("标题四层多样性签名", () => {
       "讲清留学生秋招焦虑",
     );
     expect(titlePersonaProblems(parentCandidate, parentAccount)).toHaveLength(0);
+  });
+
+  it("留学生本人账号会拦截家长口吻标题", () => {
+    const studentAccount = {
+      business_line: "overseas_student",
+      persona: "buyer",
+      profile_name: "留子回国求职踩坑实录｜边找方向边更新",
+      profile_identity: "overseas_student_self",
+      one_liner: "留子回国求职踩坑实录｜边找方向边更新",
+      target_user: "准备回国求职的留学生本人",
+    } as unknown as GrowthAccount;
+    const parentTitle = topic(
+      "human_pain",
+      "娃投了半个月，全石沉大海",
+      "讲清投递没回音的原因",
+    );
+    expect(titlePersonaProblems(parentTitle, studentAccount).some((item) =>
+      item.includes("不能写成家长或陪娃口吻")
+    )).toBe(true);
+    const selfTitle = topic(
+      "human_pain",
+      "投了半个月，我还没等到面试",
+      "讲清本人投递没回音的原因",
+    );
+    expect(titlePersonaProblems(selfTitle, studentAccount)).toHaveLength(0);
+    expect(bodyProfileIdentityProblem(
+      "我家孩子投了半个月，我陪娃重新整理了岗位。",
+      studentAccount,
+    )).toContain("家长口吻");
+    expect(bodyProfileIdentityProblem(
+      "我投了半个月，后来重新整理了自己的岗位方向。",
+      studentAccount,
+    )).toBeUndefined();
   });
 });

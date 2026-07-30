@@ -15,6 +15,7 @@ function account(
   ownerUserId: string | null,
   businessLine: GrowthAccount["business_line"] = "executive",
 ): GrowthAccount {
+  const overseas = businessLine === "overseas_student";
   return {
     id,
     tenant_id: "mianbajun",
@@ -22,8 +23,8 @@ function account(
     business_line: businessLine,
     persona,
     name: id,
-    target_user: "中高管",
-    core_problem: "职业决策",
+    target_user: overseas ? "准备回国求职的留学生" : "中高管",
+    core_problem: overseas ? "秋招方向" : "职业决策",
     account_value: "判断",
     trust_source: "案例",
     not_doing: "不保证结果",

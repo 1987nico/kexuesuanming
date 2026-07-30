@@ -21,7 +21,13 @@ import type {
  */
 
 function account(business_line: GrowthBusinessLine, persona: GrowthPersona) {
-  return { business_line, persona } as GrowthAccount;
+  return {
+    business_line,
+    persona,
+    profile_identity: business_line === "overseas_student" && persona === "buyer"
+      ? "overseas_student_parent"
+      : undefined,
+  } as GrowthAccount;
 }
 
 function topic(

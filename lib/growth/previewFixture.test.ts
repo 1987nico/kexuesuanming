@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { assertGrowthPreviewIsSafe, createGrowthPreviewFixture, growthPreviewEnabled } from "./previewFixture";
+import { isProfileTitleCompatible } from "./accountIdentity";
+import { bodyProfileIdentityProblem } from "./runner";
 
 describe("growth v3.2 local preview fixture", () => {
   it("seeds two business lines with three isolated personas and keeps legacy samples separate", () => {
@@ -25,6 +27,21 @@ describe("growth v3.2 local preview fixture", () => {
     ]);
     expect(profiles.filter((item) => item.is_default_profile)).toHaveLength(1);
     expect(profiles.every((item) => item.platform_binding?.binding_status === "bound")).toBe(true);
+    for (const profile of profiles) {
+      const topics = fixture.runs
+        .filter((run) => run.account_id === profile.id)
+        .flatMap((run) => run.topic_pool);
+      expect(
+        topics
+          .filter((topic) => !isProfileTitleCompatible(topic.title, profile))
+          .map((topic) => topic.title),
+      ).toEqual([]);
+      const currentBodies = fixture.drafts
+        .filter((draft) => draft.account_id === profile.id && draft.schema_version === "method_v3_2")
+        .map((draft) => ({ title: draft.title, problem: bodyProfileIdentityProblem(draft.body, profile) }))
+        .filter((item) => item.problem);
+      expect(currentBodies).toEqual([]);
+    }
   });
 
   it("enables only the explicit fixture flag and rejects production", () => {

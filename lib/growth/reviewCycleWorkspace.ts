@@ -1,6 +1,9 @@
 import type { GrowthStore } from "./store";
 import type { GrowthAccount, GrowthBusinessLine, ThreeDayReviewCycle } from "./types";
-import { resolveAccountBusinessLine } from "./businessCompatibility";
+import {
+  accountBusinessAttribution,
+  resolveAccountBusinessLine,
+} from "./businessCompatibility";
 
 export async function reviewWorkspaceAccounts(
   store: GrowthStore,
@@ -26,7 +29,8 @@ export async function reviewOwnerAccounts(
   const accounts = (await store.listAccounts(current.tenant_id, current.owner_user_id ?? undefined))
     .filter((account) => current.owner_user_id == null
       ? account.owner_user_id == null
-      : account.owner_user_id === current.owner_user_id);
+      : account.owner_user_id === current.owner_user_id)
+    .filter((account) => accountBusinessAttribution(account) === "confirmed");
   return accounts.some((account) => account.id === current.id) ? accounts : [current, ...accounts];
 }
 
@@ -34,7 +38,9 @@ export function reviewAccountsForBusiness(
   accounts: GrowthAccount[],
   businessLine: GrowthBusinessLine,
 ) {
-  return accounts.filter((account) => resolveAccountBusinessLine(account) === businessLine);
+  return accounts.filter((account) =>
+    accountBusinessAttribution(account) === "confirmed"
+    && account.business_line === businessLine);
 }
 
 /**

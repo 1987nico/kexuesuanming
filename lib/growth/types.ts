@@ -592,6 +592,11 @@ export interface GrowthAccount {
   persona: GrowthPersona;
   /** 面向运营展示的账号人设名称；旧数据为空时由系统按业务与视角补默认名。 */
   profile_name?: string;
+  /**
+   * 账号实际发声身份。它比“买家/商家/专家”更具体，用来区分同一买家视角下
+   * 的留学生本人号与家长号，禁止标题和正文仅凭视角猜第一人称。
+   */
+  profile_identity?: GrowthProfileIdentity;
   /** 归档只隐藏账号人设，不删除其标题、正文与复盘历史。 */
   profile_status?: "active" | "archived";
   /** 同一业务与视角下首次进入时优先选择的账号人设。 */
@@ -641,6 +646,13 @@ export interface GrowthAccount {
   updated_at: string;
 }
 
+export type GrowthProfileIdentity =
+  | "overseas_student_self"
+  | "overseas_student_parent"
+  | "executive_self"
+  | "service_operator"
+  | "professional_expert";
+
 export interface GrowthPlatformBinding {
   platform: "xiaohongshu";
   account_name: string;
@@ -655,6 +667,7 @@ export interface GrowthAccountSummary {
   business_line: GrowthBusinessLine;
   persona: GrowthPersona;
   profile_name: string;
+  profile_identity: GrowthProfileIdentity;
   one_liner: string;
   profile_status: "active" | "archived";
   is_default_profile: boolean;

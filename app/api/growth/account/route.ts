@@ -24,6 +24,13 @@ const bodySchema = z.object({
   private_domain: z.string().max(500).optional(),
   persona_specific: z.record(z.string().max(500)).optional(),
   profile_name: z.string().trim().min(1).max(80).optional(),
+  profile_identity: z.enum([
+    "overseas_student_self",
+    "overseas_student_parent",
+    "executive_self",
+    "service_operator",
+    "professional_expert",
+  ]).optional(),
   platform_binding: z.object({
     platform: z.literal("xiaohongshu"),
     account_name: z.string().trim().max(100),

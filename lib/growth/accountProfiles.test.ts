@@ -3,8 +3,10 @@ import {
   accountBelongsToProfileWorkspace,
   accountPlatformBinding,
   chooseAccountProfile,
+  partitionAccountProfiles,
   toAccountSummary,
 } from "./accountProfiles";
+import { createGrowthPreviewFixture } from "./previewFixture";
 import type { GrowthAccount } from "./types";
 
 function account(id: string, overrides: Partial<GrowthAccount> = {}): GrowthAccount {
@@ -28,6 +30,21 @@ function account(id: string, overrides: Partial<GrowthAccount> = {}): GrowthAcco
 }
 
 describe("account profiles", () => {
+  it("shows both local overseas buyer fixture profiles in the correct workspace", () => {
+    const fixture = createGrowthPreviewFixture();
+    const partition = partitionAccountProfiles(fixture.accounts, {
+      tenantId: "mianbajun",
+      businessLine: "overseas_student",
+      persona: "buyer",
+    });
+
+    expect(partition.visible.map((item) => item.id)).toEqual([
+      "preview-overseas-buyer",
+      "preview-overseas-student-buyer",
+    ]);
+    expect(partition.pending).toEqual([]);
+  });
+
   it("chooses the requested active profile and never chooses an archived one", () => {
     const parent = account("parent", { profile_name: "留学生家长号" });
     const student = account("student", {
@@ -76,5 +93,45 @@ describe("account profiles", () => {
     expect(toAccountSummary(legacy).profile_name).toBe("陪孩子走秋招的家长记录");
     expect(accountPlatformBinding(legacy).binding_status).toBe("bound");
     expect(accountPlatformBinding(account("unbound")).binding_status).toBe("unbound");
+  });
+
+  it("quarantines missing or conflicting business attribution", () => {
+    const executiveInsideOverseas = account("mixed", {
+      profile_name: "34岁前中层裸辞找方向的真实记录",
+      one_liner: "34岁前中层裸辞找方向的真实记录",
+    });
+    const legacy = account("legacy", {
+      business_line: undefined,
+      profile_name: "旧留学生家长号",
+    });
+    const valid = account("valid", { profile_name: "留学生本人求职实录" });
+    const partition = partitionAccountProfiles([executiveInsideOverseas, legacy, valid], {
+      tenantId: "mianbajun",
+      ownerUserId: "user-1",
+      businessLine: "overseas_student",
+      persona: "buyer",
+    });
+    expect(partition.visible.map((item) => item.id)).toEqual(["valid"]);
+    expect(partition.pending.map((item) => item.id).sort()).toEqual(["legacy", "mixed"]);
+  });
+
+  it("shows one canonical card for duplicate active profiles without deleting history", () => {
+    const older = account("older", {
+      profile_name: "陪娃闯秋招的留学生家长真实记录",
+      updated_at: "2026-07-29T00:00:00.000Z",
+    });
+    const newer = account("newer", {
+      profile_name: "陪娃闯秋招的留学生家长真实记录",
+      updated_at: "2026-07-30T00:00:00.000Z",
+      last_used_at: "2026-07-30T00:00:00.000Z",
+    });
+    const partition = partitionAccountProfiles([older, newer], {
+      tenantId: "mianbajun",
+      ownerUserId: "user-1",
+      businessLine: "overseas_student",
+      persona: "buyer",
+    });
+    expect(partition.visible.map((item) => item.id)).toEqual(["newer"]);
+    expect(partition.duplicates.map((item) => item.id)).toEqual(["older"]);
   });
 });

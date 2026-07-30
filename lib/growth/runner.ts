@@ -37,6 +37,7 @@ import type {
   GrowthLearningBrief,
   GrowthPersona,
   GrowthPlan,
+  GrowthProfileIdentity,
   GrowthReview,
   GrowthReviewMetrics,
   GrowthRun,
@@ -68,6 +69,12 @@ import {
   XHS_PUBLISH_CHAR_TARGET,
 } from "./validation";
 import { isBusinessCompatibleText } from "./businessCompatibility";
+import {
+  defaultProfileIdentity,
+  isProfileIdentityCompatibleText,
+  profileIdentityContract,
+  resolveProfileIdentity,
+} from "./accountIdentity";
 import {
   bodyUniquenessProblem,
   type BodyUniquenessReference,
@@ -145,8 +152,13 @@ function modelTitleCandidateRows(row: any) {
 }
 
 function accountContext(account: GrowthAccount): AccountContext {
+  const identityContract = profileIdentityContract(account);
   return {
     businessLine: GROWTH_BUSINESS_LINE_VALUES[account.business_line ?? "executive"],
+    profileName: account.profile_name,
+    profileIdentity: identityContract.identity,
+    requiredVoice: identityContract.requiredVoice,
+    forbiddenVoice: identityContract.forbiddenVoice,
     oneLiner: account.one_liner,
     toneStyle: account.tone_style,
     filterWords: account.filter_words,
@@ -222,13 +234,17 @@ function fallbackAccountForInput(input: {
   accountName: string;
   targetUser?: string;
   coreProblem?: string;
+  profileIdentity?: GrowthProfileIdentity;
 }) {
   const base = fallbackAccount(input.businessLine, input.persona);
   const identityClues = `${input.accountName} ${input.targetUser || ""}`;
   if (
     input.businessLine === "overseas_student"
     && input.persona === "buyer"
-    && /(留学生本人|学生本人|毕业生本人|我的秋招|本人求职)/u.test(identityClues)
+    && (
+      input.profileIdentity === "overseas_student_self"
+      || /(留学生本人|学生本人|毕业生本人|我的秋招|本人求职|求职踩坑|边找方向)/u.test(identityClues)
+    )
   ) {
     return {
       target: input.targetUser || "正在准备海外秋招或回国求职的留学生本人",
@@ -262,6 +278,7 @@ export async function generateAccountAndPlan(input: {
   createdAt?: string;
   reportPrices?: ReportPrices;
   businessPosition?: GrowthBusinessPosition;
+  profileIdentity?: GrowthProfileIdentity;
 }): Promise<{ account: GrowthAccount; plan: GrowthPlan; usage?: Record<string, unknown> }> {
   const tenantId = input.tenantId ?? DEFAULT_TENANT_ID;
   const persona = input.persona ?? "expert";
@@ -272,6 +289,7 @@ export async function generateAccountAndPlan(input: {
     accountName: input.accountName,
     targetUser: input.targetUser,
     coreProblem: input.coreProblem,
+    profileIdentity: input.profileIdentity,
   });
   const reportPrices = input.reportPrices ?? { lite: DEFAULT_BUSINESS_SETTINGS.report_lite_price, deep: DEFAULT_BUSINESS_SETTINGS.report_deep_price };
   let payload: any;
@@ -286,9 +304,17 @@ export async function generateAccountAndPlan(input: {
   const data = payload?.account ?? {};
   const timestamp = now();
   const accountId = input.regenerateAccountId || id();
+  const profileIdentity = input.profileIdentity ?? defaultProfileIdentity(businessLine, persona);
   const personaSpecific = mergePersonaSpecific(persona, data.persona_specific);
   if (persona === "buyer") {
-    personaSpecific.identity ||= input.targetUser || fallback.target;
+    if (!isProfileIdentityCompatibleText(personaSpecific.identity, profileIdentity)) {
+      personaSpecific.identity = "";
+    }
+    personaSpecific.identity ||= profileIdentity === "overseas_student_self"
+      ? "正在准备海外秋招或回国求职的留学生本人"
+      : profileIdentity === "overseas_student_parent"
+        ? "正在陪孩子准备海外秋招或回国求职的留学生家长"
+        : input.targetUser || fallback.target;
     personaSpecific.struggle ||= input.coreProblem || fallback.problem;
   }
   const account: GrowthAccount = {
@@ -296,6 +322,7 @@ export async function generateAccountAndPlan(input: {
     tenant_id: tenantId,
     business_line: businessLine,
     persona,
+    profile_identity: profileIdentity,
     name: input.accountName,
     target_user: data.target_user || input.targetUser || fallback.target,
     core_problem: data.core_problem || input.coreProblem || fallback.problem,
@@ -303,7 +330,9 @@ export async function generateAccountAndPlan(input: {
     trust_source: data.trust_source || input.trustSource || "来自真实客户咨询、职业决策和交付实践。",
     not_doing: data.not_doing || "不做泛职场鸡汤，不承诺结果，不用互动换资料。",
     hypotheses: Array.isArray(data.hypotheses) ? data.hypotheses.slice(0, 5) : ["具体处境比泛焦虑更能带来有效咨询。"],
-    one_liner: data.one_liner || fallback.one,
+    one_liner: isProfileIdentityCompatibleText(asText(data.one_liner), profileIdentity)
+      ? asText(data.one_liner) || fallback.one
+      : fallback.one,
     follow_reason: data.follow_reason || fallback.follow,
     tone_style: data.tone_style || "具体、克制、有判断、有下一步。",
     filter_words: Array.isArray(data.filter_words) ? data.filter_words.slice(0, 8) : [],
@@ -2020,17 +2049,47 @@ export function titlePersonaProblems(topic: TopicCandidate, account: GrowthAccou
   if (account.persona === "merchant" && /(?:我家孩子|陪娃秋招|作为老师)/u.test(title)) {
     problems.push(`${topic.method_id}:商家视角不能写成买家或专家第一人称口吻`);
   }
-  // 产品定义已经固定：留学生业务的买家视角就是“留学生家长”。标题本身
-  // 必须承担这个身份信息，不能留给正文承诺或后续正文去补。
-  const parentNarrative = account.business_line === "overseas_student"
-    && account.persona === "buyer";
+  const profileIdentity = resolveProfileIdentity(account);
+  const parentNarrative = profileIdentity === "overseas_student_parent";
   if (parentNarrative && !/(?:我家|孩子|娃|儿子|女儿|家长|爸妈|父母|陪孩子|陪娃)/u.test(title)) {
     problems.push(`${topic.method_id}:留学生家长标题必须显式体现亲子关系，不能只在正文承诺里补身份`);
   }
   if (parentNarrative && /室友|同学/u.test(title) && !/孩子|娃|儿子|女儿/u.test(title)) {
     problems.push(`${topic.method_id}:留学生家长人设不能写成留学生本人的同学/室友口吻`);
   }
+  if (
+    profileIdentity === "overseas_student_self"
+    && /(?:我家孩子|娃|陪孩子|家长|儿子|女儿)/u.test(title)
+  ) {
+    problems.push(`${topic.method_id}:留学生本人账号不能写成家长或陪娃口吻`);
+  }
   return problems;
+}
+
+export function bodyProfileIdentityProblem(body: string, account: GrowthAccount) {
+  const identity = resolveProfileIdentity(account);
+  if (!isBusinessCompatibleText(body, account.business_line ?? "executive")) {
+    return "正文混入了另一条业务的人群、产品或场景";
+  }
+  if (
+    identity === "overseas_student_self"
+    && /我家孩子|陪娃|陪孩子|我儿子|我女儿|孩子的秋招/u.test(body)
+  ) {
+    return "留学生本人正文写成了家长口吻";
+  }
+  if (
+    identity === "overseas_student_parent"
+    && /我(?:投了|投递|面试|改简历|参加秋招|找工作|拿到面试)/u.test(body)
+  ) {
+    return "留学生家长正文写成了本人求职口吻";
+  }
+  if (
+    identity === "executive_self"
+    && /留学生|海外秋招|回国求职|我家孩子|陪娃|求职辅导老师/u.test(body)
+  ) {
+    return "中高管正文混入了留学生或家长叙事";
+  }
+  return undefined;
 }
 
 function titleQualityProblems(topic: TopicCandidate, account: GrowthAccount) {
@@ -4926,6 +4985,13 @@ async function generateSingleDraft(input: {
         bodyVersion: input.bodyVersion,
         businessLine,
       });
+      const identityProblem = bodyProfileIdentityProblem(candidateBody, input.account);
+      if (identityProblem) {
+        lastProblem = identityProblem;
+        lastFailureCode = "identity_repair_failed";
+        attemptedBodies.unshift({ body: candidateBody, topic_id: input.topic.id });
+        continue;
+      }
       const duplicate = bodyUniquenessProblem(candidateBody, [
         ...(input.historicalBodies ?? []),
         ...attemptedBodies,
@@ -5010,6 +5076,10 @@ async function generateSingleDraft(input: {
   }
   if (draft.word_count.total > XHS_PUBLISH_CHAR_TARGET || draft.compliance?.status === "blocked") {
     throw pipelineFailure("structure_repair_failed", "正文长度或合规结构在自动修复后仍未达标");
+  }
+  const identityProblem = bodyProfileIdentityProblem(draft.body, input.account);
+  if (identityProblem) {
+    throw pipelineFailure("identity_repair_failed", identityProblem);
   }
   draft = certifyDraftForOperator(draft);
   const finalDuplicate = bodyUniquenessProblem(draft.body, input.historicalBodies ?? []);

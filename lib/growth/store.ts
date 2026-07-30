@@ -75,7 +75,9 @@ export function isGrowthSchemaCompatibilityError(error: { code?: string | null }
 
 function matchesBusinessLine(account: GrowthAccount, businessLine?: GrowthBusinessLine) {
   if (!businessLine) return true;
-  return inferGrowthBusinessLine(account) === businessLine;
+  // 工作区查询不能再把缺少业务字段的历史账号“猜进来”。历史记录仍可在
+  // 不带 businessLine 的管理查询中读取，等待人工确认归属。
+  return account.business_line === businessLine;
 }
 
 function defaultBusinessSettings(tenantId: string): BusinessSettings {

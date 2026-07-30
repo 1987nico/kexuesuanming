@@ -67,11 +67,12 @@ describe("business compatibility", () => {
     expect(resolveAccountBusinessLine(account)).toBe("overseas_student");
     const sanitized = accountForBusinessGeneration(account);
     expect(sanitized.business_line).toBe("overseas_student");
+    // 历史缺少显式业务归属时仍可用于只读兼容展示，但不能自动进入正常工作区。
     expect(accountMatchesWorkspace(account, {
       accountId: account.id,
       businessLine: "overseas_student",
       persona: "expert",
-    })).toBe(true);
+    })).toBe(false);
     expect(accountMatchesWorkspace(account, {
       accountId: account.id,
       businessLine: "executive",

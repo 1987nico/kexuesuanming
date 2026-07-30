@@ -52,6 +52,28 @@ export function resolveAccountBusinessLine(account: GrowthAccount): GrowthBusine
   return overseasScore > executiveScore ? "overseas_student" : "executive";
 }
 
+export type AccountBusinessAttribution = "confirmed" | "pending" | "conflict";
+
+/**
+ * 正常工作区只接受“保存过明确业务线且人设内容不冲突”的账号。
+ * 历史缺字段或内容与所存业务相冲突的账号继续保留，但进入待确认区，
+ * 不能再被当前页面自动收编。
+ */
+export function accountBusinessAttribution(account: GrowthAccount): AccountBusinessAttribution {
+  if (!account.business_line) return "pending";
+  const evidence = [
+    account.profile_name,
+    account.name,
+    account.one_liner,
+    account.target_user,
+    account.core_problem,
+    account.account_value,
+    account.persona_specific?.identity,
+    account.persona_specific?.struggle,
+  ].filter(Boolean).join(" ");
+  return isBusinessCompatibleText(evidence, account.business_line) ? "confirmed" : "conflict";
+}
+
 function safeBusinessText(value: string | undefined, businessLine: GrowthBusinessLine, fallback: string) {
   return visibleBusinessText(value, businessLine).trim() || fallback;
 }
@@ -61,7 +83,8 @@ export function accountMatchesWorkspace(
   expected: { accountId: string; businessLine: GrowthBusinessLine; persona: GrowthPersona },
 ) {
   return account.id === expected.accountId
-    && resolveAccountBusinessLine(account) === expected.businessLine
+    && account.business_line === expected.businessLine
+    && accountBusinessAttribution(account) === "confirmed"
     && account.persona === expected.persona;
 }
 

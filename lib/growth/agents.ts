@@ -6,6 +6,7 @@ import type {
   GrowthBusinessLine,
   GrowthBusinessPosition,
   GrowthPersona,
+  GrowthProfileIdentity,
   MethodGenerationMode,
   RawBodyTag,
   TitleMethodId,
@@ -33,6 +34,10 @@ export function personaGuide(persona: GrowthPersona) {
 
 export interface AccountContext {
   businessLine?: string;
+  profileName?: string;
+  profileIdentity?: GrowthProfileIdentity;
+  requiredVoice?: string;
+  forbiddenVoice?: string;
   oneLiner?: string;
   toneStyle?: string;
   filterWords?: string[];
@@ -64,6 +69,10 @@ export function accountContextBlock(ctx?: AccountContext) {
   if (!ctx) return "";
   const lines: string[] = [];
   if (ctx.businessLine) lines.push(`当前业务线：${ctx.businessLine}`);
+  if (ctx.profileName) lines.push(`当前唯一账号人设：${ctx.profileName}`);
+  if (ctx.profileIdentity) lines.push(`当前账号发声身份：${ctx.profileIdentity}`);
+  if (ctx.requiredVoice) lines.push(`发声身份硬约束：${ctx.requiredVoice}`);
+  if (ctx.forbiddenVoice) lines.push(`严禁串入的身份：${ctx.forbiddenVoice}`);
   if (ctx.oneLiner) lines.push(`当前账号一句话人设：${ctx.oneLiner}`);
   if (ctx.toneStyle) lines.push(`语气与风格：${ctx.toneStyle}`);
   if (ctx.filterWords?.length) lines.push(`必须出现的筛选词：${ctx.filterWords.join("、")}`);
@@ -155,6 +164,7 @@ export function buildAccountPlanUserPrompt(input: {
   trustSource?: string;
   reportPrices: ReportPrices;
   businessPosition?: GrowthBusinessPosition;
+  profileIdentity?: GrowthProfileIdentity;
 }) {
   const persona = input.persona ?? "expert";
   const businessLine = input.businessLine ?? "executive";
@@ -189,6 +199,7 @@ ${businessPositionBlock(input.businessPosition)}
 ${personaGuide(persona)}
 ${brandTrinityGuide}
 账号名称：${input.accountName}
+${input.profileIdentity ? `账号实际发声身份：${input.profileIdentity}。所有第一人称经历、目标用户表达和专属身份字段必须与此一致，不得擅自改成同一视角下的另一类人。` : ""}
 目标用户线索：${input.targetUser || "使用默认账号方向"}
 核心问题线索：${input.coreProblem || "使用默认账号方向"}
 信任来源线索：${input.trustSource || "使用默认账号方向"}
@@ -1325,12 +1336,12 @@ export function buildTopicPoolUserPrompt(input: {
   // 不能只依赖正文承诺补足这一点：运营在选题页先看见的是标题，因此标题本身
   // 必须给出可辨认的亲子关系线索。
   const parentNarrative = input.persona === "buyer"
-    && (isOverseasBusinessLine(input.context?.businessLine)
-      || /留学生|海外秋招|回国求职/u.test(input.targetUser)
-      || /家长|妈妈|爸爸|父母|陪娃|陪孩子/u.test(`${input.context?.oneLiner || ""} ${input.targetUser}`));
+    && input.context?.profileIdentity === "overseas_student_parent";
   const personaContinuityRule = parentNarrative
     ? "- 【人设连续性硬性规则】当前账号是留学生家长。每一个标题本身都必须包含孩子/娃/家长/我家/陪孩子/陪娃/儿女中的至少一个亲子关系线索；标题里的“我/我们”只能是家长。不得把账号写成留学生本人，也不能把家长身份只留给正文承诺（例如“室友都拿到面试，我还在投递”“先补实习，还是直接投递？”都不合格）。"
-    : "";
+    : input.persona === "buyer" && input.context?.profileIdentity === "overseas_student_self"
+      ? "- 【人设连续性硬性规则】当前账号是留学生本人。标题和正文承诺必须是本人正在求职、投递、面试或判断方向的口吻；不得出现“我家孩子、陪娃、家长、孩子秋招”等家长叙事。"
+      : "";
   return `
 请以选题官 V3.1 身份，严格按给定方法列表生成标题。
 

@@ -12,6 +12,7 @@ import type {
 import { GROWTH_BUSINESS_DEFINITIONS, GROWTH_BUSINESS_LINE_VALUES } from "./types";
 import { computeDerivedMetrics, evaluateReviewSample } from "./reviewLearning";
 import { methodsForPersona, type TitleMethodDefinition } from "./methods";
+import { resolveProfileIdentity } from "./accountIdentity";
 
 export const GROWTH_PREVIEW_TENANT = "mianbajun";
 const GROWTH_PREVIEW_OWNER = "growth-preview-local-admin";
@@ -91,7 +92,7 @@ function account(
     hypotheses: ["具体决策冲突比泛焦虑更容易促成有效咨询", "正文直接兑现资料承诺能提升信任"],
     one_liner: overseas
       ? persona === "merchant" ? "先把求职方向定清楚，再进入辅导" : persona === "buyer" ? "陪娃闯秋招的留学生家长真实记录" : "把留学生求职拆成可验证的选择"
-      : persona === "merchant" ? "先判断服务适配，再决定是否购买" : persona === "buyer" ? "记录中高管重新定价的真实过程" : "把职业选择拆成可验证的判断",
+      : persona === "merchant" ? "公开职业决策服务的适配标准、交付过程与边界" : persona === "buyer" ? "记录中高管重新定价的真实过程" : "把职业选择拆成可验证的判断",
     follow_reason: overseas ? "持续获得留学生求职定位、岗位判断与招聘节奏" : "持续获得中高管职业决策框架与验证方法",
     content_directions: ["A痛点诊断", "B工具价值", "C案例过程"],
     tone_style: "克制、具体、有判断、不给成功保证",
@@ -119,9 +120,12 @@ function account(
 function draftBase(account: GrowthAccount, id: string, status: ContentDraft["status"]): ContentDraft {
   const created = isoBefore(status === "ready" ? 1 : 4);
   const overseas = account.business_line === "overseas_student";
+  const profileIdentity = resolveProfileIdentity(account);
   const identityOpening = overseas
     ? account.persona === "buyer"
-      ? "前阵子陪孩子忙秋招，我们在回国还是留当地这件事上，来回改了好几次主意。"
+      ? profileIdentity === "overseas_student_self"
+        ? "前阵子我同时准备海外秋招和回国求职，在回国还是留当地这件事上，来回改了好几次主意。"
+        : "前阵子陪孩子忙秋招，我们在回国还是留当地这件事上，来回改了好几次主意。"
       : account.persona === "expert"
         ? "前两天帮一个留学生梳理秋招计划，聊到第三个目标岗位时，我先让他停了下来。"
         : "最近我们给一位留学生梳理秋招方案，第一步不是改简历，而是先停下来看岗位和招聘节奏。"
@@ -132,7 +136,9 @@ function draftBase(account: GrowthAccount, id: string, status: ContentDraft["sta
         : "最近我们给一位中高管梳理转型方向，没有先劝他辞职，而是先把三条候选路径摆在一起。";
   const serviceBridge = overseas
     ? account.persona === "buyer"
-      ? "我们自己折腾了几轮还是没理顺，后来才找了一位求职老师一起梳理现有材料。她没有先改文案，而是先把岗位和招聘节奏对齐；至少孩子不再拿一份简历乱投，下一步该验证什么也有了顺序。"
+      ? profileIdentity === "overseas_student_self"
+        ? "我自己折腾了几轮还是没理顺，后来才找了一位求职老师一起梳理现有材料。她没有先改文案，而是先把岗位和招聘节奏对齐；至少我不再拿一份简历乱投，下一步该验证什么也有了顺序。"
+        : "我们自己折腾了几轮还是没理顺，后来才找了一位求职老师一起梳理现有材料。她没有先改文案，而是先把岗位和招聘节奏对齐；至少孩子不再拿一份简历乱投，下一步该验证什么也有了顺序。"
       : account.persona === "expert"
         ? "有次求职咨询里，我没有先改简历，而是先和学生梳理目标岗位、项目证据和招聘节奏。直接变化不是立刻拿到 Offer，而是岗位范围收窄了，后面的投递反馈也终于能用来复盘。"
         : "那次服务里，我们先停下改简历，把岗位匹配、项目证据和招聘时间线一起梳理了一遍。交付后的第一步变化不是立刻拿到 Offer，而是目标岗位收窄了，不同简历版本也终于有了明确去向。"
@@ -165,7 +171,11 @@ function draftBase(account: GrowthAccount, id: string, status: ContentDraft["sta
     validation_checks: [],
     test_variable: "标题入口",
     expected_signal: "用户说出具体处境、候选路径或决策冲突",
-    title: overseas ? "留学生海投，为何只有少数AI面" : "年薪百万，为何更不敢离职",
+    title: overseas
+      ? profileIdentity === "overseas_student_self"
+        ? "我海投了十几家，为何只有少数AI面"
+        : "孩子海投了十几家，为何只有少数AI面"
+      : "年薪百万，为何更不敢离职",
     alternative_titles: [],
     target_user: account.target_user,
     cover_text: overseas ? "海投越多，回音越少？" : "职位越高，越不敢动？",
@@ -232,17 +242,24 @@ function methodDraft(account: GrowthAccount): ContentDraft {
 function methodPublishedDraft(account: GrowthAccount, suffix: string, daysAgo: number): ContentDraft {
   const item = methodDraft(account);
   const publishedAt = isoBefore(daysAgo);
+  const overseasSelf = resolveProfileIdentity(account) === "overseas_student_self";
   return {
     ...item,
     id: `${account.id}-method-v33-${suffix}`,
     run_id: `${account.id}-method-v33-${suffix}-run`,
     status: "published",
     title: suffix === "content-due"
-      ? (account.business_line === "overseas_student" ? "留学生海投，问题可能不在简历" : "中高管离职前，先算清平台红利")
+      ? (account.business_line === "overseas_student"
+        ? overseasSelf ? "我海投没回音，问题可能不在简历" : "孩子海投没回音，问题可能不在简历"
+        : "中高管离职前，先算清平台红利")
       : suffix === "business-due"
-        ? (account.business_line === "overseas_student" ? "回国还是留下，先别急着二选一" : "留在高位，还是出去重新定价")
+        ? (account.business_line === "overseas_student"
+          ? overseasSelf ? "我回国还是留下，先别急着二选一" : "孩子回国还是留下，先别急着二选一"
+          : "留在高位，还是出去重新定价")
         : suffix === "attribution-due"
-          ? (account.business_line === "overseas_student" ? "秋招结束35天后，我看到了真正结果" : "转型35天后，再看当初的职业选择")
+          ? (account.business_line === "overseas_student"
+            ? overseasSelf ? "秋招结束35天后，我看到了真正结果" : "孩子秋招结束35天后，我看到了真正结果"
+            : "转型35天后，再看当初的职业选择")
           : item.title,
     published_at: publishedAt,
     distributed_at: publishedAt,
@@ -253,20 +270,35 @@ function methodPublishedDraft(account: GrowthAccount, suffix: string, daysAgo: n
 
 function previewTopicTitle(account: GrowthAccount, method: TitleMethodDefinition, batch: number) {
   const overseas = account.business_line === "overseas_student";
-  const titles = overseas ? {
-    traffic: "AI筛简历后，留学生秋招先改什么",
+  const overseasSelf = overseas && resolveProfileIdentity(account) === "overseas_student_self";
+  const titles = overseasSelf ? {
+    traffic: "AI筛简历后，我的秋招先改什么",
+    human_pain: "投了半个月，面试为何还是少",
+    tug_of_war: "回国还是留下，我先验证哪一边",
+    scarce_material: "我的秋招时间表，直接照着排",
+    superlative: "我在秋招最容易踩的简历坑",
+    contrarian: "我海投越多，面试反而越少",
+    nostalgia: "爸妈那代找工作，真没这么复杂",
+    inventory: "我在秋招前必查的5个节点",
+    same_product: "找求职辅导前，我先问这3件事",
+    same_effect: "这2条秋招路径，我到底选哪条",
+    similar_audience: "能熬过秋招的留学生，都先做了这件事",
+    same_outcome: "我不再只争名企，先争职业起点",
+    viral_framework: "我缺的不是投递，是求职定位",
+  } : overseas ? {
+    traffic: "AI筛简历后，我家孩子先改什么",
     human_pain: "留学生秋招，家长最难的是不乱帮",
-    tug_of_war: "回国还是留下，先验证哪一边",
-    scarce_material: "留学生秋招时间表，直接照着排",
-    superlative: "秋招最容易踩坑的简历动作",
-    contrarian: "海投越多，面试可能越少",
-    nostalgia: "我们那代找工作，真没这么复杂",
-    inventory: "留学生秋招前必查的5个节点",
-    same_product: "求职辅导前，先问清这3件事",
-    same_effect: "这2条秋招路径，到底选哪条",
-    similar_audience: "能熬过秋招的家庭，都先做了这件事",
-    same_outcome: "争名企，不如争职业起点",
-    viral_framework: "留学生缺的不是投递，是求职定位",
+    tug_of_war: "孩子回国还是留下，先验证哪一边",
+    scarce_material: "我给孩子排的秋招时间表",
+    superlative: "孩子秋招最容易踩的简历坑",
+    contrarian: "孩子海投越多，面试可能越少",
+    nostalgia: "我们那代找工作，孩子这代太复杂",
+    inventory: "孩子秋招前必查的5个节点",
+    same_product: "给孩子找求职辅导前，先问这3件事",
+    same_effect: "孩子这2条秋招路径，到底选哪条",
+    similar_audience: "陪孩子熬过秋招，都先做了这件事",
+    same_outcome: "帮孩子争名企，不如先争职业起点",
+    viral_framework: "孩子缺的不是投递，是求职定位",
   } : {
     traffic: "AI替代管理层，中高管先查这3项",
     human_pain: "年薪百万，为何更不敢离职",
@@ -309,6 +341,9 @@ function previewTopic(account: GrowthAccount, method: TitleMethodDefinition, mod
     pain: account.core_problem,
     hook: title,
     source_snapshot: method.sourceRequired ? latestSource : undefined,
+    migration_validation_evidence: method.sourceRequired
+      ? `保留原题“${latestSource!.original_title}”的${method.label}关系，删除原作者的人物与场景，再用“${account.one_liner}”的身份和当前业务冲突生成新标题。`
+      : undefined,
     internal_insight_source: method.sourceRequired ? undefined : account.trust_source,
     follow_reason: account.follow_reason || "持续获得可验证的职业判断",
     test_variable: `${method.label}标题是否带来有效咨询`,
@@ -473,6 +508,7 @@ export function createGrowthPreviewFixture(): GrowthPreviewFixture {
     case_material: "专业选择、目标岗位、投递反馈和面试复盘的脱敏记录",
   });
   overseasBuyer.profile_name = "留学生家长号";
+  overseasBuyer.profile_identity = "overseas_student_parent";
   const overseasStudentBuyer = account(
     "overseas_student",
     "buyer",
@@ -488,6 +524,7 @@ export function createGrowthPreviewFixture(): GrowthPreviewFixture {
     },
   );
   overseasStudentBuyer.profile_name = "留学生本人号";
+  overseasStudentBuyer.profile_identity = "overseas_student_self";
   overseasStudentBuyer.one_liner = "一个留学生亲自跑秋招的真实记录";
   overseasStudentBuyer.target_user = "正在准备海外秋招或回国求职的留学生本人";
   overseasStudentBuyer.account_value = "以留学生本人视角记录岗位选择、投递反馈和面试复盘";
