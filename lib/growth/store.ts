@@ -69,6 +69,10 @@ export function inferGrowthBusinessLine(account: GrowthAccount): GrowthBusinessL
   return resolveAccountBusinessLine(account);
 }
 
+export function isGrowthSchemaCompatibilityError(error: { code?: string | null }) {
+  return new Set(["23502", "42703", "PGRST204"]).has(error.code ?? "");
+}
+
 function matchesBusinessLine(account: GrowthAccount, businessLine?: GrowthBusinessLine) {
   if (!businessLine) return true;
   return inferGrowthBusinessLine(account) === businessLine;
@@ -239,6 +243,7 @@ class MemoryGrowthStore implements GrowthStore {
 }
 
 class SupabaseGrowthStore implements GrowthStore {
+  private supportsAccountProfileColumns: boolean | null = null;
   private supportsV32DraftColumns: boolean | null = null;
 
   private get db() {
@@ -246,27 +251,43 @@ class SupabaseGrowthStore implements GrowthStore {
   }
 
   async saveAccount(account: GrowthAccount) {
-    const { error } = await this.db.from("growth_accounts").upsert({
+    const baseRow = {
       id: account.id,
       tenant_id: account.tenant_id,
       owner_user_id: account.owner_user_id ?? null,
-      business_line: account.business_line ?? inferGrowthBusinessLine(account),
-      persona: account.persona,
-      profile_name: account.profile_name ?? account.one_liner ?? account.name,
-      profile_status: account.profile_status ?? "active",
-      is_default_profile: account.is_default_profile ?? false,
-      display_order: account.display_order ?? 0,
-      last_used_at: account.last_used_at ?? account.updated_at,
-      platform: account.platform_binding?.platform ?? null,
-      platform_account_name: account.platform_binding?.account_name || null,
-      platform_account_uid: account.platform_binding?.account_uid || null,
-      profile_creation_request_id: account.profile_creation_request_id ?? null,
       name: account.name,
       target_user: account.target_user,
       core_problem: account.core_problem,
       payload: account,
       updated_at: account.updated_at,
-    });
+    };
+
+    // 零停机兼容：生产库尚未执行多账号迁移时，完整账号人设仍保存在
+    // payload 中，旧版必需列照常写入。迁移完成后自动启用索引列。
+    if (this.supportsAccountProfileColumns !== false) {
+      const { error } = await this.db.from("growth_accounts").upsert({
+        ...baseRow,
+        business_line: account.business_line ?? inferGrowthBusinessLine(account),
+        persona: account.persona,
+        profile_name: account.profile_name ?? account.one_liner ?? account.name,
+        profile_status: account.profile_status ?? "active",
+        is_default_profile: account.is_default_profile ?? false,
+        display_order: account.display_order ?? 0,
+        last_used_at: account.last_used_at ?? account.updated_at,
+        platform: account.platform_binding?.platform ?? null,
+        platform_account_name: account.platform_binding?.account_name || null,
+        platform_account_uid: account.platform_binding?.account_uid || null,
+        profile_creation_request_id: account.profile_creation_request_id ?? null,
+      });
+      if (!error) {
+        this.supportsAccountProfileColumns = true;
+        return;
+      }
+      if (!isGrowthSchemaCompatibilityError(error)) throw error;
+      this.supportsAccountProfileColumns = false;
+    }
+
+    const { error } = await this.db.from("growth_accounts").upsert(baseRow);
     if (error) throw error;
   }
 
@@ -423,8 +444,7 @@ class SupabaseGrowthStore implements GrowthStore {
         return;
       }
 
-      const compatibilityCodes = new Set(["23502", "42703", "PGRST204"]);
-      if (!compatibilityCodes.has(error.code ?? "")) throw error;
+      if (!isGrowthSchemaCompatibilityError(error)) throw error;
       this.supportsV32DraftColumns = false;
     }
 

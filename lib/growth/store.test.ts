@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { inferGrowthBusinessLine } from "./store";
+import { inferGrowthBusinessLine, isGrowthSchemaCompatibilityError } from "./store";
 import type { GrowthAccount } from "./types";
 
 function legacyAccount(overrides: Partial<GrowthAccount>): GrowthAccount {
@@ -40,5 +40,15 @@ describe("inferGrowthBusinessLine", () => {
       business_line: "executive",
       target_user: "留学生",
     }))).toBe("executive");
+  });
+});
+
+describe("isGrowthSchemaCompatibilityError", () => {
+  it("只把旧表缺列或旧非空约束视为可安全降级", () => {
+    expect(isGrowthSchemaCompatibilityError({ code: "PGRST204" })).toBe(true);
+    expect(isGrowthSchemaCompatibilityError({ code: "42703" })).toBe(true);
+    expect(isGrowthSchemaCompatibilityError({ code: "23502" })).toBe(true);
+    expect(isGrowthSchemaCompatibilityError({ code: "42501" })).toBe(false);
+    expect(isGrowthSchemaCompatibilityError({ code: "23505" })).toBe(false);
   });
 });
