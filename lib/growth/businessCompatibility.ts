@@ -82,10 +82,12 @@ export function accountMatchesWorkspace(
   account: GrowthAccount,
   expected: { accountId: string; businessLine: GrowthBusinessLine; persona: GrowthPersona },
 ) {
+  const explicitlyCreatedHere = Boolean(account.profile_creation_request_id)
+    && account.business_line === expected.businessLine;
   return account.id === expected.accountId
     && account.business_line === expected.businessLine
-    && accountBusinessAttribution(account) === "confirmed"
-    && account.persona === expected.persona;
+    && account.persona === expected.persona
+    && (explicitlyCreatedHere || accountBusinessAttribution(account) === "confirmed");
 }
 
 export function accountForBusinessGeneration(account: GrowthAccount): GrowthAccount {

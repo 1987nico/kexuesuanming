@@ -102,4 +102,67 @@ describe("business compatibility", () => {
     expect(sanitized.core_problem).toContain("平台价值");
     expect(sanitized.trust_source).toContain("252题测评");
   });
+
+  it("allows a user-created profile to generate inside its explicitly saved workspace", () => {
+    const account = {
+      id: "created-overseas",
+      tenant_id: "mianbajun",
+      owner_user_id: "user-1",
+      business_line: "overseas_student",
+      persona: "buyer",
+      profile_name: "留学生本人号",
+      profile_creation_request_id: "create-request-123",
+      name: "留学生本人号",
+      target_user: "准备回国求职的留学生",
+      core_problem: "海外秋招和回国求职节奏脱节",
+      account_value: "求职方向判断",
+      trust_source: "真实秋招陪跑",
+      // 早期模型补全遗留的冲突字段不应让已经明确归属的账号无法生成标题。
+      one_liner: "34岁前中层裸辞找方向",
+      not_doing: "不保Offer",
+      hypotheses: [],
+      created_at: "2026-07-30T00:00:00.000Z",
+      updated_at: "2026-07-30T00:00:00.000Z",
+    } satisfies GrowthAccount;
+
+    expect(accountMatchesWorkspace(account, {
+      accountId: account.id,
+      businessLine: "overseas_student",
+      persona: "buyer",
+    })).toBe(true);
+    expect(accountMatchesWorkspace(account, {
+      accountId: account.id,
+      businessLine: "executive",
+      persona: "buyer",
+    })).toBe(false);
+    expect(accountMatchesWorkspace(account, {
+      accountId: account.id,
+      businessLine: "overseas_student",
+      persona: "expert",
+    })).toBe(false);
+  });
+
+  it("still blocks conflicting legacy profiles that were not explicitly created in this workspace", () => {
+    const account = {
+      id: "legacy-conflict",
+      tenant_id: "mianbajun",
+      business_line: "overseas_student",
+      persona: "buyer",
+      name: "中高管裸辞记录",
+      target_user: "正在转型的中高管",
+      core_problem: "职业决策",
+      account_value: "方向判断",
+      trust_source: "亲历",
+      not_doing: "不承诺结果",
+      hypotheses: [],
+      created_at: "2026-07-20T00:00:00.000Z",
+      updated_at: "2026-07-20T00:00:00.000Z",
+    } satisfies GrowthAccount;
+
+    expect(accountMatchesWorkspace(account, {
+      accountId: account.id,
+      businessLine: "overseas_student",
+      persona: "buyer",
+    })).toBe(false);
+  });
 });
