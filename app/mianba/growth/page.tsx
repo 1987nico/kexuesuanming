@@ -1927,25 +1927,19 @@ export default function GrowthPage() {
           {visibleStep === "1" && (
             <Section
               number="1"
-              title="选择商家 / 买家 / 专家视角"
-              subtitle="同一业务下三种内容身份彼此隔离。切换视角会清空上一视角未保存的标题、正文和复盘表单。"
+              title="商家 / 买家 / 专家"
             >
               <div className="grid gap-3 md:grid-cols-3">
                 {GROWTH_PERSONAS.map((item) => {
-                  const view = businessDefinition.personas[item];
                   const active = persona === item;
                   return (
                     <button
                       type="button"
                       key={item}
                       onClick={() => switchPersona(item)}
-                      className={`rounded-2xl border p-4 text-left ${active ? "border-slate-900 bg-slate-900 text-white" : "border-slate-200 bg-white text-slate-800"}`}
+                      className={`min-h-20 rounded-2xl border p-4 text-center text-base font-semibold transition ${active ? "border-slate-900 bg-slate-900 text-white" : "border-slate-200 bg-white text-slate-800 hover:border-slate-400"}`}
                     >
-                      <div className={`text-xs font-semibold ${active ? "text-amber-200" : "text-slate-500"}`}>
-                        {GROWTH_PERSONA_LABELS[item]}{active ? " · 已选择" : ""}
-                      </div>
-                      <div className="mt-1 font-semibold">{view.role}</div>
-                      <div className={`mt-2 text-xs leading-5 ${active ? "text-slate-300" : "text-slate-500"}`}>{view.description}</div>
+                      {GROWTH_PERSONA_LABELS[item]}
                     </button>
                   );
                 })}
@@ -4337,12 +4331,12 @@ function SourceStatus({ status, verified }: { status: "accessible" | "restricted
   return <span className={`shrink-0 rounded-full px-2 py-1 text-xs ${color}`}>{text}</span>;
 }
 
-function Section({ number, title, subtitle, children }: { number: string; title: string; subtitle: string; children: React.ReactNode }) {
+function Section({ number, title, subtitle, children }: { number: string; title: string; subtitle?: string; children: React.ReactNode }) {
   return (
     <section id={`growth-step-${number}`} data-step={number} className="scroll-mt-24 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
       <div className="mb-6 flex gap-4">
         <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-900 text-sm font-semibold text-white">{number}</span>
-        <div><h2 className="text-xl font-semibold">{title}</h2><p className="mt-1 text-sm leading-6 text-slate-500">{subtitle}</p></div>
+        <div><h2 className="text-xl font-semibold">{title}</h2>{subtitle ? <p className="mt-1 text-sm leading-6 text-slate-500">{subtitle}</p> : null}</div>
       </div>
       {children}
     </section>
