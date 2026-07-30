@@ -169,7 +169,8 @@ export async function GET(req: Request) {
     ? runs.map((run) => ({
       ...run,
       topic_pool: run.topic_pool.filter((topic) =>
-        titlePersonaProblems(topic, workspaceAccount).length === 0),
+        isProfileTitleCompatible(topic.title, workspaceAccount)
+        && titlePersonaProblems(topic, workspaceAccount).length === 0),
     }))
     : runs;
   // 以笔记为单元：返回每篇笔记对应的复盘（draftId -> review），供历史查看

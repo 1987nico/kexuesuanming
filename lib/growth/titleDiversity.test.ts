@@ -224,6 +224,14 @@ describe("标题四层多样性签名", () => {
     expect(titlePersonaProblems(parentTitle, studentAccount).some((item) =>
       item.includes("不能写成家长或陪娃口吻")
     )).toBe(true);
+    const historicalParentTitle = topic(
+      "nostalgia",
+      "当年海归吃香，现在孩子先抢秋招",
+      "对比两代人的求职环境",
+    );
+    expect(titlePersonaProblems(historicalParentTitle, studentAccount).some((item) =>
+      item.includes("不能写成家长或陪娃口吻")
+    )).toBe(true);
     const selfTitle = topic(
       "human_pain",
       "投了半个月，我还没等到面试",

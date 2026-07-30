@@ -2059,7 +2059,7 @@ export function titlePersonaProblems(topic: TopicCandidate, account: GrowthAccou
   }
   if (
     profileIdentity === "overseas_student_self"
-    && /(?:我家孩子|娃|陪孩子|家长|儿子|女儿)/u.test(title)
+    && /(?:我家孩子|孩子|娃|陪孩子|家长|儿子|女儿)/u.test(title)
   ) {
     problems.push(`${topic.method_id}:留学生本人账号不能写成家长或陪娃口吻`);
   }
