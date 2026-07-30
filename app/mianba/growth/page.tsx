@@ -577,11 +577,13 @@ export default function GrowthPage() {
   const ensureWorkspaceScope = useCallback(async (
     scope: Exclude<WorkspaceScope, "core">,
     force = false,
+    background = false,
   ) => {
     const key = workspaceKey(businessLine, persona, selectedAccountId);
     const cached = workspaceCache.current.get(key);
     if (!force && workspaceHasScope(cached, scope)) return;
-    setBusy(`load-${scope}`);
+    const busyKey = `load-${scope}`;
+    if (!background) setBusy(busyKey);
     try {
       const incoming = await fetchWorkspace(businessLine, persona, scope, force, selectedAccountId);
       const next = mergeWorkspaceData(workspaceCache.current.get(key), incoming);
@@ -604,7 +606,9 @@ export default function GrowthPage() {
         setMessage((error as Error).message);
       }
     } finally {
-      if (activeWorkspace.current === key) setBusy(null);
+      if (!background && activeWorkspace.current === key) {
+        setBusy((current) => current === busyKey ? null : current);
+      }
     }
   }, [businessLine, fetchWorkspace, persona, selectedAccountId]);
 
@@ -618,6 +622,10 @@ export default function GrowthPage() {
       void ensureWorkspaceScope("content");
     } else if (visibleStep === "5") {
       void ensureWorkspaceScope("review");
+    } else {
+      // 操作者还在业务、视角或账号人设步骤时，提前读取标题历史与来源。
+      // 这样按正常流程进入选题页时，生成按钮通常已经可以直接使用。
+      void ensureWorkspaceScope("content", false, true);
     }
   }, [data?.account, ensureWorkspaceScope, visibleStep]);
 
@@ -2158,7 +2166,11 @@ export default function GrowthPage() {
                       </div>
                     </div>
                     <PrimaryButton disabled={Boolean(busy)} onClick={() => generateTopics("default")}>
-                      {busy === "topics-default" ? "正在生成新一批…" : runs.default ? "换一批标题" : "生成选题"}
+                      {busy === "topics-default"
+                        ? "正在生成新一批…"
+                        : busy === "load-content"
+                          ? "正在准备选题…"
+                          : runs.default ? "换一批标题" : "生成选题"}
                     </PrimaryButton>
                   </div>
 
