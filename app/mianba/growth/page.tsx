@@ -542,6 +542,7 @@ export default function GrowthPage() {
     nextAccountId: string | null = null,
   ) => {
     const key = workspaceKey(nextBusinessLine, nextPersona, nextAccountId);
+    let resolvedKey = key;
     activeWorkspace.current = key;
     const cached = workspaceCache.current.get(key);
     if (cached && workspaceHasScope(cached, "core") && !force) {
@@ -558,7 +559,7 @@ export default function GrowthPage() {
     try {
       const incoming = await fetchWorkspace(nextBusinessLine, nextPersona, "core", force, nextAccountId);
       const next = mergeWorkspaceData(cached, incoming);
-      const resolvedKey = workspaceKey(nextBusinessLine, nextPersona, incoming.selectedAccountId);
+      resolvedKey = workspaceKey(nextBusinessLine, nextPersona, incoming.selectedAccountId);
       workspaceCache.current.set(key, next);
       workspaceCache.current.set(resolvedKey, next);
       if (activeWorkspace.current === key) {
@@ -569,7 +570,7 @@ export default function GrowthPage() {
       if ((error as Error).name === "AbortError") return;
       if (activeWorkspace.current === key) setMessage((error as Error).message);
     } finally {
-      if (activeWorkspace.current === key) setBusy(null);
+      if (activeWorkspace.current === key || activeWorkspace.current === resolvedKey) setBusy(null);
     }
   }, [applyWorkspaceData, fetchWorkspace]);
 
