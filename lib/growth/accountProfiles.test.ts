@@ -134,4 +134,36 @@ describe("account profiles", () => {
     expect(partition.visible.map((item) => item.id)).toEqual(["newer"]);
     expect(partition.duplicates.map((item) => item.id)).toEqual(["older"]);
   });
+
+  it("always shows accounts explicitly created by the user even when names repeat", () => {
+    const legacy = account("legacy", {
+      profile_name: "中高管职业与事业方向决策顾问",
+      business_line: "executive",
+      persona: "expert",
+      target_user: "正在做职业与事业方向决策的中高管",
+      core_problem: "职业方向判断",
+      account_value: "决策方法",
+      updated_at: "2026-07-29T00:00:00.000Z",
+    });
+    const explicitlyCreated = account("created", {
+      profile_name: "中高管职业与事业方向决策顾问",
+      business_line: "executive",
+      persona: "expert",
+      target_user: "正在做职业与事业方向决策的中高管",
+      core_problem: "职业方向判断",
+      account_value: "决策方法",
+      profile_creation_request_id: "create-request-123",
+      updated_at: "2026-07-30T00:00:00.000Z",
+    });
+
+    const partition = partitionAccountProfiles([legacy, explicitlyCreated], {
+      tenantId: "mianbajun",
+      ownerUserId: "user-1",
+      businessLine: "executive",
+      persona: "expert",
+    });
+
+    expect(partition.visible.map((item) => item.id)).toEqual(["legacy", "created"]);
+    expect(partition.duplicates).toEqual([]);
+  });
 });

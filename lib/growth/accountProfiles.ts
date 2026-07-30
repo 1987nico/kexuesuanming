@@ -143,8 +143,13 @@ export function partitionAccountProfiles(
   const canonical = new Map<string, GrowthAccount>();
   const duplicates: GrowthAccount[] = [];
   for (const account of visibleCandidates) {
-    if (accountProfileStatus(account) === "archived") {
-      // 已归档记录由运营显式管理，不和正常活跃人设争代表位。
+    if (
+      accountProfileStatus(account) === "archived"
+      || Boolean(account.profile_creation_request_id)
+    ) {
+      // 已归档记录由运营显式管理；带新建请求标记的记录是用户主动创建的
+      // 独立账号。即使名称与旧账号相同，也必须单独展示，不能被历史去重
+      // 规则误隐藏。
       canonical.set(`${normalizedProfileKey(account)}:${account.id}`, account);
       continue;
     }
