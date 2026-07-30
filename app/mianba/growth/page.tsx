@@ -265,6 +265,25 @@ function accountForm(account: GrowthAccount): AccountForm {
   };
 }
 
+function newAccountForm(
+  businessLine: GrowthBusinessLine,
+  persona: GrowthPersona,
+  position: GrowthBusinessPosition,
+): AccountForm {
+  return {
+    ...emptyAccount,
+    name: "",
+    profile_identity: defaultProfileIdentity(businessLine, persona),
+    target_user: position.target_user,
+    core_problem: position.core_problem,
+    account_value: position.differentiation,
+    trust_source: position.trust_source,
+    not_doing: position.compliance_redline,
+    compliance_redline: position.compliance_redline,
+    persona_specific: {},
+  };
+}
+
 function reviewForm(review?: GrowthReview): Record<string, string | boolean> {
   if (!review) return emptyReview();
   const form = emptyReview();
@@ -484,11 +503,8 @@ export default function GrowthPage() {
   const [personaEditing, setPersonaEditing] = useState(false);
   const [personaSuggestion, setPersonaSuggestion] = useState<GrowthAccount | null>(null);
   const [newProfileOpen, setNewProfileOpen] = useState(false);
-  const [newProfileName, setNewProfileName] = useState("");
-  const [newProfileIdentity, setNewProfileIdentity] = useState<GrowthProfileIdentity>("overseas_student_parent");
-  const [newPlatformName, setNewPlatformName] = useState("");
-  const [newPlatformUid, setNewPlatformUid] = useState("");
-  const [newPlatformUrl, setNewPlatformUrl] = useState("");
+  const [newProfileForm, setNewProfileForm] = useState<AccountForm>(() =>
+    newAccountForm("overseas_student", "buyer", DEFAULT_BUSINESS_POSITIONS.overseas_student));
   const [acceptedPersonaSuggestions, setAcceptedPersonaSuggestions] = useState<Record<string, boolean>>({});
   const [businessEditOpen, setBusinessEditOpen] = useState(false);
   const [visibleStep, setVisibleStep] = useState<WorkflowStep>("0");
@@ -644,10 +660,20 @@ export default function GrowthPage() {
     if (!background) setBusy(busyKey);
     try {
       const incoming = await fetchWorkspace(businessLine, persona, scope, force, selectedAccountId);
-      const next = mergeWorkspaceData(workspaceCache.current.get(key), incoming);
+      const previous = workspaceCache.current.get(key);
+      const next = mergeWorkspaceData(previous, incoming);
       workspaceCache.current.set(key, next);
       if (activeWorkspace.current === key) {
-        setData(next);
+        const previousAccountId = previous?.selectedAccountId ?? previous?.account?.id ?? null;
+        const nextAccountId = next.selectedAccountId ?? next.account?.id ?? null;
+        if (previousAccountId !== nextAccountId || Boolean(previous?.account) !== Boolean(next.account)) {
+          // 后台预读若发现账号已被隔离、归档或切换，必须同步清空/重建表单。
+          // 不能只替换 data 而保留上一账号的 form，否则会出现“列表为空，
+          // 下方仍显示旧人设”的假当前账号。
+          applyWorkspaceData(next, workspaceTransients.current.get(key));
+        } else {
+          setData(next);
+        }
         if (scope === "content") {
           setChosen((current) =>
             current ?? next.currentDrafts.find((draft) => draft.status === "ready") ?? null);
@@ -668,7 +694,7 @@ export default function GrowthPage() {
         setBusy((current) => current === busyKey ? null : current);
       }
     }
-  }, [businessLine, fetchWorkspace, persona, selectedAccountId]);
+  }, [applyWorkspaceData, businessLine, fetchWorkspace, persona, selectedAccountId]);
 
   useEffect(() => {
     void load(businessLine, persona);
@@ -934,8 +960,8 @@ export default function GrowthPage() {
   }
 
   async function createAccountProfile() {
-    if (!newProfileName.trim() || !newPlatformName.trim()) {
-      setMessage("请先填写账号人设名称和小红书账号名称。");
+    if (!newProfileForm.profile_name.trim()) {
+      setMessage("请先填写账号人设名称。小红书账号可以稍后再绑定。");
       return;
     }
     setBusy("create-account-profile");
@@ -948,28 +974,37 @@ export default function GrowthPage() {
           persona,
           mode: "create",
           requestId: crypto.randomUUID(),
-          profileName: newProfileName.trim(),
+          profileName: newProfileForm.profile_name.trim(),
           profileIdentity: businessLine === "overseas_student" && persona === "buyer"
-            ? newProfileIdentity
+            ? newProfileForm.profile_identity
             : defaultProfileIdentity(businessLine, persona),
-          accountName: newProfileName.trim(),
-          targetUser: businessPosition.target_user,
-          coreProblem: businessPosition.core_problem,
-          trustSource: businessPosition.trust_source,
-          platformBinding: {
-            platform: "xiaohongshu",
-            account_name: newPlatformName.trim(),
-            account_uid: newPlatformUid.trim() || undefined,
-            profile_url: newPlatformUrl.trim() || undefined,
+          accountName: newProfileForm.name.trim() || newProfileForm.profile_name.trim(),
+          targetUser: newProfileForm.target_user.trim() || businessPosition.target_user,
+          coreProblem: newProfileForm.core_problem.trim() || businessPosition.core_problem,
+          trustSource: newProfileForm.trust_source.trim() || businessPosition.trust_source,
+          profileDetails: {
+            one_liner: newProfileForm.one_liner.trim() || undefined,
+            account_value: newProfileForm.account_value.trim() || undefined,
+            follow_reason: newProfileForm.follow_reason.trim() || undefined,
+            not_doing: newProfileForm.not_doing.trim() || undefined,
+            tone_style: newProfileForm.tone_style.trim() || undefined,
+            compliance_redline: newProfileForm.compliance_redline.trim() || undefined,
+            hypotheses: lines(newProfileForm.hypotheses),
+            filter_words: lines(newProfileForm.filter_words),
+            avoid_expressions: lines(newProfileForm.avoid_expressions),
+            private_domain: newProfileForm.private_domain.trim() || undefined,
+            persona_specific: newProfileForm.persona_specific,
           },
+          platformBinding: newProfileForm.platform_account_name.trim() ? {
+            platform: "xiaohongshu",
+            account_name: newProfileForm.platform_account_name.trim(),
+            account_uid: newProfileForm.platform_account_uid.trim() || undefined,
+            profile_url: newProfileForm.platform_profile_url.trim() || undefined,
+          } : undefined,
         }),
       });
       workspaceCache.current.delete(workspaceKey(businessLine, persona));
-      setNewProfileName("");
-      setNewProfileIdentity(defaultProfileIdentity(businessLine, persona));
-      setNewPlatformName("");
-      setNewPlatformUid("");
-      setNewPlatformUrl("");
+      setNewProfileForm(newAccountForm(businessLine, persona, businessPosition));
       setNewProfileOpen(false);
       await load(businessLine, persona, true, result.account.id);
       setPersonaOpen(true);
@@ -2060,7 +2095,9 @@ export default function GrowthPage() {
                   <button
                     type="button"
                     onClick={() => {
-                      setNewProfileIdentity(defaultProfileIdentity(businessLine, persona));
+                      if (!newProfileOpen) {
+                        setNewProfileForm(newAccountForm(businessLine, persona, businessPosition));
+                      }
                       setNewProfileOpen((open) => !open);
                     }}
                     className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-4 text-left hover:border-slate-500"
@@ -2111,24 +2148,18 @@ export default function GrowthPage() {
 
               {newProfileOpen && (
                 <div className="mb-5 rounded-2xl border border-amber-300 bg-amber-50 p-4">
-                  <div className="font-semibold">新建并绑定一个账号人设</div>
-                  <p className="mt-1 text-xs leading-5 text-slate-600">系统只保存公开账号标识，不会保存密码、Cookie 或登录信息。</p>
-                  <div className="mt-4 grid gap-4 md:grid-cols-2">
-                    <TextInput label="账号人设名称" value={newProfileName} onChange={setNewProfileName} placeholder={profileExamples.placeholder} />
-                    {businessLine === "overseas_student" && persona === "buyer" && (
-                      <Select
-                        label="这个账号由谁发声"
-                        value={newProfileIdentity}
-                        onChange={(value) => setNewProfileIdentity(value as GrowthProfileIdentity)}
-                        options={[
-                          { value: "overseas_student_self", label: "留学生本人" },
-                          { value: "overseas_student_parent", label: "留学生家长" },
-                        ]}
-                      />
-                    )}
-                    <TextInput label="小红书账号名称" value={newPlatformName} onChange={setNewPlatformName} placeholder="例如：小雪的秋招日记" />
-                    <TextInput label="小红书号 / UID（选填）" value={newPlatformUid} onChange={setNewPlatformUid} />
-                    <TextInput label="主页链接（选填）" value={newPlatformUrl} onChange={setNewPlatformUrl} />
+                  <div className="font-semibold">新建账号人设</div>
+                  <p className="mt-1 text-xs leading-5 text-slate-600">
+                    槽位与“编辑人设”完全一致。只需先填写账号人设名称，其余内容可以填写，也可以交给系统补全；小红书账号可稍后绑定。
+                  </p>
+                  <div className="mt-4">
+                    <PersonaEditorFields
+                      form={newProfileForm}
+                      setForm={setNewProfileForm}
+                      businessLine={businessLine}
+                      persona={persona}
+                      profileNamePlaceholder={profileExamples.placeholder}
+                    />
                   </div>
                   <div className="mt-4 flex flex-wrap gap-2">
                     <PrimaryButton disabled={Boolean(busy)} onClick={createAccountProfile}>
@@ -2139,105 +2170,70 @@ export default function GrowthPage() {
                 </div>
               )}
 
-              <div className="mb-3 text-sm font-semibold text-slate-700">
-                当前：{form.profile_name || businessDefinition.personas[persona].role}
-              </div>
-              <div className="rounded-2xl bg-slate-50 p-4">
-                <div className="text-xs font-medium text-slate-500">一句话人设</div>
-                <div className="mt-2 min-h-7 text-lg font-semibold">{form.one_liner || (busy === "load" ? "—" : "尚未生成")}</div>
-                <div className="mt-4 flex flex-wrap gap-2">
-                  <SecondaryButton onClick={() => setPersonaOpen((open) => !open)}>
-                    {personaOpen ? "收起人设" : "展开人设"}
-                  </SecondaryButton>
-                  <SecondaryButton onClick={() => { setPersonaOpen(true); setPersonaEditing(true); }}>编辑人设</SecondaryButton>
-                  <PrimaryButton disabled={Boolean(busy)} onClick={createPersona}>
-                    {busy === "persona"
-                      ? data?.account ? "正在生成建议…" : "正在生成并保存…"
-                      : "系统生成人设"}
-                  </PrimaryButton>
-                </div>
-              </div>
+              {data?.account && (
+                <>
+                  <div className="mb-3 text-sm font-semibold text-slate-700">
+                    当前：{form.profile_name || businessDefinition.personas[persona].role}
+                  </div>
+                  <div className="rounded-2xl bg-slate-50 p-4">
+                    <div className="text-xs font-medium text-slate-500">一句话人设</div>
+                    <div className="mt-2 min-h-7 text-lg font-semibold">{form.one_liner || (busy === "load" ? "—" : "尚未生成")}</div>
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      <SecondaryButton onClick={() => setPersonaOpen((open) => !open)}>
+                        {personaOpen ? "收起人设" : "展开人设"}
+                      </SecondaryButton>
+                      <SecondaryButton onClick={() => { setPersonaOpen(true); setPersonaEditing(true); }}>编辑人设</SecondaryButton>
+                      <PrimaryButton disabled={Boolean(busy)} onClick={createPersona}>
+                        {busy === "persona"
+                          ? "正在生成建议…"
+                          : "系统生成人设"}
+                      </PrimaryButton>
+                    </div>
+                  </div>
+                </>
+              )}
 
               {personaOpen && data?.account && (
                 <div className="mt-5">
                   {personaEditing ? (
-                    <div className="grid gap-4 md:grid-cols-2">
-                      <TextInput label="账号人设名称" value={form.profile_name} onChange={(value) => setForm({ ...form, profile_name: value })} />
-                      {businessLine === "overseas_student" && persona === "buyer" && (
-                        <Select
-                          label="这个账号由谁发声"
-                          value={form.profile_identity}
-                          onChange={(value) => setForm({ ...form, profile_identity: value as GrowthProfileIdentity })}
-                          options={[
-                            { value: "overseas_student_self", label: "留学生本人" },
-                            { value: "overseas_student_parent", label: "留学生家长" },
-                          ]}
-                        />
-                      )}
-                      <TextInput label="人设名称" value={form.name} onChange={(value) => setForm({ ...form, name: value })} />
-                      <TextInput label="一句话人设" value={form.one_liner} onChange={(value) => setForm({ ...form, one_liner: value })} />
-                      <TextInput label="绑定的小红书账号名称" value={form.platform_account_name} onChange={(value) => setForm({ ...form, platform_account_name: value })} />
-                      <TextInput label="小红书号 / UID" value={form.platform_account_uid} onChange={(value) => setForm({ ...form, platform_account_uid: value })} />
-                      <TextInput label="小红书主页链接" value={form.platform_profile_url} onChange={(value) => setForm({ ...form, platform_profile_url: value })} />
-                      <TextArea label="目标人群" value={visibleBusinessText(form.target_user, businessLine)} onChange={(value) => setForm({ ...form, target_user: value })} />
-                      <TextArea label="核心问题" value={visibleBusinessText(form.core_problem, businessLine)} onChange={(value) => setForm({ ...form, core_problem: value })} />
-                      <TextArea label="持续提供的价值" value={visibleBusinessText(form.account_value, businessLine)} onChange={(value) => setForm({ ...form, account_value: value })} />
-                      <TextArea label="信任来源" value={visibleBusinessText(form.trust_source, businessLine)} onChange={(value) => setForm({ ...form, trust_source: value })} />
-                      <TextArea label="不做什么" value={form.not_doing} onChange={(value) => setForm({ ...form, not_doing: value })} />
-                      <TextArea label="合规红线" value={form.compliance_redline} onChange={(value) => setForm({ ...form, compliance_redline: value })} />
-                    </div>
+                    <PersonaEditorFields
+                      form={form}
+                      setForm={setForm}
+                      businessLine={businessLine}
+                      persona={persona}
+                    />
                   ) : (
-                    <div className="grid gap-4 md:grid-cols-2">
-                      <PersonFact label="目标人群" value={visibleBusinessText(form.target_user, businessLine)} />
-                      <PersonFact label="账号发声身份" value={profileIdentityLabel(form.profile_identity)} />
-                      <PersonFact label="核心问题" value={visibleBusinessText(form.core_problem, businessLine)} />
-                      <PersonFact label="持续提供的价值" value={visibleBusinessText(form.account_value, businessLine)} />
-                      <PersonFact label="信任来源" value={visibleBusinessText(form.trust_source, businessLine)} />
-                    </div>
-                  )}
+                    <>
+                      <div className="grid gap-4 md:grid-cols-2">
+                        <PersonFact label="目标人群" value={visibleBusinessText(form.target_user, businessLine)} />
+                        <PersonFact label="账号发声身份" value={profileIdentityLabel(form.profile_identity)} />
+                        <PersonFact label="核心问题" value={visibleBusinessText(form.core_problem, businessLine)} />
+                        <PersonFact label="持续提供的价值" value={visibleBusinessText(form.account_value, businessLine)} />
+                        <PersonFact label="信任来源" value={visibleBusinessText(form.trust_source, businessLine)} />
+                      </div>
 
-                  <h3 className="mt-6 font-semibold">{GROWTH_PERSONA_LABELS[persona]}视角专属字段</h3>
-                  <div className="mt-3 grid gap-4 md:grid-cols-2">
-                    {PERSONA_SPECIFIC_FIELDS[persona].map((field) => personaEditing ? (
-                      <TextArea
-                        key={field.key}
-                        label={field.label}
-                        value={visibleBusinessText(form.persona_specific[field.key], businessLine)}
-                        onChange={(value) => setForm({
-                          ...form,
-                          persona_specific: { ...form.persona_specific, [field.key]: value },
-                        })}
-                        placeholder={field.placeholder}
-                      />
-                    ) : (
-                      <PersonFact
-                        key={field.key}
-                        label={field.label}
-                        value={visibleBusinessText(form.persona_specific[field.key], businessLine) || "未填写"}
-                      />
-                    ))}
-                  </div>
+                      <h3 className="mt-6 font-semibold">{GROWTH_PERSONA_LABELS[persona]}视角专属字段</h3>
+                      <div className="mt-3 grid gap-4 md:grid-cols-2">
+                        {PERSONA_SPECIFIC_FIELDS[persona].map((field) => (
+                          <PersonFact
+                            key={field.key}
+                            label={field.label}
+                            value={visibleBusinessText(form.persona_specific[field.key], businessLine) || "未填写"}
+                          />
+                        ))}
+                      </div>
 
-                  <details className="mt-5 rounded-2xl border border-slate-200">
-                    <summary className="cursor-pointer p-4 font-medium">高级业务事实</summary>
-                    <div className="grid gap-4 px-4 pb-4 md:grid-cols-2">
-                      {personaEditing ? (
-                        <>
-                          <TextArea label="业务假设（每行一条）" value={form.hypotheses} onChange={(value) => setForm({ ...form, hypotheses: value })} />
-                          <TextArea label="过滤词" value={form.filter_words} onChange={(value) => setForm({ ...form, filter_words: value })} />
-                          <TextArea label="禁用表达" value={form.avoid_expressions} onChange={(value) => setForm({ ...form, avoid_expressions: value })} />
-                          <TextArea label="私域承接边界" value={form.private_domain} onChange={(value) => setForm({ ...form, private_domain: value })} />
-                        </>
-                      ) : (
-                        <>
+                      <details className="mt-5 rounded-2xl border border-slate-200">
+                        <summary className="cursor-pointer p-4 font-medium">高级业务事实</summary>
+                        <div className="grid gap-4 px-4 pb-4 md:grid-cols-2">
                           <PersonFact label="业务假设" value={form.hypotheses || "未填写"} />
                           <PersonFact label="过滤词" value={form.filter_words || "未填写"} />
                           <PersonFact label="禁用表达" value={form.avoid_expressions || "未填写"} />
                           <PersonFact label="私域承接边界" value={form.private_domain || "未填写"} />
-                        </>
-                      )}
-                    </div>
-                  </details>
+                        </div>
+                      </details>
+                    </>
+                  )}
 
                   {personaEditing && (
                     <div className="sticky bottom-20 z-10 mt-5 flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-white/95 p-3 shadow-sm backdrop-blur sm:bottom-3">
@@ -4458,6 +4454,128 @@ function Section({ number, title, subtitle, children }: { number: string; title:
       </div>
       {children}
     </section>
+  );
+}
+
+function PersonaEditorFields({
+  form,
+  setForm,
+  businessLine,
+  persona,
+  profileNamePlaceholder,
+}: {
+  form: AccountForm;
+  setForm: (next: AccountForm) => void;
+  businessLine: GrowthBusinessLine;
+  persona: GrowthPersona;
+  profileNamePlaceholder?: string;
+}) {
+  function update<K extends keyof AccountForm>(key: K, value: AccountForm[K]) {
+    setForm({ ...form, [key]: value });
+  }
+  return (
+    <>
+      <div className="grid gap-4 md:grid-cols-2">
+        <TextInput
+          label="账号人设名称"
+          value={form.profile_name}
+          onChange={(value) => update("profile_name", value)}
+          placeholder={profileNamePlaceholder}
+        />
+        {businessLine === "overseas_student" && persona === "buyer" && (
+          <Select
+            label="这个账号由谁发声"
+            value={form.profile_identity}
+            onChange={(value) => update("profile_identity", value as GrowthProfileIdentity)}
+            options={[
+              { value: "overseas_student_self", label: "留学生本人" },
+              { value: "overseas_student_parent", label: "留学生家长" },
+            ]}
+          />
+        )}
+        <TextInput label="人设名称" value={form.name} onChange={(value) => update("name", value)} />
+        <TextInput label="一句话人设" value={form.one_liner} onChange={(value) => update("one_liner", value)} />
+        <TextInput
+          label="绑定的小红书账号名称（选填）"
+          value={form.platform_account_name}
+          onChange={(value) => update("platform_account_name", value)}
+        />
+        <TextInput
+          label="小红书号 / UID（选填）"
+          value={form.platform_account_uid}
+          onChange={(value) => update("platform_account_uid", value)}
+        />
+        <TextInput
+          label="小红书主页链接（选填）"
+          value={form.platform_profile_url}
+          onChange={(value) => update("platform_profile_url", value)}
+        />
+        <TextArea
+          label="目标人群"
+          value={visibleBusinessText(form.target_user, businessLine)}
+          onChange={(value) => update("target_user", value)}
+        />
+        <TextArea
+          label="核心问题"
+          value={visibleBusinessText(form.core_problem, businessLine)}
+          onChange={(value) => update("core_problem", value)}
+        />
+        <TextArea
+          label="持续提供的价值"
+          value={visibleBusinessText(form.account_value, businessLine)}
+          onChange={(value) => update("account_value", value)}
+        />
+        <TextArea
+          label="信任来源"
+          value={visibleBusinessText(form.trust_source, businessLine)}
+          onChange={(value) => update("trust_source", value)}
+        />
+        <TextArea label="不做什么" value={form.not_doing} onChange={(value) => update("not_doing", value)} />
+        <TextArea
+          label="合规红线"
+          value={form.compliance_redline}
+          onChange={(value) => update("compliance_redline", value)}
+        />
+      </div>
+
+      <h3 className="mt-6 font-semibold">{GROWTH_PERSONA_LABELS[persona]}视角专属字段</h3>
+      <div className="mt-3 grid gap-4 md:grid-cols-2">
+        {PERSONA_SPECIFIC_FIELDS[persona].map((field) => (
+          <TextArea
+            key={field.key}
+            label={field.label}
+            value={visibleBusinessText(form.persona_specific[field.key], businessLine)}
+            onChange={(value) => update("persona_specific", {
+              ...form.persona_specific,
+              [field.key]: value,
+            })}
+            placeholder={field.placeholder}
+          />
+        ))}
+      </div>
+
+      <details className="mt-5 rounded-2xl border border-slate-200 bg-white">
+        <summary className="cursor-pointer p-4 font-medium">高级业务事实</summary>
+        <div className="grid gap-4 px-4 pb-4 md:grid-cols-2">
+          <TextArea
+            label="业务假设（每行一条）"
+            value={form.hypotheses}
+            onChange={(value) => update("hypotheses", value)}
+          />
+          <TextArea label="过滤词" value={form.filter_words} onChange={(value) => update("filter_words", value)} />
+          <TextArea
+            label="禁用表达"
+            value={form.avoid_expressions}
+            onChange={(value) => update("avoid_expressions", value)}
+          />
+          <TextArea
+            label="私域承接边界"
+            value={form.private_domain}
+            onChange={(value) => update("private_domain", value)}
+          />
+        </div>
+      </details>
+    </>
   );
 }
 

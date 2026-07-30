@@ -61,6 +61,19 @@ const bodySchema = z.object({
     account_uid: z.string().trim().max(120).optional(),
     profile_url: z.string().trim().url().max(500).optional(),
   }).optional(),
+  profileDetails: z.object({
+    one_liner: z.string().trim().max(200).optional(),
+    account_value: z.string().trim().max(1000).optional(),
+    follow_reason: z.string().trim().max(500).optional(),
+    not_doing: z.string().trim().max(1000).optional(),
+    tone_style: z.string().trim().max(300).optional(),
+    compliance_redline: z.string().trim().max(500).optional(),
+    hypotheses: z.array(z.string().trim().max(300)).max(8).optional(),
+    filter_words: z.array(z.string().trim().max(40)).max(12).optional(),
+    avoid_expressions: z.array(z.string().trim().max(40)).max(12).optional(),
+    private_domain: z.string().trim().max(500).optional(),
+    persona_specific: z.record(z.string().trim().max(500)).optional(),
+  }).optional(),
   profileIdentity: z.enum([
     "overseas_student_self",
     "overseas_student_parent",
@@ -358,6 +371,33 @@ export async function POST(req: Request) {
       account_name: "",
       binding_status: "unbound",
     };
+    if (parsed.data.mode === "create") {
+      const details = parsed.data.profileDetails;
+      // 新建页与编辑页使用同一组槽位。操作者明确填写的事实优先于模型补全，
+      // 未填写的槽位继续保留系统生成结果。
+      account.name = parsed.data.accountName;
+      account.target_user = parsed.data.targetUser?.trim() || account.target_user;
+      account.core_problem = parsed.data.coreProblem?.trim() || account.core_problem;
+      account.trust_source = parsed.data.trustSource?.trim() || account.trust_source;
+      account.one_liner = details?.one_liner || account.one_liner;
+      account.account_value = details?.account_value || account.account_value;
+      account.follow_reason = details?.follow_reason || account.follow_reason;
+      account.not_doing = details?.not_doing || account.not_doing;
+      account.tone_style = details?.tone_style || account.tone_style;
+      account.compliance_redline = details?.compliance_redline || account.compliance_redline;
+      account.private_domain = details?.private_domain || account.private_domain;
+      if (details?.hypotheses?.length) account.hypotheses = details.hypotheses;
+      if (details?.filter_words?.length) account.filter_words = details.filter_words;
+      if (details?.avoid_expressions?.length) account.avoid_expressions = details.avoid_expressions;
+      if (details?.persona_specific) {
+        account.persona_specific = {
+          ...(account.persona_specific ?? {}),
+          ...Object.fromEntries(
+            Object.entries(details.persona_specific).filter(([, value]) => value.trim()),
+          ),
+        };
+      }
+    }
   }
   if (existingAccount) {
     // 生成只更新定位判断；所有历史字段、专属业务事实与高级事实都必须合并保留。
