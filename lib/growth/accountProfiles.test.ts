@@ -166,4 +166,52 @@ describe("account profiles", () => {
     expect(partition.visible.map((item) => item.id)).toEqual(["legacy", "created"]);
     expect(partition.duplicates).toEqual([]);
   });
+
+  it("never hides a newly created profile because model-filled copy conflicts with its saved workspace", () => {
+    const explicitlyCreated = account("created-conflict", {
+      profile_name: "留学生本人求职记录",
+      business_line: "overseas_student",
+      persona: "buyer",
+      target_user: "正在转型的中高管",
+      core_problem: "职业决策与裸辞方向",
+      account_value: "中高管事业方向判断",
+      profile_creation_request_id: "create-request-conflict",
+    });
+
+    const partition = partitionAccountProfiles([explicitlyCreated], {
+      tenantId: "mianbajun",
+      ownerUserId: "user-1",
+      businessLine: "overseas_student",
+      persona: "buyer",
+    });
+
+    expect(partition.visible.map((item) => item.id)).toEqual(["created-conflict"]);
+    expect(partition.pending).toEqual([]);
+    expect(accountBelongsToProfileWorkspace(explicitlyCreated, {
+      tenantId: "mianbajun",
+      ownerUserId: "user-1",
+      businessLine: "overseas_student",
+      persona: "buyer",
+    })).toBe(true);
+  });
+
+  it("still quarantines conflicting legacy profiles without an explicit creation marker", () => {
+    const legacyConflict = account("legacy-conflict", {
+      business_line: "overseas_student",
+      persona: "buyer",
+      target_user: "正在转型的中高管",
+      core_problem: "职业决策与裸辞方向",
+      account_value: "中高管事业方向判断",
+    });
+
+    const partition = partitionAccountProfiles([legacyConflict], {
+      tenantId: "mianbajun",
+      ownerUserId: "user-1",
+      businessLine: "overseas_student",
+      persona: "buyer",
+    });
+
+    expect(partition.visible).toEqual([]);
+    expect(partition.pending.map((item) => item.id)).toEqual(["legacy-conflict"]);
+  });
 });

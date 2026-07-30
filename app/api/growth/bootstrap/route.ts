@@ -428,6 +428,11 @@ export async function POST(req: Request) {
     account.profile_creation_request_id = existingAccount.profile_creation_request_id;
     account.platform_binding = existingAccount.platform_binding;
   }
+  if (!existingAccount && parsed.data.mode === "create") {
+    // 模型只负责补全人设，不得把其他业务的词带进刚创建的账号上下文。
+    // 保存前清洗一次，确保创建后的首屏、后续选题和正文读取同一套业务事实。
+    Object.assign(account, accountForBusinessGeneration(account));
+  }
   plan.owner_user_id = account.owner_user_id;
 
   if (!parsed.data.previewOnly) {

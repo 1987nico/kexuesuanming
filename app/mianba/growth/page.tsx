@@ -622,7 +622,7 @@ export default function GrowthPage() {
     if (cached && workspaceHasScope(cached, "core") && !force) {
       applyWorkspaceData(cached, workspaceTransients.current.get(key));
       setBusy(null);
-      return;
+      return true;
     }
     for (const [requestKey, controller] of workspaceControllers.current) {
       if (!requestKey.startsWith(`${key}:`)) controller.abort();
@@ -641,11 +641,13 @@ export default function GrowthPage() {
         applyWorkspaceData(next, workspaceTransients.current.get(resolvedKey) ?? workspaceTransients.current.get(key));
       }
     } catch (error) {
-      if ((error as Error).name === "AbortError") return;
+      if ((error as Error).name === "AbortError") return false;
       if (activeWorkspace.current === key) setMessage((error as Error).message);
+      return false;
     } finally {
       if (activeWorkspace.current === key || activeWorkspace.current === resolvedKey) setBusy(null);
     }
+    return true;
   }, [applyWorkspaceData, fetchWorkspace]);
 
   const ensureWorkspaceScope = useCallback(async (
@@ -1006,7 +1008,10 @@ export default function GrowthPage() {
       workspaceCache.current.delete(workspaceKey(businessLine, persona));
       setNewProfileForm(newAccountForm(businessLine, persona, businessPosition));
       setNewProfileOpen(false);
-      await load(businessLine, persona, true, result.account.id);
+      const loaded = await load(businessLine, persona, true, result.account.id);
+      if (!loaded) {
+        throw new Error("账号人设已保存，但重新读取失败。请刷新页面后重试；系统不会显示虚假的创建成功提示。");
+      }
       setPersonaOpen(true);
       setMessage("新账号人设已创建并切换。它的选题、正文和复盘会独立保存。");
     } catch (error) {

@@ -108,6 +108,27 @@ export interface AccountProfilePartition {
 }
 
 /**
+ * 用户在明确的“业务 × 视角”工作区主动新建的账号，以保存时的工作区归属
+ * 为准。模型补全出来的某个文案字段即使暂时触发了兼容性检查，也不能把
+ * 已创建成功的账号从列表中隐藏；后续生成仍会经过业务上下文清洗。
+ */
+export function isExplicitWorkspaceProfile(
+  account: GrowthAccount,
+  input: {
+    tenantId: string;
+    ownerUserId?: string;
+    businessLine: GrowthBusinessLine;
+    persona: GrowthPersona;
+  },
+) {
+  return Boolean(account.profile_creation_request_id)
+    && account.tenant_id === input.tenantId
+    && (!input.ownerUserId || account.owner_user_id === input.ownerUserId)
+    && account.persona === input.persona
+    && account.business_line === input.businessLine;
+}
+
+/**
  * 只在展示层折叠重复人设，不删除任何历史记录。绑定账号、默认账号和最近使用
  * 的记录依次优先成为代表，其余记录进入重复待整理区。
  */
@@ -126,6 +147,12 @@ export function partitionAccountProfiles(
     const sameOwner = account.tenant_id === input.tenantId
       && (!input.ownerUserId || account.owner_user_id === input.ownerUserId);
     if (!sameOwner || account.persona !== input.persona) continue;
+    if (isExplicitWorkspaceProfile(account, input)) {
+      // “创建成功”必须意味着列表中立即可见。不能让模型补全字段的内容判定
+      // 覆盖用户刚刚完成的显式工作区归属。
+      visibleCandidates.push(account);
+      continue;
+    }
     const attribution = accountBusinessAttribution(account);
     if (attribution === "confirmed" && account.business_line !== input.businessLine) {
       // 另一条业务中已确认的人设不是“当前业务待确认”，也不能出现在当前页面的计数里。
@@ -196,9 +223,11 @@ export function accountBelongsToProfileWorkspace(
     persona: GrowthPersona;
   },
 ) {
-  return account.tenant_id === input.tenantId
+  return isExplicitWorkspaceProfile(account, input) || (
+    account.tenant_id === input.tenantId
     && (!input.ownerUserId || account.owner_user_id === input.ownerUserId)
     && account.persona === input.persona
     && account.business_line === input.businessLine
-    && accountBusinessAttribution(account) === "confirmed";
+    && accountBusinessAttribution(account) === "confirmed"
+  );
 }
