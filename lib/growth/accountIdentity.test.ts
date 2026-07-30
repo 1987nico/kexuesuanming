@@ -52,6 +52,16 @@ describe("account profile identity", () => {
     expect(resolveProfileIdentity(account)).toBe("overseas_student_parent");
   });
 
+  it("repairs the early multi-account default that mislabeled an obvious student diary as a parent", () => {
+    const account = buyer({
+      profile_name: "留子回国求职踩坑实录｜边找方向边更新",
+      one_liner: "留子回国求职踩坑实录｜边找方向边更新",
+      profile_identity: "overseas_student_parent",
+    });
+    expect(resolveProfileIdentity(account)).toBe("overseas_student_self");
+    expect(isProfileTitleCompatible("当年海归吃香，现在孩子先抢秋招", account)).toBe(false);
+  });
+
   it("blocks parent titles on student accounts and requires parent evidence on parent accounts", () => {
     const student = buyer({ profile_identity: "overseas_student_self" });
     const parent = buyer({ profile_identity: "overseas_student_parent" });

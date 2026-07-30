@@ -24,7 +24,6 @@ export function defaultProfileIdentity(
  * 留学生买家若没有家长证据，宁可按本人号处理，避免把“我在求职”误写成“我家娃”。
  */
 export function resolveProfileIdentity(account: GrowthAccount): GrowthProfileIdentity {
-  if (account.profile_identity) return account.profile_identity;
   if (account.persona === "merchant") return "service_operator";
   if (account.persona === "expert") return "professional_expert";
   if (account.business_line === "executive") return "executive_self";
@@ -39,6 +38,16 @@ export function resolveProfileIdentity(account: GrowthAccount): GrowthProfileIde
     primaryEvidence,
     account.target_user,
   ].filter(Boolean).join(" ");
+  // 多账号上线初期曾把所有留学生买家默认写成家长。若账号名称和一句话人设
+  // 都明确是本人求职记录，则把这个旧默认值视作兼容脏数据，而非人工选择。
+  if (
+    account.profile_identity === "overseas_student_parent"
+    && STUDENT_SELF_SIGNAL.test(primaryEvidence)
+    && !PARENT_SIGNAL.test(primaryEvidence)
+  ) {
+    return "overseas_student_self";
+  }
+  if (account.profile_identity) return account.profile_identity;
   if (STUDENT_SELF_SIGNAL.test(primaryEvidence) && !PARENT_SIGNAL.test(primaryEvidence)) {
     return "overseas_student_self";
   }
