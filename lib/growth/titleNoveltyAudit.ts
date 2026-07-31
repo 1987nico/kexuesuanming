@@ -312,13 +312,13 @@ export async function auditNativeTitleBatchNovelty(
       // 靠额外审核请求修复被截断的回答。
       maxTokens: Math.max(480, Math.min(1_600, 80 + items.length * 125)),
       temperature: 0,
-      // 真实生产中 3 个候选＋36 条精简参考通常需要 10—15 秒。旧的 10 秒
-      // 上限会在模型刚开始输出 decisions 时中断，备用模型再跑一遍后仍只
-      // 返回半份协议，总耗时反而超过 20 秒。给主审核一次完整的 18 秒，
-      // 超时则由调用方使用严格本地门禁接管，不再串行等待第二个供应商。
-      timeoutMs: 18_000,
+      // 真实生产中 3 个候选＋36 条精简参考通常需要 10—15 秒。主审核超过
+      // 15 秒即切到已配置的独立备用模型；两条通道执行完全相同的审核协议，
+      // 后续确定性门禁也保持不变。这里允许多消耗一次审核 token，换掉“主
+      // 模型瞬时抖动就整批失败”的性能单点。
+      timeoutMs: 15_000,
       jsonRetries: 0,
-      allowFallback: false,
+      allowFallback: true,
     });
   const result = await requestAudit(candidates);
   const decisions = normalizeNativeTitleNoveltyDecisions(result.data, candidates, references);
