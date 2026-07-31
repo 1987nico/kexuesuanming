@@ -854,6 +854,29 @@ export interface GrowthRun {
   generation_attempts?: number;
   /** 同一次“换一批”请求的幂等键：浏览器断连后重试仍返回这一批，而不重复生成。 */
   generation_request_id?: string;
+  /** 已通过全部标题门禁、等待当前账号人设消费的后台批次。 */
+  prefetch?: {
+    status: "queued" | "consumed" | "expired";
+    cache_key: string;
+    profile_version: string;
+    generation_version: "topic-prefetch-v1";
+    batch_number: number;
+    queued_at: string;
+    expires_at: string;
+    consumed_at?: string;
+    consumed_request_id?: string;
+  };
+  /** 已完成认证的短版/长版正文缓存；键中包含人设、标题、承诺和来源版本。 */
+  draft_variant_cache?: Array<{
+    topic_id: string;
+    cache_key: string;
+    profile_version: string;
+    generation_version: "draft-prewarm-v1";
+    status: "ready" | "expired";
+    drafts: ContentDraft[];
+    generated_at: string;
+    expires_at: string;
+  }>;
   /** 仅供运营排查的分段耗时与结果，不展示模型内部推理。 */
   generation_diagnostics?: {
     total_ms: number;

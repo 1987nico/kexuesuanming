@@ -40,6 +40,16 @@ import {
 import { methodsForPersona, TITLE_METHOD_BY_ID } from "@/lib/growth/methods";
 import { sourceIsUsable } from "@/lib/growth/validation";
 import { evaluateGrowthTitleQuality } from "@/lib/growth/titleQuality";
+import {
+  accountProfileVersion,
+  markTopicRunConsumed,
+  markTopicRunQueued,
+  queuedTopicRuns,
+  rollingTopicCacheEnabled,
+  TOPIC_PREFETCH_MAX,
+  TOPIC_PREFETCH_TARGET,
+  topicPrefetchEnabled,
+} from "@/lib/growth/performanceCache";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -81,7 +91,11 @@ function releaseInFlightGenerationRequest(accountId: string, requestId?: string)
   if (requestId) inFlightGenerationRequests.delete(`${accountId}:${requestId}`);
 }
 
-function completedGenerationResponse(run: GrowthRun, account: GrowthAccount) {
+function completedGenerationResponse(
+  run: GrowthRun,
+  account: GrowthAccount,
+  options?: { cacheHit?: boolean; message?: string },
+) {
   return NextResponse.json({
     status: run.method_deliveries?.some((delivery) => delivery.status !== "ready") ? "partial" : "completed",
     run,
@@ -108,8 +122,9 @@ function completedGenerationResponse(run: GrowthRun, account: GrowthAccount) {
       fetched_count: 0,
       selected_count: 0,
       usable_count: 0,
-      message: "已恢复刚才完成的标题批次，没有重复生成。",
+      message: options?.message ?? "已恢复刚才完成的标题批次，没有重复生成。",
     },
+    cacheHit: options?.cacheHit ?? false,
   });
 }
 
@@ -129,6 +144,8 @@ const bodySchema = z.object({
   topicId: z.string().optional(),
   baseRunId: z.string().optional(),
   requestId: z.string().min(8).max(160).optional(),
+  requestMode: z.enum(["interactive", "prefetch"]).optional(),
+  prefetchTarget: z.number().int().min(1).max(TOPIC_PREFETCH_MAX).optional(),
 });
 
 const updateTitleSchema = z.object({
@@ -280,8 +297,14 @@ function accountWithFreshBenchmarkSources(input: {
 
 export async function POST(req: Request) {
   const requestStartedAt = Date.now();
-  const guard = await requireMianbaApiAuth();
-  if ("response" in guard) return guard.response;
+  const cronAuthorized = Boolean(
+    process.env.CRON_SECRET
+    && req.headers.get("authorization") === `Bearer ${process.env.CRON_SECRET}`,
+  );
+  const guard = cronAuthorized ? null : await requireMianbaApiAuth();
+  if (guard && "response" in guard) return guard.response;
+  const authRole = cronAuthorized ? "admin" : guard!.auth.role;
+  const authUserId = cronAuthorized ? "system-growth-prefetch" : guard!.auth.user.id;
 
   const body = await req.json().catch(() => ({}));
   const parsed = bodySchema.safeParse(body);
@@ -292,7 +315,7 @@ export async function POST(req: Request) {
   const store = growthStore();
   let account = await store.getAccount(parsed.data.accountId);
   if (!account) return NextResponse.json({ error: "account_not_found" }, { status: 404 });
-  if (guard.auth.role !== "admin" && account.owner_user_id && account.owner_user_id !== guard.auth.user.id) {
+  if (authRole !== "admin" && account.owner_user_id && account.owner_user_id !== authUserId) {
     return NextResponse.json({ error: "forbidden" }, { status: 403 });
   }
   if (!accountMatchesWorkspace(account, parsed.data)) {
@@ -338,6 +361,73 @@ export async function POST(req: Request) {
   const notes = await store.listDrafts(account.id);
   const reviews = await store.listReviewsByAccount(account.id);
   const runs = await store.listRuns(account.id);
+  const requestMode = parsed.data.requestMode ?? "interactive";
+  const freshQueuedRuns = queuedTopicRuns(runs, account, generationMode);
+  const previouslyConsumed = requestMode === "interactive" && parsed.data.requestId
+    ? runs.find((run) => run.prefetch?.consumed_request_id === parsed.data.requestId)
+    : undefined;
+  if (previouslyConsumed) {
+    return completedGenerationResponse(previouslyConsumed, account, {
+      cacheHit: true,
+      message: "已恢复刚才切换完成的标题批次，没有再次消耗下一批。",
+    });
+  }
+  // 用户点击“生成/换一批”时，优先消费已经完成全部门禁的后台批次。
+  // 消费动作只改运行状态，不重新调用模型，因此速度与实时生成质量完全解耦。
+  if (
+    requestMode === "interactive"
+    && action === "regenerate_titles"
+    && topicPrefetchEnabled()
+    && rollingTopicCacheEnabled()
+    && freshQueuedRuns.length > 0
+  ) {
+    const timestamp = now();
+    const consumed = markTopicRunConsumed(freshQueuedRuns[0], timestamp, parsed.data.requestId);
+    await store.saveRun(consumed);
+    await store.saveUsage({
+      tenant_id: DEFAULT_TENANT_ID,
+      user_id: account.owner_user_id ?? authUserId,
+      feature: "growth_text",
+      metadata: {
+        action: "topic_batch_swapped",
+        accountId: account.id,
+        businessLine: account.business_line,
+        persona: account.persona,
+        generationMode,
+        runId: consumed.id,
+        cache_hit: true,
+        queue_remaining: freshQueuedRuns.length - 1,
+        duration_ms: Date.now() - requestStartedAt,
+      },
+    });
+    const response = completedGenerationResponse(consumed, account, {
+      cacheHit: true,
+      message: "新一批标题已准备好并立即切换，后台会继续补充后续批次。",
+    });
+    response.headers.set("Server-Timing", `growth-topic-cache;dur=${Date.now() - requestStartedAt}`);
+    return response;
+  }
+  // 后台滚动补批始终保持小队列。达到目标后直接返回现有缓存，避免烧掉无效
+  // token；硬上限用于阻止多个页面同时预取导致库存失控。
+  if (
+    requestMode === "prefetch"
+    && (!topicPrefetchEnabled() || !rollingTopicCacheEnabled()
+      || freshQueuedRuns.length >= Math.min(parsed.data.prefetchTarget ?? TOPIC_PREFETCH_TARGET, TOPIC_PREFETCH_MAX))
+  ) {
+    const existing = freshQueuedRuns[0];
+    if (existing) {
+      return completedGenerationResponse(existing, account, {
+        cacheHit: true,
+        message: "后台标题库存已经充足。",
+      });
+    }
+    return NextResponse.json({
+      status: "completed" as const,
+      prefetchStatus: "disabled" as const,
+      cacheHit: false,
+      message: "标题预生成当前未启用。",
+    });
+  }
   // 不把 store 的返回顺序当成隐式合同：标题历史进入模型时必须始终是最新在前。
   // 服务端仍使用完整历史做门禁，模型只取这份列表的前 160 条近期标题。
   const runsNewestFirst = [...runs].sort((left, right) => (
@@ -364,7 +454,9 @@ export async function POST(req: Request) {
   // 断网恢复时的“生成中”占位不能被当成上一批标题；它没有题目，也绝不能
   // 影响单槽换题、来源轮换和历史去重。
   const previousRuns = runsNewestFirst.filter((item) =>
-    item.generation_mode === generationMode && item.topic_pool.length > 0
+    item.generation_mode === generationMode
+    && item.topic_pool.length > 0
+    && (requestMode === "prefetch" || item.prefetch?.status !== "queued")
   );
   const latestRun = parsed.data.baseRunId
     ? previousRuns.find((run) => run.id === parsed.data.baseRunId) ?? previousRuns[0] ?? null
@@ -630,7 +722,7 @@ export async function POST(req: Request) {
     generationReservation = {
       id: existingRequest?.id ?? crypto.randomUUID(),
       tenant_id: DEFAULT_TENANT_ID,
-      owner_user_id: existingRequest?.owner_user_id ?? guard.auth.user.id,
+      owner_user_id: existingRequest?.owner_user_id ?? account.owner_user_id ?? authUserId,
       account_id: account.id,
       status: "draft",
       week: parsed.data.week ?? latestRun?.week ?? 1,
@@ -847,7 +939,7 @@ export async function POST(req: Request) {
   };
   // 每次生成都是一个独立批次。旧批次继续保留，前台可查看并恢复最近3批；
   // 新批次失败时不会覆盖当前批次，也不会清空操作者已经编辑或选中的标题。
-  const run: GrowthRun = {
+  let run: GrowthRun = {
     id: generationReservation?.id ?? crypto.randomUUID(),
     tenant_id: DEFAULT_TENANT_ID,
     account_id: account.id,
@@ -884,7 +976,17 @@ export async function POST(req: Request) {
     updated_at: timestamp,
   };
 
-  run.owner_user_id = run.owner_user_id ?? guard.auth.user.id;
+  if (requestMode === "prefetch") {
+    run = markTopicRunQueued({
+      run,
+      account,
+      mode: generationMode,
+      batchNumber: freshQueuedRuns.length + 1,
+      timestamp,
+    });
+  }
+
+  run.owner_user_id = run.owner_user_id ?? account.owner_user_id ?? authUserId;
   const confirmedExperiment = [...(account.cycle_experiments ?? [])].reverse().find((item) => item.status === "confirmed");
   if (confirmedExperiment) {
     const applied = { ...confirmedExperiment, status: "applied" as const, resolved_at: timestamp };
@@ -913,7 +1015,7 @@ export async function POST(req: Request) {
   if (usage) {
     await store.saveUsage({
       tenant_id: DEFAULT_TENANT_ID,
-      user_id: guard.auth.user.id,
+      user_id: account.owner_user_id ?? authUserId,
       feature: "growth_text",
       ...usage,
       metadata: {
@@ -922,6 +1024,9 @@ export async function POST(req: Request) {
         generationMode,
         rotationMode: sourceRotationMode,
         changedMethodIds,
+        requestMode,
+        cache_hit: false,
+        profile_version: accountProfileVersion(account),
       },
     });
   }
@@ -948,6 +1053,8 @@ export async function POST(req: Request) {
     topicSources: account.topic_sources ?? [],
     sourceUsage: account.benchmark_source_usage ?? [],
     sourceRefresh: sourceRefreshSummary,
+    cacheHit: false,
+    prefetchStatus: requestMode === "prefetch" ? "queued" : undefined,
   });
 }
 

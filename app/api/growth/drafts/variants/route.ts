@@ -18,6 +18,12 @@ import {
   appendBodyGenerationHistory,
   bodyHistoryReferences,
 } from "@/lib/growth/bodyUniqueness";
+import {
+  accountProfileVersion,
+  bodyPrewarmEnabled,
+  freshDraftCache,
+  withDraftCache,
+} from "@/lib/growth/performanceCache";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -34,6 +40,7 @@ const bodySchema = z.object({
   count: z.number().int().min(1).max(3).optional(),
   bodyVersion: z.enum(["short", "long"]).optional(),
   excludeBodies: z.array(z.string()).max(6).optional(),
+  requestMode: z.enum(["interactive", "prewarm"]).optional(),
 });
 
 export async function POST(req: Request) {
@@ -73,6 +80,33 @@ export async function POST(req: Request) {
     }, { status: 409 });
   }
   const generationAccount = accountForBusinessGeneration(account);
+  const requestMode = parsed.data.requestMode ?? "interactive";
+  const cached = bodyPrewarmEnabled() ? freshDraftCache(run, account, topic) : undefined;
+  if (cached) {
+    await store.saveUsage({
+      tenant_id: DEFAULT_TENANT_ID,
+      user_id: guard.auth.user.id,
+      feature: "growth_text",
+      metadata: {
+        action: requestMode === "prewarm" ? "body_preheat_ready" : "body_shown",
+        accountId: account.id,
+        businessLine: account.business_line,
+        persona: account.persona,
+        runId: run.id,
+        topicId: topic.id,
+        cache_hit: true,
+        duration_ms: Date.now() - requestStartedAt,
+      },
+    });
+    const response = NextResponse.json({
+      drafts: cached.drafts,
+      topic,
+      cacheHit: true,
+      prewarm: requestMode === "prewarm",
+    });
+    response.headers.set("Server-Timing", `growth-draft-cache;dur=${Date.now() - requestStartedAt}`);
+    return response;
+  }
 
   const [notes, runs] = await Promise.all([
     store.listDrafts(account.id),
@@ -217,9 +251,42 @@ export async function POST(req: Request) {
   }
 
   // 生成过但尚未选用的正文也进入账号历史，防止用户反复点击后再次拿到同一篇。
-  await store.saveRun(appendBodyGenerationHistory(run, drafts));
+  const historyRun = appendBodyGenerationHistory(run, drafts);
+  const cachedRun = bodyPrewarmEnabled()
+    ? withDraftCache({
+      run: historyRun,
+      account,
+      topic,
+      drafts,
+      timestamp: new Date().toISOString(),
+    })
+    : historyRun;
+  await store.saveRun(cachedRun);
 
-  const response = NextResponse.json({ drafts, topic, learningTrace: learningBrief.trace });
+  await store.saveUsage({
+    tenant_id: DEFAULT_TENANT_ID,
+    user_id: guard.auth.user.id,
+    feature: "growth_text",
+    metadata: {
+      action: requestMode === "prewarm" ? "body_preheat_ready" : "body_shown",
+      accountId: account.id,
+      businessLine: account.business_line,
+      persona: account.persona,
+      runId: run.id,
+      topicId: topic.id,
+      cache_hit: false,
+      profile_version: accountProfileVersion(account),
+      duration_ms: Date.now() - requestStartedAt,
+    },
+  });
+
+  const response = NextResponse.json({
+    drafts,
+    topic,
+    learningTrace: learningBrief.trace,
+    cacheHit: false,
+    prewarm: requestMode === "prewarm",
+  });
   response.headers.set("Server-Timing", `growth-draft-variants;dur=${Date.now() - requestStartedAt}`);
   return response;
 }

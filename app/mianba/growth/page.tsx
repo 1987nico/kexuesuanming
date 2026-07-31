@@ -63,6 +63,7 @@ import {
   manualTitleLength,
   manualTitleValidationError,
 } from "@/lib/growth/titleEditing";
+import { visibleTopicRuns } from "@/lib/growth/performanceCache";
 
 interface BootstrapData {
   loadedScopes: WorkspaceScope[];
@@ -138,6 +139,12 @@ interface ReviewExcelImport {
   fileName: string;
   detectedFields: string[];
   warnings: string[];
+}
+
+interface DraftVariantResponse {
+  drafts: ContentDraft[];
+  cacheHit?: boolean;
+  prewarm?: boolean;
 }
 
 const contentReviewFields = [
@@ -536,6 +543,10 @@ export default function GrowthPage() {
   // setState 生效前的双击仍可能发出两次请求；标题生成在客户端先串行，
   // 服务端再用 requestId 做最终幂等保护。
   const topicGenerationInFlight = useRef(false);
+  const topicPrefetchInFlight = useRef(new Map<string, Promise<void>>());
+  const bodyPrewarmInFlight = useRef(new Map<string, Promise<DraftVariantResponse>>());
+  const bodyPrewarmResults = useRef(new Map<string, DraftVariantResponse>());
+  const shownTopicRuns = useRef(new Set<string>());
   const activeWorkspace = useRef(workspaceKey("overseas_student", "buyer"));
 
   const applyWorkspaceData = useCallback((next: BootstrapData | null, transient?: WorkspaceTransient) => {
@@ -548,8 +559,8 @@ export default function GrowthPage() {
     setChosen(transient?.chosen ?? next?.currentDrafts?.find((draft) => draft.status === "ready") ?? null);
     setTitleEdits(transient?.titleEdits ?? {});
     setActiveRunIds({
-      default: next?.runs.find((run) => run.generation_mode === "default")?.id,
-      explore: next?.runs.find((run) => run.generation_mode === "explore")?.id,
+      default: next?.runs.find((run) => run.generation_mode === "default" && run.prefetch?.status !== "queued")?.id,
+      explore: next?.runs.find((run) => run.generation_mode === "explore" && run.prefetch?.status !== "queued")?.id,
     });
     setSavingTitleId(null);
     setExploreOpen({ native: false, benchmark: false });
@@ -750,13 +761,33 @@ export default function GrowthPage() {
   const profileExamples = accountProfileExamples(businessLine, persona);
   const businessPosition = data?.businessPosition ?? DEFAULT_BUSINESS_POSITIONS[businessLine];
   const runsByMode = useMemo(() => ({
-    default: (data?.runs ?? []).filter((run) => run.generation_mode === "default" && run.topic_pool.length > 0).slice(0, 3),
-    explore: (data?.runs ?? []).filter((run) => run.generation_mode === "explore" && run.topic_pool.length > 0).slice(0, 3),
+    default: visibleTopicRuns(data?.runs ?? []).filter((run) => run.generation_mode === "default" && run.topic_pool.length > 0).slice(0, 3),
+    explore: visibleTopicRuns(data?.runs ?? []).filter((run) => run.generation_mode === "explore" && run.topic_pool.length > 0).slice(0, 3),
   }), [data?.runs]);
   const runs = useMemo(() => ({
     default: runsByMode.default.find((run) => run.id === activeRunIds.default) ?? runsByMode.default[0],
     explore: runsByMode.explore.find((run) => run.id === activeRunIds.explore) ?? runsByMode.explore[0],
   }), [activeRunIds.default, activeRunIds.explore, runsByMode.default, runsByMode.explore]);
+
+  useEffect(() => {
+    const account = data?.account;
+    if (!account || !runs.default || (visibleStep !== "2" && visibleStep !== "3")) return;
+    void ensureTopicPrefetch(account);
+  // runs.default.id is intentional: a consumed batch should trigger replenishment once.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data?.account?.id, runs.default?.id, visibleStep]);
+
+  useEffect(() => {
+    const account = data?.account;
+    const run = runs.default;
+    if (!account || !run || shownTopicRuns.current.has(run.id) || visibleStep !== "3") return;
+    shownTopicRuns.current.add(run.id);
+    trackGrowthEvent("topic_batch_shown", account, {
+      runId: run.id,
+      generationMode: run.generation_mode ?? "default",
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data?.account?.id, runs.default?.id, visibleStep]);
   const defaultMethods = useMemo(
     () => methodsForPersona(persona, "default", data?.account?.method_overrides),
     [data?.account?.method_overrides, persona],
@@ -1301,6 +1332,105 @@ export default function GrowthPage() {
     }
   }
 
+  function trackGrowthEvent(
+    event: "topic_batch_shown" | "topic_selected" | "body_preheat_started" | "body_requested" | "body_shown" | "draft_version_chosen" | "content_copied" | "content_published",
+    account: GrowthAccount,
+    details: {
+      runId?: string;
+      topicId?: string;
+      draftId?: string;
+      generationMode?: MethodGenerationMode;
+      cacheHit?: boolean;
+      durationMs?: number;
+    } = {},
+  ) {
+    void fetch("/api/growth/events", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      keepalive: true,
+      body: JSON.stringify({
+        event,
+        accountId: account.id,
+        businessLine,
+        persona,
+        ...details,
+      }),
+    }).catch(() => undefined);
+  }
+
+  async function ensureTopicPrefetch(account: GrowthAccount, target = 2) {
+    const key = `${businessLine}:${persona}:${account.id}:default`;
+    if (topicPrefetchInFlight.current.has(key)) return topicPrefetchInFlight.current.get(key);
+    const requestWorkspace = workspaceKey(businessLine, persona, account.id);
+    const task = (async () => {
+      // 顺序补货才能让第二批把第一批预生成结果纳入历史去重；并发会让两批
+      // 在同一份旧历史上生成，反而提高相似概率。
+      for (let index = 0; index < target; index += 1) {
+        await requestJSON("/api/growth/topics", {
+          method: "POST",
+          body: JSON.stringify({
+            accountId: account.id,
+            businessLine,
+            persona,
+            generationMode: "default",
+            action: "regenerate_titles",
+            requestMode: "prefetch",
+            prefetchTarget: target,
+            requestId: crypto.randomUUID(),
+          }),
+        });
+        if (activeWorkspace.current !== requestWorkspace) return;
+      }
+    })().catch((error) => {
+      // 预取失败不打断用户当前工作流；实时生成仍是完整兜底。
+      console.warn("[growth] topic prefetch unavailable:", (error as Error).message);
+    }).finally(() => {
+      topicPrefetchInFlight.current.delete(key);
+    });
+    topicPrefetchInFlight.current.set(key, task);
+    return task;
+  }
+
+  function bodyPrewarmKey(account: GrowthAccount, run: GrowthRun, topic: TopicCandidate) {
+    return `${businessLine}:${persona}:${account.id}:${run.id}:${topic.id}:${topic.title}:${topic.title_promise}`;
+  }
+
+  function requestBodyVariants(
+    account: GrowthAccount,
+    run: GrowthRun,
+    topic: TopicCandidate,
+    requestMode: "interactive" | "prewarm",
+  ) {
+    return requestJSON<DraftVariantResponse>("/api/growth/drafts/variants", {
+      method: "POST",
+      body: JSON.stringify({
+        runId: run.id,
+        topicId: topic.id,
+        accountId: account.id,
+        businessLine,
+        persona,
+        requestMode,
+      }),
+    });
+  }
+
+  function prewarmBodies(account: GrowthAccount, run: GrowthRun, topic: TopicCandidate) {
+    const key = bodyPrewarmKey(account, run, topic);
+    const existing = bodyPrewarmInFlight.current.get(key);
+    if (existing) return existing;
+    const cached = bodyPrewarmResults.current.get(key);
+    if (cached) return Promise.resolve(cached);
+    trackGrowthEvent("body_preheat_started", account, { runId: run.id, topicId: topic.id });
+    const promise = requestBodyVariants(account, run, topic, "prewarm")
+      .then((result) => {
+        bodyPrewarmResults.current.set(key, result);
+        return result;
+      })
+      .finally(() => bodyPrewarmInFlight.current.delete(key));
+    bodyPrewarmInFlight.current.set(key, promise);
+    return promise;
+  }
+
   async function generateTopics(
     mode: MethodGenerationMode,
     group?: TitleMethodGroup,
@@ -1393,6 +1523,7 @@ export default function GrowthPage() {
         changedMethods: TitleMethodId[];
         retainedMethods: TitleMethodId[];
         sourceUsage: NonNullable<GrowthAccount["benchmark_source_usage"]>;
+        cacheHit?: boolean;
       }>(
         "/api/growth/topics",
         {
@@ -1407,6 +1538,7 @@ export default function GrowthPage() {
             topicId,
             baseRunId: runs[mode]?.id,
             requestId,
+            requestMode: "interactive",
           }),
         },
       );
@@ -1526,6 +1658,9 @@ export default function GrowthPage() {
           failedCount: result.failedCount,
         })}`);
       }
+      if (mode === "default" && action === "regenerate_titles") {
+        void ensureTopicPrefetch(account);
+      }
     } catch (error) {
       if (!requestWorkspaceIsActive()) return;
       const errorMessage = (error as Error).message;
@@ -1576,6 +1711,15 @@ export default function GrowthPage() {
       setActiveTopic(null);
       setVariants([]);
       setChosen(null);
+      if (data?.account) {
+        trackGrowthEvent("topic_selected", data.account, {
+          runId: saved.run.id,
+          topicId: saved.topic.id,
+          generationMode: saved.run.generation_mode ?? "default",
+        });
+        // 用户阅读正文承诺、准备点击下一步的时间就是无感预热窗口。
+        void prewarmBodies(data.account, saved.run, saved.topic).catch(() => undefined);
+      }
       setMessage(saved.topic.title === topic.title ? "标题已选择。" : "标题修改已保存并选择。");
     } catch (error) {
       setMessage((error as Error).message);
@@ -1702,6 +1846,7 @@ export default function GrowthPage() {
       setBodyProgressMessage(BODY_GENERATION_STAGES[stageIndex]);
     }, 7_000);
     try {
+      const requestStartedAt = performance.now();
       const editedTitle = titleEdits[topic.id] ?? topic.title;
       const saved = await persistTopicTitle(run, topic, editedTitle);
       setSelectedTopic(saved);
@@ -1710,17 +1855,24 @@ export default function GrowthPage() {
         return;
       }
       setActiveTopic(saved);
-      const result = await requestJSON<{ drafts: ContentDraft[] }>("/api/growth/drafts/variants", {
-        method: "POST",
-        body: JSON.stringify({
-          runId: saved.run.id,
-          topicId: saved.topic.id,
-          accountId: account.id,
-          businessLine,
-          persona,
-        }),
+      trackGrowthEvent("body_requested", account, {
+        runId: saved.run.id,
+        topicId: saved.topic.id,
       });
+      const prewarmKey = bodyPrewarmKey(account, saved.run, saved.topic);
+      let result = bodyPrewarmResults.current.get(prewarmKey);
+      if (!result) {
+        const pending = bodyPrewarmInFlight.current.get(prewarmKey);
+        if (pending) result = await pending.catch(() => undefined);
+      }
+      if (!result) result = await requestBodyVariants(account, saved.run, saved.topic, "interactive");
       setVariants(result.drafts);
+      trackGrowthEvent("body_shown", account, {
+        runId: saved.run.id,
+        topicId: saved.topic.id,
+        cacheHit: result.cacheHit ?? bodyPrewarmResults.current.has(prewarmKey),
+        durationMs: Math.round(performance.now() - requestStartedAt),
+      });
       setMessage("短版和长版已完成系统认证，可以直接选择使用。");
       setBodyProgressMessage("");
       setBodyVersionView(result.drafts.some((draft) => draft.selected_body_version !== "long") ? "short" : "long");
@@ -1751,6 +1903,12 @@ export default function GrowthPage() {
       });
       setVariants([result.draft]);
       setChosen(result.draft);
+      if (data?.account) {
+        trackGrowthEvent("draft_version_chosen", data.account, {
+          runId: result.draft.run_id,
+          draftId: result.draft.id,
+        });
+      }
       setData((current) => current ? {
         ...current,
         currentDrafts: [
@@ -1779,6 +1937,12 @@ export default function GrowthPage() {
         body: JSON.stringify({ published_at: new Date(publishedAt).toISOString() }),
       });
       await load(businessLine, persona, true, draft.account_id);
+      if (data?.account) {
+        trackGrowthEvent("content_published", data.account, {
+          runId: draft.run_id,
+          draftId: draft.id,
+        });
+      }
       setMessage("已记录实际发布时间；这篇内容会进入下一轮三日复盘的官方Excel匹配范围。");
       goToStep("5");
     } catch (error) {
@@ -2624,6 +2788,10 @@ export default function GrowthPage() {
                         selected={chosen?.id === visibleBodyDraft.id}
                         onChoose={chooseDraft}
                         onPublish={markPublished}
+                        onCopied={(draft) => data?.account && trackGrowthEvent("content_copied", data.account, {
+                          runId: draft.run_id,
+                          draftId: draft.id,
+                        })}
                       />
                       {chosen && variants.length === 1 && (
                         <button type="button" className="mt-4 min-h-11 text-sm font-medium text-slate-600 underline" onClick={() => {
@@ -2643,6 +2811,10 @@ export default function GrowthPage() {
                       selected
                       onChoose={chooseDraft}
                       onPublish={markPublished}
+                      onCopied={(draft) => data?.account && trackGrowthEvent("content_copied", data.account, {
+                        runId: draft.run_id,
+                        draftId: draft.id,
+                      })}
                     />
                   ) : selectedTopic ? (
                     busy === `body-${selectedTopic.topic.id}` ? (
@@ -3602,12 +3774,14 @@ function DraftCard({
   selected = false,
   onChoose,
   onPublish,
+  onCopied,
 }: {
   draft: ContentDraft;
   busy: string | null;
   selected?: boolean;
   onChoose: (draft: ContentDraft) => void;
   onPublish?: (draft: ContentDraft, publishedAt: string) => void;
+  onCopied?: (draft: ContentDraft) => void;
 }) {
   const readyForOperator = draftReadyForOperator(draft);
   const publishLength = draftPublishLength(draft);
@@ -3621,7 +3795,7 @@ function DraftCard({
   if (selected && onPublish) {
     return (
       <div id="selected-final-draft" className="scroll-mt-24">
-        <FinalDraft draft={draft} busy={busy} onPublish={onPublish} />
+        <FinalDraft draft={draft} busy={busy} onPublish={onPublish} onCopied={onCopied} />
       </div>
     );
   }
@@ -3646,10 +3820,12 @@ function FinalDraft({
   draft,
   busy,
   onPublish,
+  onCopied,
 }: {
   draft: ContentDraft;
   busy: string | null;
   onPublish: (draft: ContentDraft, publishedAt: string) => void;
+  onCopied?: (draft: ContentDraft) => void;
 }) {
   const [publishedAt, setPublishedAt] = useState(asLocalDateTime(draft.published_at));
   const hashtagsText = draft.hashtags.join(" ");
@@ -3703,6 +3879,7 @@ function FinalDraft({
             copiedLabel="标题已复制"
             primary
             disabled={!publishable}
+            onCopied={() => onCopied?.(draft)}
           />
           <CopyButton
             text={bodyWithHashtags}
@@ -3710,6 +3887,7 @@ function FinalDraft({
             copiedLabel="正文已复制"
             primary
             disabled={!publishable}
+            onCopied={() => onCopied?.(draft)}
           />
         </div>
         <details className="mt-3 border-t border-[#ead7b5] pt-3 text-sm text-slate-600">
@@ -4867,6 +5045,7 @@ function CopyButton({
   primary = false,
   compact = false,
   disabled = false,
+  onCopied,
 }: {
   text: string;
   label: string;
@@ -4874,6 +5053,7 @@ function CopyButton({
   primary?: boolean;
   compact?: boolean;
   disabled?: boolean;
+  onCopied?: () => void;
 }) {
   const [state, setState] = useState<"idle" | "copied" | "failed">("idle");
 
@@ -4893,6 +5073,7 @@ function CopyButton({
         if (!copied) throw new Error("copy_failed");
       }
       setState("copied");
+      onCopied?.();
       window.setTimeout(() => setState("idle"), 1600);
     } catch {
       setState("failed");
