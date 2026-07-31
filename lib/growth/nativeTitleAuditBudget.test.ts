@@ -39,7 +39,7 @@ function option(
 }
 
 describe("原生标题语义审核候选预算", () => {
-  it("六个原生方法首轮每法只审核一条候选，避免终审成为超时单点", () => {
+  it("六个原生方法首轮每法审核两条候选，总量仍不超过12条", () => {
     const methods = methodsForPersona("expert", "default").filter((method) => !method.sourceRequired);
     expect(methods).toHaveLength(6);
     const candidatesByMethod = new Map(methods.map((method) => [method.id, [
@@ -51,10 +51,11 @@ describe("原生标题语义审核候选预算", () => {
 
     const compact = compactNativeAuditOptions({ methods, candidatesByMethod });
     const total = methods.flatMap((method) => compact.get(method.id) ?? []);
-    expect(total).toHaveLength(methods.length);
+    expect(total).toHaveLength(methods.length * 2);
+    expect(total.length).toBeLessThanOrEqual(12);
     for (const method of methods) {
       const options = compact.get(method.id) ?? [];
-      expect(options).toHaveLength(1);
+      expect(options).toHaveLength(2);
       expect(options.some((item) => item.audit.kind === "model")).toBe(true);
     }
   });
@@ -84,7 +85,7 @@ describe("原生标题语义审核候选预算", () => {
       auditedTitleFingerprints: audited,
     });
     const total = methods.flatMap((method) => retry.get(method.id) ?? []);
-    expect(total).toHaveLength(4);
+    expect(total).toHaveLength(methods.length * 2);
     expect(total.every((item) => item.audit.kind === "fallback")).toBe(true);
     expect(total.every((item) => !audited.has(normalizeTitleForComparison(item.topic.title)))).toBe(true);
   });
@@ -100,10 +101,10 @@ describe("原生标题语义审核候选预算", () => {
 
     const compact = compactNativeAuditOptions({ methods, candidatesByMethod, idPrefix: "G" });
     const total = methods.flatMap((method) => compact.get(method.id) ?? []);
-    expect(total).toHaveLength(methods.length);
+    expect(total).toHaveLength(methods.length * 2);
     for (const method of methods) {
       const options = compact.get(method.id) ?? [];
-      expect(options).toHaveLength(1);
+      expect(options).toHaveLength(2);
       expect(options.every((item) => item.audit.kind === "model")).toBe(true);
     }
   });
