@@ -407,6 +407,16 @@ export async function POST(req: Request) {
     response.headers.set("Server-Timing", `growth-topic-cache;dur=${Date.now() - requestStartedAt}`);
     return response;
   }
+  // 页面打开后会无感预生成标题。如果操作者紧接着点击“换一批”，不能再并行
+  // 启动第二条模型链路：两路会争抢时限和配额，既更慢，也更容易让严格门禁
+  // 拒绝整批。这里让交互请求短轮询同一个账号；后台批次完成后，下一次轮询
+  // 会在上面的缓存分支中立即消费。若后台失败，失败占位关闭后才走实时兜底。
+  const activeAccountGeneration = runs.find((run) =>
+    run.generation_status === "generating" && generationReservationIsFresh(run)
+  );
+  if (requestMode === "interactive" && action === "regenerate_titles" && activeAccountGeneration) {
+    return pendingGenerationResponse();
+  }
   // 后台滚动补批始终保持小队列。达到目标后直接返回现有缓存，避免烧掉无效
   // token；硬上限用于阻止多个页面同时预取导致库存失控。
   if (

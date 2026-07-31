@@ -61,5 +61,11 @@ export async function POST(req: Request) {
       ...parsed.data,
     },
   });
+  // 用户真正看到/选择标题或继续正文时，才把这个账号标记为近期活跃。
+  // 夜间预生成据此优先补给真实在用账号，避免被很久没打开的测试人设占满库存。
+  await store.saveAccount({
+    ...account,
+    last_used_at: new Date().toISOString(),
+  });
   return NextResponse.json({ ok: true });
 }

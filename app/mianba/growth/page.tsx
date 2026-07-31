@@ -1358,13 +1358,13 @@ export default function GrowthPage() {
     }).catch(() => undefined);
   }
 
-  async function ensureTopicPrefetch(account: GrowthAccount, target = 2) {
+  async function ensureTopicPrefetch(account: GrowthAccount, target = 1) {
     const key = `${businessLine}:${persona}:${account.id}:default`;
     if (topicPrefetchInFlight.current.has(key)) return topicPrefetchInFlight.current.get(key);
     const requestWorkspace = workspaceKey(businessLine, persona, account.id);
     const task = (async () => {
-      // 顺序补货才能让第二批把第一批预生成结果纳入历史去重；并发会让两批
-      // 在同一份旧历史上生成，反而提高相似概率。
+      // 页面内只补到一批，优先让第一份可交付库存尽快就绪。用户消费后会再次
+      // 触发补货；更深的库存由凌晨任务完成，避免页面后台连续占用两次模型时限。
       for (let index = 0; index < target; index += 1) {
         await requestJSON("/api/growth/topics", {
           method: "POST",

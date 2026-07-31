@@ -11,7 +11,7 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
 const DEFAULT_TENANT_ID = "mianbajun";
-const ACTIVE_WINDOW_MS = 7 * 24 * 60 * 60 * 1_000;
+const ACTIVE_WINDOW_MS = 3 * 24 * 60 * 60 * 1_000;
 
 function authorized(req: Request) {
   return Boolean(
@@ -55,15 +55,27 @@ export async function GET(req: Request) {
   // 处理十几个账号，会在 Vercel 结束请求前来不及返回。每个时间片只处理
   // 两个最缺库存的账号，四次夜间任务轮转补齐，质量门禁保持完全一致。
   const limit = Math.min(Math.max(Number(process.env.GROWTH_PREFETCH_ACCOUNT_LIMIT ?? 2), 1), 4);
-  const pending: Array<{ account: (typeof accounts)[number]; queuedCount: number }> = [];
+  const pending: Array<{
+    account: (typeof accounts)[number];
+    queuedCount: number;
+    lastAttemptAt: number;
+  }> = [];
   for (const account of candidates) {
     const runs = await store.listRuns(account.id);
     const queuedCount = queuedTopicRuns(runs, account, "default").length;
     if (queuedCount >= target) continue;
-    pending.push({ account, queuedCount });
+    const lastAttemptAt = runs.reduce((latest, run) => {
+      if (!run.generation_request_id) return latest;
+      const attemptedAt = Date.parse(run.updated_at || run.created_at);
+      return Number.isFinite(attemptedAt) ? Math.max(latest, attemptedAt) : latest;
+    }, 0);
+    pending.push({ account, queuedCount, lastAttemptAt });
   }
   pending.sort((left, right) => (
     left.queuedCount - right.queuedCount
+    // 同样缺库存时，先轮到最久没有尝试过的账号。某个人设偶发质量门禁失败
+    // 不会连续占住全部夜间时间片，其他活跃账号仍能拿到库存。
+    || left.lastAttemptAt - right.lastAttemptAt
     || Date.parse(right.account.last_used_at ?? right.account.updated_at)
       - Date.parse(left.account.last_used_at ?? left.account.updated_at)
   ));
