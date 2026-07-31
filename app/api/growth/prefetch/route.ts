@@ -51,21 +51,30 @@ export async function GET(req: Request) {
     Math.max(Number(process.env.GROWTH_NIGHTLY_PREFETCH_TARGET ?? 4), 1),
     TOPIC_PREFETCH_MAX,
   );
-  const limit = Math.min(Math.max(Number(process.env.GROWTH_PREFETCH_ACCOUNT_LIMIT ?? 12), 1), 50);
-  const pending = [];
+  // 单个标题批次仍可能花费接近实时接口的完整时限。定时任务如果一次串行
+  // 处理十几个账号，会在 Vercel 结束请求前来不及返回。每个时间片只处理
+  // 两个最缺库存的账号，四次夜间任务轮转补齐，质量门禁保持完全一致。
+  const limit = Math.min(Math.max(Number(process.env.GROWTH_PREFETCH_ACCOUNT_LIMIT ?? 2), 1), 4);
+  const pending: Array<{ account: (typeof accounts)[number]; queuedCount: number }> = [];
   for (const account of candidates) {
     const runs = await store.listRuns(account.id);
-    if (queuedTopicRuns(runs, account, "default").length >= target) continue;
-    pending.push(account);
-    if (pending.length >= limit) break;
+    const queuedCount = queuedTopicRuns(runs, account, "default").length;
+    if (queuedCount >= target) continue;
+    pending.push({ account, queuedCount });
   }
+  pending.sort((left, right) => (
+    left.queuedCount - right.queuedCount
+    || Date.parse(right.account.last_used_at ?? right.account.updated_at)
+      - Date.parse(left.account.last_used_at ?? left.account.updated_at)
+  ));
+  const selected = pending.slice(0, limit).map((item) => item.account);
 
   const origin = new URL(req.url).origin;
   const results: Array<{ accountId: string; ok: boolean; status: number }> = [];
   // 只开两个并发，避免同一时段把模型和数据库推到峰值；每次定时任务每个
   // 活跃账号补一批，03:00—05:00 的四次任务共同补足默认4批。
-  for (let index = 0; index < pending.length; index += 2) {
-    const slice = pending.slice(index, index + 2);
+  for (let index = 0; index < selected.length; index += 2) {
+    const slice = selected.slice(index, index + 2);
     const settled = await Promise.all(slice.map(async (account) => {
       const response = await fetch(`${origin}/api/growth/topics`, {
         method: "POST",
