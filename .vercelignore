@@ -1,3 +1,4 @@
 .playwright-cli/
+artifacts/
 output/
 .codex-worktrees/
