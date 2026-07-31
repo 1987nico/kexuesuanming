@@ -54,7 +54,7 @@ export async function GET(req: Request) {
   // 单个标题批次仍可能花费接近实时接口的完整时限。定时任务如果一次串行
   // 处理十几个账号，会在 Vercel 结束请求前来不及返回。每个时间片只处理
   // 两个最缺库存的账号，四次夜间任务轮转补齐，质量门禁保持完全一致。
-  const limit = Math.min(Math.max(Number(process.env.GROWTH_PREFETCH_ACCOUNT_LIMIT ?? 2), 1), 4);
+  const limit = Math.min(Math.max(Number(process.env.GROWTH_PREFETCH_ACCOUNT_LIMIT ?? 3), 1), 4);
   const pending: Array<{
     account: (typeof accounts)[number];
     queuedCount: number;
