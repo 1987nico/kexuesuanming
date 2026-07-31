@@ -2070,6 +2070,12 @@ export function titlePersonaProblems(topic: TopicCandidate, account: GrowthAccou
 
 export function bodyProfileIdentityProblem(body: string, account: GrowthAccount) {
   const identity = resolveProfileIdentity(account);
+  const accountFacts = [
+    account.one_liner,
+    account.core_problem,
+    account.persona_specific?.identity,
+    account.persona_specific?.growth_arc,
+  ].filter(Boolean).join(" ");
   if (!isBusinessCompatibleText(body, account.business_line ?? "executive")) {
     return "正文混入了另一条业务的人群、产品或场景";
   }
@@ -2090,6 +2096,17 @@ export function bodyProfileIdentityProblem(body: string, account: GrowthAccount)
     && /留学生|海外秋招|回国求职|我家孩子|陪娃|求职辅导老师/u.test(body)
   ) {
     return "中高管正文混入了留学生或家长叙事";
+  }
+  if (
+    identity === "executive_self"
+    && /裸辞|已离职|离职后|被裁|待业|离开公司/u.test(accountFacts)
+    && (
+      /(?:今早|今天|刚刚|刚到).{0,18}(?:到公司|在公司|上班|打开(?:工作群|公司电脑)|参加(?:周会|例会))/u.test(body)
+      || /(?:今早|今天|刚刚).{0,18}(?:被移出|被踢出|没出现在).{0,12}(?:核心会议|管理层例会|工作群|项目群)/u.test(body)
+    )
+    && !/(?:裸辞前|离职前|被裁前|还在职时|以前在公司|当时还在公司).{0,80}(?:到公司|在公司|上班|打开(?:工作群|公司电脑)|参加(?:周会|例会)|被移出|被踢出)/u.test(body)
+  ) {
+    return "当前人设已经离职、裸辞或待业，正文却使用了今天仍在原公司上班的场景";
   }
   return undefined;
 }

@@ -247,4 +247,26 @@ describe("标题四层多样性签名", () => {
       studentAccount,
     )).toBeUndefined();
   });
+
+  it("blocks a resigned executive persona from narrating a current-day office scene", () => {
+    const resignedAccount = {
+      business_line: "executive" as const,
+      persona: "buyer" as const,
+      profile_identity: "executive_self" as const,
+      one_liner: "34岁前中层裸辞找方向的真实记录",
+      core_problem: "裸辞后重新判断职业方向",
+      persona_specific: {
+        identity: "34岁裸辞两个月，正在重新找方向",
+      },
+    } as unknown as GrowthAccount;
+
+    expect(bodyProfileIdentityProblem(
+      "今早刚到公司打开电脑，我就发现自己被移出了管理层例会。裸辞到现在已经两个月。",
+      resignedAccount,
+    )).toContain("今天仍在原公司上班");
+    expect(bodyProfileIdentityProblem(
+      "裸辞前还在职时，我有天刚到公司就发现自己被移出了管理层例会。后来离职两个月，我才重新复盘这件事。",
+      resignedAccount,
+    )).toBeUndefined();
+  });
 });
