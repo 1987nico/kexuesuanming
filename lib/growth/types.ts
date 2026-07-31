@@ -727,22 +727,38 @@ export const PERSONA_SPECIFIC_FIELDS: Record<GrowthPersona, PersonaSpecificField
     { key: "what_you_are", label: "你是什么（品类）", placeholder: "用顾客已有的分类词说清你归哪类，一听就懂。例：给中高管做职业决策的顾问，不是测评工具" },
     { key: "how_different", label: "有何不同（定位）", placeholder: "对顾客有意义且基于竞争的差异，测试：听完不会追问『那又如何』。例：别人只给测评结果，我给能落地的决策框架 + 90 天陪跑" },
     { key: "why_believe", label: "何以见得（信任状）", placeholder: "给可信证据，三类任选：有效承诺 / 顾客可自行验证 / 第三方证明。例：7 年组织咨询、20+ 成功案例、可看匿名交付样例" },
-    { key: "main_offer", label: "主营产品/服务", placeholder: "例如：中高端职业咨询、定制化培训" },
-    { key: "price_band", label: "客单价区间", placeholder: "例如：2000-8000 元" },
-    { key: "conversion_goal", label: "转化目标", placeholder: "加微 / 到店 / 下单 / 留资" },
+    { key: "main_offer", label: "当前主推SKU", placeholder: "每篇只主推一个SKU。例如：199元职业方向初步诊断" },
+    { key: "sku_catalog", label: "可销售SKU列表", placeholder: "逐项写产品名、适用对象和价格；生成时系统只选择其中一个" },
+    { key: "sku_target", label: "SKU适用对象", placeholder: "写清适合谁、不适合谁，以及用户正处于什么场景" },
+    { key: "sku_problem", label: "SKU解决的问题", placeholder: "具体到用户正在付出什么代价，不能只写“解决迷茫”" },
+    { key: "sku_delivery", label: "交付内容与过程", placeholder: "例如：测评、岗位地图、一次人工解读、90天验证计划" },
+    { key: "price_band", label: "公开价格", placeholder: "例如：199元；如果不公开，明确写“不公开价格”" },
+    { key: "payment_method", label: "付款方式", placeholder: "例如：一次性付款、分阶段付款、服务后付款；只写真实可执行方式" },
+    { key: "service_promise", label: "服务承诺", placeholder: "例如：先判断是否适配，再决定是否购买；不要承诺确定结果" },
+    { key: "promise_conditions", label: "承诺成立条件", placeholder: "说明对象、周期、配合要求和不包含的结果" },
+    { key: "sku_evidence", label: "SKU证据", placeholder: "公开样例、服务流程、匿名案例或可核验的阶段结果" },
+    { key: "conversion_goal", label: "唯一转化动作", placeholder: "例如：查看主页产品、购买诊断、提交站内咨询；每篇只能选一个" },
   ],
   buyer: [
     { key: "identity", label: "真人身份/现状", placeholder: "例如：34 岁被裁的前互联网中层，正在找方向" },
     { key: "struggle", label: "正在纠结的决策", placeholder: "例如：要不要裸辞、副业该不该做、转不转行" },
     { key: "growth_arc", label: "成长弧线/人设走向", placeholder: "从迷茫求助 → 边试边记录 → 找到方向" },
     { key: "bridge", label: "转化桥（转折帖怎么软出场）", placeholder: "例如：做了个职业测评/找人梳理后想通了，引导私信" },
-    { key: "case_mode", label: "历史案例呈现方式", placeholder: "例如：匿名第一人称复盘、关键节点对照" },
-    { key: "case_material", label: "历史案例素材", placeholder: "例如：可公开的角色、处境、行动与结果，不填写敏感身份" },
+    { key: "case_mode", label: "素材模式", placeholder: "真实亲历 / 授权复合案例 / 内部培训模拟" },
+    { key: "case_material", label: "具体场景素材", placeholder: "写时间、地点、动作、对话、冲突和当时的真实感受；不要只写结论" },
+    { key: "original_attempt", label: "原来试过什么", placeholder: "例如：海投、反复改简历、听熟人建议、自己列方向" },
+    { key: "intervention_action", label: "专业服务做了什么", placeholder: "写老师、顾问或机构具体做的一个关键动作" },
+    { key: "stage_result", label: "阶段变化", placeholder: "例如：岗位收窄、材料对齐、排除一条路、反馈开始能复盘；不承诺上岸" },
   ],
   expert: [
     { key: "expertise", label: "专业领域", placeholder: "例如：组织发展、职业决策" },
     { key: "methodology", label: "代表方法论/成果", placeholder: "例如：六步职业决策漏斗" },
     { key: "monetization", label: "变现方式", placeholder: "咨询 / 课程 / 知识付费 / 训练营" },
+    { key: "comparison_scope", label: "可比较的品类/方案", placeholder: "例如：面试辅导、求职陪跑、实习项目、机构服务、个人专家" },
+    { key: "comparison_brands", label: "可点名比较的品牌", placeholder: "填写允许公开比较的真实品牌；未填写时只做品类比较" },
+    { key: "comparison_criteria", label: "比较标准", placeholder: "例如：适用对象、交付深度、验证方式、时间成本、价格和风险" },
+    { key: "comparison_sources", label: "公开依据", placeholder: "官网、公开产品页、公开采访或可核验体验；不要使用传闻" },
+    { key: "interest_disclosure", label: "利益关系说明", placeholder: "说明自己与被比较品牌或产品的关系；没有则写“无直接利益关系”" },
   ],
 };
 
@@ -938,6 +954,10 @@ export interface ContentDraft {
   legacy_direction?: GrowthDirection;
   legacy_content_type?: ContentType;
   eligible_for_method_learning?: boolean;
+  /** 内容用途由账号人设决定；内部培训模拟不得进入正式发布与方法学习。 */
+  content_use_mode?: "production" | "internal_training";
+  publish_eligible?: boolean;
+  publish_block_reason?: string;
   // 旧字段只用于打开历史数据；新流程不再写入或依赖。
   direction?: GrowthDirection;
   content_type?: ContentType;

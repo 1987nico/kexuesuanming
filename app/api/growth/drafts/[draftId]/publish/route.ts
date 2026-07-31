@@ -19,6 +19,15 @@ export async function POST(req: Request, { params }: { params: { draftId: string
   const store = growthStore();
   const draft = await store.getDraft(params.draftId);
   if (!draft) return NextResponse.json({ error: "draft_not_found" }, { status: 404 });
+  if (draft.content_use_mode === "internal_training" || draft.publish_eligible === false) {
+    return NextResponse.json(
+      {
+        error: "internal_training_publish_blocked",
+        message: draft.publish_block_reason || "内部培训模拟内容仅供训练，不能标记为正式发布。",
+      },
+      { status: 422 },
+    );
+  }
   if (draft.status === "reviewed") {
     return NextResponse.json(
       { error: "published_at_locked", message: "正式24小时复盘已生成，发布时间已锁定。" },

@@ -81,6 +81,8 @@ async function saveReview(req: Request, { params }: { params: { draftId: string 
   const store = growthStore();
   const draft = await store.getDraft(params.draftId);
   if (!draft) return NextResponse.json({ error: "draft_not_found" }, { status: 404 });
+  const account = await store.getAccount(draft.account_id);
+  if (!account) return NextResponse.json({ error: "account_not_found" }, { status: 404 });
   if (draft.status !== "published" && draft.status !== "reviewed") {
     return NextResponse.json({ error: "draft_not_published", message: "请先标记实际发布时间。" }, { status: 409 });
   }
@@ -144,6 +146,7 @@ async function saveReview(req: Request, { params }: { params: { draftId: string 
 
   const generated = await reviewDraft({
     tenantId: DEFAULT_TENANT_ID,
+    account,
     draft,
     metrics: { ...fullMetrics.data, published_at: publishedAt, snapshot_at: new Date().toISOString() },
     existingReview,
@@ -181,18 +184,15 @@ async function saveReview(req: Request, { params }: { params: { draftId: string 
     });
   }
 
-  const account = await store.getAccount(draft.account_id);
-  let weeklyReview = account?.weekly_review ?? account?.stage_review ?? null;
-  if (account) {
-    const currentReviews = await store.listReviewsByAccount(account.id);
-    weeklyReview = buildWeeklyReviewResult({ account, notes, reviews: currentReviews, previous: account.weekly_review_snapshots?.at(-1) });
-    await store.saveAccount({
-      ...account,
-      weekly_review: weeklyReview,
-      stage_review: weeklyReview,
-      updated_at: new Date().toISOString(),
-    });
-  }
+  let weeklyReview = account.weekly_review ?? account.stage_review ?? null;
+  const currentReviews = await store.listReviewsByAccount(account.id);
+  weeklyReview = buildWeeklyReviewResult({ account, notes, reviews: currentReviews, previous: account.weekly_review_snapshots?.at(-1) });
+  await store.saveAccount({
+    ...account,
+    weekly_review: weeklyReview,
+    stage_review: weeklyReview,
+    updated_at: new Date().toISOString(),
+  });
 
   if (usage) {
     await store.saveUsage({

@@ -75,6 +75,7 @@ import {
   profileIdentityContract,
   resolveProfileIdentity,
 } from "./accountIdentity";
+import { contentUsePolicyFor, perspectivePromptContract } from "./perspectiveStrategy";
 import {
   bodyUniquenessProblem,
   type BodyUniquenessReference,
@@ -167,6 +168,7 @@ function accountContext(account: GrowthAccount): AccountContext {
     notDoing: account.not_doing,
     complianceRedline: account.compliance_redline,
     privateDomain: account.private_domain,
+    perspectiveContract: perspectivePromptContract(account),
   };
 }
 
@@ -4222,18 +4224,29 @@ function fallbackIdentityContract(
     persona: account.persona,
     expression_goal: goal[account.persona],
     required_elements: required[account.persona],
-    evidence_basis: account.persona_specific?.identity || account.one_liner || account.trust_source || "当前业务与人设事实",
+    evidence_basis: account.persona_specific?.identity
+      || account.persona_specific?.main_offer
+      || account.persona_specific?.methodology
+      || account.one_liner
+      || account.trust_source
+      || "当前业务与人设事实",
     target_section: "identity_evidence",
     evidence: fallbackIdentityEvidence(account.persona, businessLine),
   };
 }
 
 function fallbackFulfillmentContract(
+  account: GrowthAccount,
   topic: TopicCandidate,
   spec: PromiseDeliverySpec,
 ): DraftFulfillmentContract {
   const promiseType = promiseTypeForTopic(topic, spec);
   const requiredCount = spec.exactSections ?? spec.minimumSections;
+  const personaMinimumContent: Record<GrowthPersona, string[]> = {
+    merchant: ["具体SKU或服务对象", "交付动作与依据", "适用边界和唯一转化动作"],
+    expert: ["统一比较标准", "各方案适用条件", "依据、风险和选择建议"],
+    buyer: ["具体现场或动作", "原有尝试与专业介入", "克制、可验证的阶段变化"],
+  };
   return {
     promise_type: promiseType,
     promised_count: spec.exactSections,
@@ -4244,7 +4257,7 @@ function fallbackFulfillmentContract(
         : `交付标题承诺的第${index + 1}部分`,
       minimum_content: promiseType === "comparison"
         ? ["适用条件", "代价或风险", "验证动作"]
-        : ["具体判断", "解释或证据", "可执行动作"],
+        : personaMinimumContent[account.persona],
     })),
   };
 }
@@ -4254,19 +4267,40 @@ function fallbackConversionContract(
   businessLine: GrowthBusinessLine,
 ): DraftConversionContract {
   const overseas = businessLine === "overseas_student";
-  const role = overseas ? "求职老师或辅导团队" : "职业决策顾问或咨询团队";
-  const attempted = overseas ? "当事人已经反复改材料或扩大投递" : "当事人已经反复搜索信息或推演方向";
-  const intervention = overseas
-    ? "把目标岗位、项目证据和招聘节奏放在一起梳理"
-    : "把候选方向、能力证据和失败成本拆开并安排最小验证";
+  const specific = account.persona_specific ?? {};
+  const defaultRole = overseas ? "求职老师或辅导团队" : "职业决策顾问或咨询团队";
+  const role = account.persona === "merchant"
+    ? specific.main_offer || defaultRole
+    : account.persona === "expert"
+      ? specific.expertise || defaultRole
+      : defaultRole;
+  const attempted = specific.original_attempt
+    || (overseas ? "当事人已经反复改材料或扩大投递" : "当事人已经反复搜索信息或推演方向");
+  const intervention = specific.intervention_action
+    || specific.sku_delivery
+    || specific.comparison_criteria
+    || (overseas
+      ? "把目标岗位、项目证据和招聘节奏放在一起梳理"
+      : "把候选方向、能力证据和失败成本拆开并安排最小验证");
+  const stageResult = specific.stage_result || fallbackStageResult(account.persona, businessLine);
   return {
-    problem_context: overseas ? "岗位、材料和招聘节奏没有对齐" : "候选方向很多，但缺少现实证据和停止条件",
+    problem_context: specific.struggle
+      || specific.sku_problem
+      || (overseas ? "岗位、材料和招聘节奏没有对齐" : "候选方向很多，但缺少现实证据和停止条件"),
     attempted_action: attempted,
     professional_role: role,
     intervention_action: intervention,
-    stage_result: fallbackStageResult(account.persona, businessLine),
-    evidence_basis: account.trust_source || "当前业务方法与交付流程",
-    bridge_paragraph: serviceBridgeSentence(account.persona, businessLine),
+    stage_result: stageResult,
+    evidence_basis: specific.sku_evidence
+      || specific.comparison_sources
+      || account.trust_source
+      || "当前业务方法与交付流程",
+    bridge_paragraph: serviceBridgeSentence(account, businessLine, {
+      role,
+      attempted,
+      intervention,
+      stageResult,
+    }),
   };
 }
 
@@ -4278,7 +4312,7 @@ function fallbackDraftBlueprint(
 ): DraftBlueprintContext {
   const businessLine = account.business_line ?? "executive";
   const identityContract = fallbackIdentityContract(account, businessLine);
-  const fulfillmentContract = fallbackFulfillmentContract(topic, spec);
+  const fulfillmentContract = fallbackFulfillmentContract(account, topic, spec);
   const conversionContract = fallbackConversionContract(account, businessLine);
   return {
     contract_version: "v3_4",
@@ -4652,7 +4686,32 @@ export function normalizeDraftSpecificBlueprint(
   };
 }
 
-function serviceBridgeSentence(persona: GrowthPersona, businessLine: GrowthBusinessLine) {
+function serviceBridgeSentence(
+  account: GrowthAccount,
+  businessLine: GrowthBusinessLine,
+  configured?: {
+    role: string;
+    attempted: string;
+    intervention: string;
+    stageResult: string;
+  },
+) {
+  const persona = account.persona;
+  if (configured) {
+    if (persona === "buyer") {
+      return `我原来${configured.attempted.replace(/^当事人/u, "").replace(/^已经/u, "")}，但问题没有真正理顺。后来${configured.role}没有直接替我选答案，而是${configured.intervention}。阶段变化不是一个确定结果，而是${configured.stageResult.replace(/[。！？!?]+$/u, "")}。`;
+    }
+    if (persona === "expert") {
+      return `面对这个问题，我先按同一组标准拆开比较，而不是直接给排名。具体会${configured.intervention}；这样读者能看清每种方案的适用条件，阶段结果是${configured.stageResult.replace(/[。！？!?]+$/u, "")}。`;
+    }
+    const sku = account.persona_specific?.main_offer || configured.role;
+    const price = account.persona_specific?.price_band;
+    const payment = account.persona_specific?.payment_method;
+    const commercialTerms = [price ? `价格是${price}` : "", payment ? `付款方式是${payment}` : ""]
+      .filter(Boolean)
+      .join("，");
+    return `这项服务对应的是${sku}。实际交付先${configured.intervention}，不是先给一个漂亮结论；阶段结果是${configured.stageResult.replace(/[。！？!?]+$/u, "")}${commercialTerms ? `，${commercialTerms}` : ""}。`;
+  }
   if (businessLine === "overseas_student") {
     if (persona === "buyer") return "我们自己折腾了几轮还是没理顺，后来才找了一位求职老师一起梳理现有材料。她没有先改文案，而是先把岗位和招聘节奏对齐；至少孩子不再拿一份简历乱投，下一步该验证什么也有了顺序。";
     if (persona === "expert") return "那次求职咨询里，我没有先改简历，而是和学生一起梳理目标岗位、项目证据和招聘节奏。直接变化不是立刻拿到 Offer，而是岗位范围收窄了，后面的投递反馈也终于能用来复盘。";
@@ -5022,6 +5081,10 @@ async function generateSingleDraft(input: {
   const title = enforceTitleLimit(input.topic.title);
   const hashtags = normalizeTags(Array.isArray(payload?.hashtags) ? payload.hashtags : businessLine === "overseas_student" ? ["#留学生求职", "#海归求职", "#职业规划"] : ["#中高管", "#职业转型", "#职业决策"]);
   const timestamp = now();
+  const contentUsePolicy = contentUsePolicyFor(input.account);
+  if (contentUsePolicy.requiredMarker && !body.startsWith(contentUsePolicy.requiredMarker)) {
+    body = `${contentUsePolicy.requiredMarker}\n\n${body}`;
+  }
   const raw: ContentDraft = {
     id: id(), tenant_id: input.tenantId ?? input.account.tenant_id, account_id: input.account.id,
     run_id: input.run.id, status: "draft", business_line: GROWTH_BUSINESS_LINE_VALUES[businessLine], method_group: input.topic.method_group,
@@ -5038,7 +5101,11 @@ async function generateSingleDraft(input: {
       final_status: "failed",
       total_duration_ms: Date.now() - generationStartedAt,
     },
-    schema_version: "method_v3_2", method_attribution_status: "confirmed", eligible_for_method_learning: true,
+    schema_version: "method_v3_2", method_attribution_status: "confirmed",
+    eligible_for_method_learning: contentUsePolicy.publishEligible,
+    content_use_mode: contentUsePolicy.mode,
+    publish_eligible: contentUsePolicy.publishEligible,
+    publish_block_reason: contentUsePolicy.blockReason,
     test_variable: input.topic.test_variable, expected_signal: input.topic.expected_signal, title,
     alternative_titles: (Array.isArray(payload?.alternative_titles) ? payload.alternative_titles : [input.topic.title]).slice(0, 3).map(enforceTitleLimit),
     target_user: asText(payload?.target_user) || input.topic.target_user,
@@ -5451,7 +5518,7 @@ export async function generateTagMergeSuggestions(rawTags: Array<{ text: string;
 }
 
 export async function reviewDraft(input: {
-  tenantId?: string; draft: ContentDraft; metrics: GrowthReviewMetrics;
+  tenantId?: string; account: GrowthAccount; draft: ContentDraft; metrics: GrowthReviewMetrics;
   existingReview?: GrowthReview | null; notes?: ContentDraft[]; reviews?: GrowthReview[];
 }): Promise<{ review: GrowthReview; usage?: Record<string, unknown> }> {
   const timestamp = now();
@@ -5467,7 +5534,9 @@ export async function reviewDraft(input: {
     const result = await llmJSON<any>({
       system: GROWTH_SYSTEM_PROMPT,
       user: buildReviewUserPrompt({ title: input.draft.title, methodLabel: input.draft.method_label || "历史未分类",
-        generationMode: input.draft.generation_mode || "default", rawTags: (input.draft.raw_body_tags || []).filter((tag) => tag.active !== false),
+        generationMode: input.draft.generation_mode || "default", persona: input.account.persona,
+        perspectiveContract: perspectivePromptContract(input.account),
+        rawTags: (input.draft.raw_body_tags || []).filter((tag) => tag.active !== false),
         testVariable: input.draft.test_variable, metrics: { metrics, derived, sample, benchmarks, preliminary } }),
       maxTokens: 2000, temperature: 0.35,
     });
@@ -5508,7 +5577,14 @@ export async function stageReview(input: {
   try {
     const result = await llmJSON<Record<string, unknown>>({
       system: GROWTH_SYSTEM_PROMPT,
-      user: buildStageReviewUserPrompt({ targetUser: input.account.target_user, methodAggregate: deterministic.by_method, tagAggregate: deterministic.by_tag, eligibleTotal: deterministic.eligible_total || 0 }),
+      user: buildStageReviewUserPrompt({
+        targetUser: input.account.target_user,
+        persona: input.account.persona,
+        perspectiveContract: perspectivePromptContract(input.account),
+        methodAggregate: deterministic.by_method,
+        tagAggregate: deterministic.by_tag,
+        eligibleTotal: deterministic.eligible_total || 0,
+      }),
       maxTokens: 1200, temperature: 0.35,
     });
     decision = result.data;

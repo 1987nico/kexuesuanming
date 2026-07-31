@@ -629,7 +629,16 @@ export default function GrowthPage() {
     activeWorkspace.current = key;
     const cached = workspaceCache.current.get(key);
     if (cached && workspaceHasScope(cached, "core") && !force) {
-      applyWorkspaceData(cached, workspaceTransients.current.get(key));
+      const cachedAccountId = cached.selectedAccountId ?? cached.account?.id ?? null;
+      const cachedResolvedKey = workspaceKey(nextBusinessLine, nextPersona, cachedAccountId);
+      // 从业务/视角基础缓存恢复时，也必须把活动空间解析到具体账号。
+      // 否则后续标题请求会误判“用户已经切换账号”，后端虽完成生成，
+      // 前端却丢弃结果并一直停留在“正在生成”。
+      activeWorkspace.current = cachedResolvedKey;
+      applyWorkspaceData(
+        cached,
+        workspaceTransients.current.get(cachedResolvedKey) ?? workspaceTransients.current.get(key),
+      );
       setBusy(null);
       return true;
     }
@@ -1530,7 +1539,9 @@ export default function GrowthPage() {
     } finally {
       window.clearInterval(stageTimer);
       topicGenerationInFlight.current = false;
-      if (requestWorkspaceIsActive()) setBusy(null);
+      // 只释放本次操作自己的忙碌状态。即使用户在请求期间切换了空间，
+      // 也不能把“正在生成”永久留在页面上，更不能清掉新空间的其他操作。
+      setBusy((current) => current === busyKey ? null : current);
     }
   }
 
@@ -3645,14 +3656,18 @@ function FinalDraft({
   const bodyWithHashtags = hashtagsText ? `${draft.body}\n\n${hashtagsText}` : draft.body;
   const packageText = `${draft.title}\n\n${bodyWithHashtags}`;
   const feedback = `标题：${draft.title}\n方法：${draft.method_label}\n承诺：${draft.title_promise}\n复盘重点：${draft.review_points.join("、")}`;
-  const publishable = draftReadyForOperator(draft)
-    || (draft.certification_status === undefined && draftPublishLength(draft).withinLimit);
+  const trainingOnly = draft.content_use_mode === "internal_training" || draft.publish_eligible === false;
+  const publishable = !trainingOnly && (
+    draftReadyForOperator(draft)
+    || (draft.certification_status === undefined && draftPublishLength(draft).withinLimit)
+  );
   return (
     <div className="rounded-2xl border border-slate-200 p-5">
       <div className="flex flex-wrap gap-2">
         <Badge>{draft.method_group === "native" ? "原生法" : "对标法"}</Badge>
         <Badge>{draft.method_label}</Badge>
         <Badge>{draft.selected_body_version === "long" ? "长版" : "短版"}</Badge>
+        {trainingOnly && <Badge>仅限内部培训</Badge>}
         {draft.certification_status === undefined && <Badge>升级前已选正文</Badge>}
       </div>
       <div className="mt-5 grid gap-4 lg:grid-cols-[220px_1fr]">
@@ -3668,15 +3683,26 @@ function FinalDraft({
         </div>
       </div>
       <PublishLengthBadge draft={draft} />
+      {trainingOnly && (
+        <div className="mt-5 rounded-2xl border border-amber-300 bg-amber-50 p-4 text-sm leading-6 text-amber-900">
+          <div className="font-semibold">内部培训模拟内容</div>
+          <div>{draft.publish_block_reason || "这篇内容只用于内部训练，不提供对外发布复制入口，也不进入复盘学习。"}</div>
+        </div>
+      )}
       <div className="sticky bottom-3 z-10 mt-5 rounded-2xl border border-[#ead7b5] bg-[#fffaf1]/95 p-4 shadow-lg backdrop-blur sm:static sm:shadow-none">
-        <div className="font-semibold text-slate-900">最终正文已选定，复制到小红书</div>
-        <p className="mt-1 text-xs leading-5 text-slate-600">复制只读取纯净标题、正文和话题；系统内的彩色校验标注不会进入剪贴板。</p>
+        <div className="font-semibold text-slate-900">{trainingOnly ? "最终培训稿已选定" : "最终正文已选定，复制到小红书"}</div>
+        <p className="mt-1 text-xs leading-5 text-slate-600">
+          {trainingOnly
+            ? "培训稿可以在系统内查看和复盘表达，但不能复制为正式发布内容。"
+            : "复制只读取纯净标题、正文和话题；系统内的彩色校验标注不会进入剪贴板。"}
+        </p>
         <div className="mt-3 grid gap-2 sm:grid-cols-2">
           <CopyButton
             text={draft.title}
             label="复制标题"
             copiedLabel="标题已复制"
             primary
+            disabled={!publishable}
           />
           <CopyButton
             text={bodyWithHashtags}
@@ -3689,8 +3715,8 @@ function FinalDraft({
         <details className="mt-3 border-t border-[#ead7b5] pt-3 text-sm text-slate-600">
           <summary className="cursor-pointer py-1 font-medium">更多复制选项</summary>
           <div className="mt-2 flex flex-wrap gap-2">
-            {hashtagsText && <CopyButton text={hashtagsText} label="单独复制话题" copiedLabel="话题已复制" />}
-            <CopyButton text={draft.cover_text} label="复制封面句" copiedLabel="封面句已复制" />
+            {hashtagsText && <CopyButton text={hashtagsText} label="单独复制话题" copiedLabel="话题已复制" disabled={!publishable} />}
+            <CopyButton text={draft.cover_text} label="复制封面句" copiedLabel="封面句已复制" disabled={!publishable} />
             <CopyButton text={packageText} label="复制完整发布包" copiedLabel="发布包已复制" disabled={!publishable} />
           </div>
         </details>
@@ -3699,19 +3725,21 @@ function FinalDraft({
         <span>内部复盘：</span>
         <CopyButton text={feedback} label="复制反馈" copiedLabel="反馈已复制" compact />
       </div>
-      <div className="mt-5 flex flex-col gap-3 rounded-2xl bg-slate-50 p-4 sm:flex-row sm:items-end">
-        <TextInput label="实际发布时间" type="datetime-local" value={publishedAt} onChange={setPublishedAt} />
-        <PrimaryButton
-          disabled={Boolean(busy) || draft.status !== "ready" || !publishable || !publishedAt}
-          onClick={() => {
-            const confirmed = window.confirm(`确认标记为已发布？\n\n标题：${draft.title}\n正文版本：${draft.selected_body_version === "long" ? "长版" : "短版"}\n发布时间：${new Date(publishedAt).toLocaleString("zh-CN")}`);
-            if (confirmed) onPublish(draft, publishedAt);
-          }}
-        >
-          标记实际发布
-        </PrimaryButton>
-      </div>
-      {!publishable && <p className="mt-3 text-xs text-red-600">硬校验未全部通过，系统会阻止标记发布。</p>}
+      {!trainingOnly && (
+        <div className="mt-5 flex flex-col gap-3 rounded-2xl bg-slate-50 p-4 sm:flex-row sm:items-end">
+          <TextInput label="实际发布时间" type="datetime-local" value={publishedAt} onChange={setPublishedAt} />
+          <PrimaryButton
+            disabled={Boolean(busy) || draft.status !== "ready" || !publishable || !publishedAt}
+            onClick={() => {
+              const confirmed = window.confirm(`确认标记为已发布？\n\n标题：${draft.title}\n正文版本：${draft.selected_body_version === "long" ? "长版" : "短版"}\n发布时间：${new Date(publishedAt).toLocaleString("zh-CN")}`);
+              if (confirmed) onPublish(draft, publishedAt);
+            }}
+          >
+            标记实际发布
+          </PrimaryButton>
+        </div>
+      )}
+      {!publishable && !trainingOnly && <p className="mt-3 text-xs text-red-600">硬校验未全部通过，系统会阻止标记发布。</p>}
     </div>
   );
 }

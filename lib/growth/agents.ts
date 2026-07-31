@@ -16,16 +16,22 @@ import type { TitleMethodDefinition } from "./methods";
 import { PERSONA_SPECIFIC_FIELDS } from "./types";
 
 const PERSONA_GUIDE: Record<GrowthPersona, string> = {
-  merchant:
-    "视角：商家。账号是要卖产品/服务的经营者，内容要建立专业信任并把关注者转成客户，突出交付力、案例和转化。",
+  merchant: `视角：商家。账号是直接经营产品/服务的经营者。
+- 可以公开当前SKU、真实价格、付款方式和有条件的服务承诺。
+- 每篇只主推一个SKU，只保留一个购买或咨询动作。
+- 先写用户卡点，再写交付动作、证据和适用边界；不靠自夸和确定结果促销。`,
   buyer: `视角：真实亲历者/素人（目标人群里的一个真人，不是测评号，不是专家）。
 这个账号本身没有清晰的商业定位，看起来就是一个正在经历职场/创业/副业困惑的普通人，在小红书上真实记录自己的处境、求助、成长和转折。真实感是第一竞争力。
 核心原则——话题散乱、身份一致：
 - 话题可以到处跳（求职、跳槽、被裁、裸辞、副业、创业、迷茫、和家里的分歧都能聊），不用垂直。
 - 但必须是「同一个真人」：同一种口吻、同一段正在进行的人生（例如「34 岁被裁的前中层，正在找下一步方向」），有连续的成长弧线，会更新自己的近况和进展。散的是话题，连贯的是这个人。
-写作口吻：第一人称、像真人在记录，可以不完美、口语化，绝不端着、不像品牌号。正文形态不要提前规定，必须跟随标题承诺自然形成；产品只能作为真实经历自然出现，不硬广、不报价，也不得用互动换资料。`,
-  expert:
-    "视角：专家/从业者。账号靠专业判断建立个人品牌，内容要有方法论密度和行业洞察，突出判断力与体系。",
+写作口吻：第一人称、像真人在记录，可以不完美、口语化，绝不端着、不像品牌号。正文形态不要提前规定，必须跟随标题承诺自然形成；产品只能作为真实经历自然出现，不硬广、不报价，也不得用互动换资料。
+经历链必须完整：具体现场/动作/对话→原来试过什么→为什么仍卡住→老师、顾问或机构具体做了什么→出现了什么克制、可验证的阶段变化。
+如果账号明确配置为“内部培训模拟”，允许使用高度写实的复合场景，但必须整体标记“内部培训模拟案例，禁止对外发布”，不得冒充真实客户见证或编造真实品牌Offer。`,
+  expert: `视角：专家/从业者。账号靠专业判断建立个人品牌。
+- 品类、服务方式和品牌比较默认开放，但必须使用统一标准和公开可核验依据。
+- 结论必须说明适用对象和成立条件，不能用传闻、虚构竞品事实或绝对排名。
+- 重点体现判断过程、比较框架和方法应用，最终自然承接有效咨询。`,
 };
 
 export function personaGuide(persona: GrowthPersona) {
@@ -46,6 +52,8 @@ export interface AccountContext {
   notDoing?: string;
   complianceRedline?: string;
   privateDomain?: string;
+  /** 三家视角的结构化内容合同；同时进入选题、正文和复盘提示。 */
+  perspectiveContract?: string;
 }
 
 export interface DraftBlueprintContext {
@@ -79,6 +87,7 @@ export function accountContextBlock(ctx?: AccountContext) {
   if (ctx.avoidExpressions?.length) lines.push(`要避免的表达：${ctx.avoidExpressions.join("、")}`);
   if (ctx.notDoing) lines.push(`账号不做什么（必须遵守，不要碰这些内容/表达）：${ctx.notDoing}`);
   if (ctx.complianceRedline) lines.push(`合规红线（绝对不能触碰）：${ctx.complianceRedline}`);
+  if (ctx.perspectiveContract) lines.push(`当前视角生成合同：\n${ctx.perspectiveContract}`);
   const specific = Object.entries(ctx.personaSpecific ?? {}).filter(([, v]) => v && v.trim());
   if (specific.length) lines.push(`视角专属信息：${specific.map(([k, v]) => `${k}=${v}`).join("；")}`);
   return lines.length ? `账号定位补充：\n${lines.join("\n")}` : "";
@@ -1553,19 +1562,29 @@ export function buildReviewUserPrompt(input: {
   title: string;
   methodLabel: string;
   generationMode: MethodGenerationMode;
+  persona: GrowthPersona;
+  perspectiveContract?: string;
   rawTags?: RawBodyTag[];
   testVariable: string;
   metrics: Record<string, unknown>;
 }) {
+  const metricFocus: Record<GrowthPersona, string> = {
+    merchant: "优先解释产品询价、有效咨询、诊断购买和成交；收藏等指标只用于解释前置过程。",
+    expert: "优先解释收藏、分享、专业问题和有效咨询；判断比较框架是否建立专业信任。",
+    buyer: "优先解释阅读时长、共鸣评论、关注和有效咨询；判断经历是否建立信任。",
+  };
   return `
 请以复盘官 V4 身份，基于发布24小时后的真实数据做单篇复盘。不可见字段写不可见，不得编造。
 单篇复盘只判断标题入口、正文执行和商业承接，不得凭一篇笔记决定方法晋升或暂停。
 
 标题：${input.title}
+当前视角：${input.persona}
 标题方法：${input.methodLabel}
 生成模式：${input.generationMode === "default" ? "默认" : "探索"}
 正文开放标签：${input.rawTags?.map((tag) => tag.text).join("、") || "尚未归纳"}
 验证变量：${input.testVariable}
+视角指标要求：${metricFocus[input.persona]}
+${input.perspectiveContract ? `当前视角生成合同：\n${input.perspectiveContract}` : ""}
 真实数据 JSON：${JSON.stringify(input.metrics)}
 
 输出 JSON：
@@ -1592,6 +1611,8 @@ export function buildReviewUserPrompt(input: {
 
 export function buildStageReviewUserPrompt(input: {
   targetUser: string;
+  persona: GrowthPersona;
+  perspectiveContract?: string;
   methodAggregate: unknown;
   tagAggregate: unknown;
   eligibleTotal: number;
@@ -1600,6 +1621,8 @@ export function buildStageReviewUserPrompt(input: {
 请以总经理 V4 身份，基于多篇笔记的聚合数据做「周复盘 / 方法学习」。不要基于单篇爆款下结论。
 
 目标用户：${input.targetUser}
+当前视角：${input.persona}
+${input.perspectiveContract ? `当前视角生成与复盘合同：\n${input.perspectiveContract}` : ""}
 当前有效样本：${input.eligibleTotal}
 标题方法聚合：${JSON.stringify(input.methodAggregate)}
 正文开放标签聚合：${JSON.stringify(input.tagAggregate)}
