@@ -39,7 +39,7 @@ function option(
 }
 
 describe("原生标题语义审核候选预算", () => {
-  it("六个原生方法首轮每法审核两条候选，总量仍不超过12条", () => {
+  it("六个原生方法按总预算自动降为每法两条，总量不超过12条", () => {
     const methods = methodsForPersona("expert", "default").filter((method) => !method.sourceRequired);
     expect(methods).toHaveLength(6);
     const candidatesByMethod = new Map(methods.map((method) => [method.id, [
@@ -85,12 +85,12 @@ describe("原生标题语义审核候选预算", () => {
       auditedTitleFingerprints: audited,
     });
     const total = methods.flatMap((method) => retry.get(method.id) ?? []);
-    expect(total).toHaveLength(methods.length * 2);
-    expect(total.every((item) => item.audit.kind === "fallback")).toBe(true);
+    expect(total).toHaveLength(methods.length * 3);
+    expect(total.filter((item) => item.audit.kind === "fallback")).toHaveLength(methods.length * 2);
     expect(total.every((item) => !audited.has(normalizeTitleForComparison(item.topic.title)))).toBe(true);
   });
 
-  it("定向补题只有模型候选时，不会为不存在的兜底候选浪费审核名额", () => {
+  it("定向补题只有模型候选时，买家四方法每法可审核三条", () => {
     const methods = methodsForPersona("buyer", "default").filter((method) => !method.sourceRequired);
     const candidatesByMethod = new Map(methods.map((method) => [method.id, [
       option(method.id, `${method.id}补题一`, "model"),
@@ -101,10 +101,10 @@ describe("原生标题语义审核候选预算", () => {
 
     const compact = compactNativeAuditOptions({ methods, candidatesByMethod, idPrefix: "G" });
     const total = methods.flatMap((method) => compact.get(method.id) ?? []);
-    expect(total).toHaveLength(methods.length * 2);
+    expect(total).toHaveLength(methods.length * 3);
     for (const method of methods) {
       const options = compact.get(method.id) ?? [];
-      expect(options).toHaveLength(2);
+      expect(options).toHaveLength(3);
       expect(options.every((item) => item.audit.kind === "model")).toBe(true);
     }
   });

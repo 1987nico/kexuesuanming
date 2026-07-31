@@ -1680,13 +1680,13 @@ const MAX_NATIVE_MODEL_CANDIDATES_PER_METHOD = 5;
  */
 const MAX_NATIVE_FALLBACK_CANDIDATES_PER_METHOD = 6;
 /**
- * 语义终审首轮每个方法看两条候选。
+ * 语义终审在12条总预算内，尽量让每个方法看三条候选。
  *
  * 只看一条时，模型其实已经生成了多个本地合格备选，却可能因首选碰到历史
- * 同题而让整个方法失败。两条仍受全批12条硬上限约束，并且逐条经过同一
- * 语义审核；这是增加审核覆盖，不是放宽质量或重复门禁。
+ * 同题而让整个方法失败。候选仍受全批12条硬上限约束，并且逐条经过同一
+ * 语义审核；方法较多时会自动降为每法两条。这是增加审核覆盖，不是放宽门禁。
  */
-const MAX_NATIVE_AUDIT_CANDIDATES_PER_METHOD = 2;
+const MAX_NATIVE_AUDIT_CANDIDATES_PER_METHOD = 3;
 /**
  * 常规审核只做首审与一次剩余候选审；仍未交付时转向不同角度的定向补题。
  * 这样避免把同一批旧候选反复送审，拖慢一次“换一批标题”。
@@ -1696,7 +1696,7 @@ const MAX_NATIVE_AUDIT_WAVES = 2;
  * 所有已有候选都被安全拒绝后，只为缺失槽位再向标题模型索取一小组新角度。
  * 这是“换一批”的内部补题，不会让已完成的槽位重写，更不会把旧题当兜底。
  */
-const MAX_NATIVE_TARGETED_RECOVERY_CANDIDATES_PER_METHOD = 4;
+const MAX_NATIVE_TARGETED_RECOVERY_CANDIDATES_PER_METHOD = 5;
 /** 定向补题同样可以轮换尚未审核的候选，但严格限制为两轮，避免补题链拉长。 */
 const MAX_NATIVE_TARGETED_RECOVERY_AUDIT_WAVES = 2;
 /**
@@ -3147,6 +3147,7 @@ export async function generateTopicBatch(input: {
           }),
           diversityHistory: historyTopics,
           diversityHistoryBatchLimit: 50,
+          candidateCount: 5,
           context: accountContext(input.account),
         }),
         maxTokens: Math.min(3_600, 900 + targetedRecoveryMethods.length * 450),
