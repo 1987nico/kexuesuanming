@@ -1358,10 +1358,24 @@ export default function GrowthPage() {
     }).catch(() => undefined);
   }
 
-  async function ensureTopicPrefetch(account: GrowthAccount, target = 1) {
+  async function ensureTopicPrefetch(
+    account: GrowthAccount,
+    target = 1,
+    replenishAfterCurrent = false,
+  ): Promise<void> {
     const key = `${businessLine}:${persona}:${account.id}:default`;
-    if (topicPrefetchInFlight.current.has(key)) return topicPrefetchInFlight.current.get(key);
     const requestWorkspace = workspaceKey(businessLine, persona, account.id);
+    const currentTask = topicPrefetchInFlight.current.get(key);
+    if (currentTask) {
+      if (!replenishAfterCurrent) return currentTask;
+      // 用户可能正好消费了页面载入时预生成的那一批。旧任务的 HTTP 响应
+      // 已经回到用户请求，但 finally 还没来得及清除 in-flight 标记；若此时
+      // 直接 return，会让“继续补下一批”被静默吞掉。先等旧任务完整收尾，
+      // 再启动一轮真正的新补货。
+      await currentTask;
+      if (activeWorkspace.current !== requestWorkspace) return;
+      return ensureTopicPrefetch(account, target, false);
+    }
     const task = (async () => {
       // 页面内只补到一批，优先让第一份可交付库存尽快就绪。用户消费后会再次
       // 触发补货；更深的库存由凌晨任务完成，避免页面后台连续占用两次模型时限。
@@ -1659,7 +1673,7 @@ export default function GrowthPage() {
         })}`);
       }
       if (mode === "default" && action === "regenerate_titles") {
-        void ensureTopicPrefetch(account);
+        void ensureTopicPrefetch(account, 1, true);
       }
     } catch (error) {
       if (!requestWorkspaceIsActive()) return;
