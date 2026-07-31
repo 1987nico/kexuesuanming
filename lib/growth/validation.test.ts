@@ -122,6 +122,48 @@ describe("growth publish validation", () => {
     expect(check?.message).not.toMatch(/数字|资料|路线图/u);
   });
 
+  it("正文自己增加数量承诺时也必须逐项写完", () => {
+    const body = [
+      "裸辞前新老板上任第三周，我被移出了核心项目周会群。",
+      "后来我把当时的处境重新摊开，才发现职位变化只是表象，真正要判断的是能力还能不能被外部市场验证。",
+      "职业决策顾问先帮我拆开能力证据和市场机会，最后排除了一个看似体面的方向，也明确了下一步。",
+      "遇到这种事不要急着递辞职信，而是先确认三件事：第一。先用访谈或小样本报价验证能力。",
+      "现在我会先写清当前职位、候选路径和最担心的代价，再决定验证哪一项。",
+    ].join("\n\n");
+    const draft = {
+      ...hardCheckDraft(body),
+      method_id: "human_pain" as const,
+      method_label: "行业人性痛点",
+      title: "新老板上任，我被移出核心会议",
+      title_promise: "讲清职位变化背后需要验证的职业判断",
+    };
+    const check = analyzeDraftValidation(draft, "buyer").checks.find((item) => item.key === "fulfillment");
+
+    expect(check?.status).toBe("needs_edit");
+    expect(check?.details?.find((item) => item.code === "body_count_claim_delivery")?.status).toBe("needs_edit");
+  });
+
+  it("正文自己增加的数量承诺逐项写完后可以通过", () => {
+    const body = [
+      "裸辞前新老板上任第三周，我被移出了核心项目周会群。",
+      "后来我把当时的处境重新摊开，才发现职位变化只是表象，真正要判断的是能力还能不能被外部市场验证。",
+      "职业决策顾问先帮我拆开能力证据和市场机会，最后排除了一个看似体面的方向，也明确了下一步。",
+      "遇到这种事不要急着递辞职信，而是先确认三件事：第一，哪些能力离开平台仍能被客户认可。第二，家庭现金流能承受多久。第三，候选方向能否通过访谈或小样本报价得到反馈。",
+      "现在我会先写清当前职位、候选路径和最担心的代价，再决定验证哪一项。",
+    ].join("\n\n");
+    const draft = {
+      ...hardCheckDraft(body),
+      method_id: "human_pain" as const,
+      method_label: "行业人性痛点",
+      title: "新老板上任，我被移出核心会议",
+      title_promise: "讲清职位变化背后需要验证的职业判断",
+    };
+    const check = analyzeDraftValidation(draft, "buyer").checks.find((item) => item.key === "fulfillment");
+
+    expect(check?.status).toBe("passed");
+    expect(check?.details?.find((item) => item.code === "body_count_claim_delivery")?.status).toBe("passed");
+  });
+
   it.each([
     ["转型前必看，防止选错方向踩坑", "讲清职业转型前验证方向、规避风险的核心方法"],
     ["找对方向，比瞎忙重要太多", "讲清试错两个月后如何理清方向并得到阶段变化"],

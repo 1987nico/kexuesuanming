@@ -353,6 +353,68 @@ function numberedBodyUnits(body: string): IndexedBodyUnit[] {
   return units;
 }
 
+const SMALL_CHINESE_COUNTS: Record<string, number> = {
+  一: 1,
+  二: 2,
+  两: 2,
+  三: 3,
+  四: 4,
+  五: 5,
+  六: 6,
+  七: 7,
+  八: 8,
+  九: 9,
+  十: 10,
+};
+
+function parseSmallCount(value: string) {
+  if (/^\d+$/u.test(value)) return Number(value);
+  return SMALL_CHINESE_COUNTS[value];
+}
+
+interface BodyCountClaim {
+  count: number;
+  index: number;
+}
+
+function selfIntroducedBodyCountClaims(body: string): BodyCountClaim[] {
+  const claims: BodyCountClaim[] = [];
+  const pattern = /(?:先|需要|要|建议|可以|记住|确认|看清|检查|做到|分成|包括|共有|有)(?:这)?([一二两三四五六七八九十]|\d{1,2})(?:件事|点|步|项|个(?:问题|动作|标准|条件|判断))(?=\s*[：:，,。；;])/gu;
+  for (const match of body.matchAll(pattern)) {
+    const count = parseSmallCount(match[1] ?? "");
+    if (count && count > 1 && count <= 10) {
+      claims.push({ count, index: (match.index ?? 0) + match[0].length });
+    }
+  }
+  return claims;
+}
+
+function ordinalSectionsComplete(body: string, claim: BodyCountClaim) {
+  const content = body.slice(claim.index);
+  const ordinals = ["一", "二", "三", "四", "五", "六", "七", "八", "九", "十"].slice(0, claim.count);
+  const markers = ordinals.map((ordinal) => {
+    const match = new RegExp(`第${ordinal}(?:点|项|步|件)?\\s*[、.。：:）)]*`, "u").exec(content);
+    return match ? { index: match.index, length: match[0].length } : undefined;
+  });
+  if (markers.some((marker) => !marker)) return false;
+
+  return markers.every((marker, index) => {
+    if (!marker) return false;
+    const next = markers[index + 1];
+    const section = content.slice(marker.index + marker.length, next?.index ?? content.length);
+    return Array.from(section.replace(/[\s，,。；;：:、.!！？?（）()【】\[\]]/gu, "")).length >= 8;
+  });
+}
+
+function selfIntroducedCountClaimDelivered(
+  body: string,
+  claim: BodyCountClaim,
+  concreteNumberedUnits: IndexedBodyUnit[],
+) {
+  const numberedAfterClaim = concreteNumberedUnits.filter((unit) => unit.start >= claim.index);
+  return numberedAfterClaim.length >= claim.count || ordinalSectionsComplete(body, claim);
+}
+
 type ValidationCheckDetail = NonNullable<ValidationCheck["details"]>[number];
 
 function substantiveParagraphs(body: string) {
@@ -418,6 +480,20 @@ function fulfillmentDetails(draft: ContentDraft): ValidationCheckDetail[] {
       message: passed
         ? "两条路径均已给出具体比较"
         : "拔河式标题需要正好比较两条路径，并分别写清条件、代价或验证动作",
+    });
+  }
+
+  const bodyCountClaims = selfIntroducedBodyCountClaims(draft.body);
+  if (bodyCountClaims.length > 0) {
+    const undeliveredClaim = bodyCountClaims.find(
+      (claim) => !selfIntroducedCountClaimDelivered(draft.body, claim, concreteNumberedUnits),
+    );
+    details.push({
+      code: "body_count_claim_delivery",
+      status: undeliveredClaim ? "needs_edit" : "passed",
+      message: undeliveredClaim
+        ? `正文自己承诺了${undeliveredClaim.count}项内容，但没有逐项写完整`
+        : "正文自己提出的数量承诺均已逐项写完整",
     });
   }
 
