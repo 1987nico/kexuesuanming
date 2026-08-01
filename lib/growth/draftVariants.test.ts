@@ -314,6 +314,38 @@ describe("draft variants", () => {
     }
   });
 
+  it("uses the current topic identity to vary historical deterministic drafts", () => {
+    const account = {
+      id: "topic-salt-account", tenant_id: "tenant", persona: "buyer", business_line: "overseas_student",
+      one_liner: "留子回国求职踩坑实录", target_user: "准备秋招的留学生",
+      core_problem: "面试追问容易卡住", account_value: "记录本人求职过程",
+      trust_source: "本人投递与面试记录", persona_specific: { profile_identity: "overseas_student_self" },
+    } as unknown as GrowthAccount;
+    const baseTopic = {
+      method_group: "native", method_id: "human_pain", method_label: "行业人性痛点",
+      generation_mode: "default", target_user: "留学生", pain: "面试追问", hook: "", follow_reason: "本人经历",
+      test_variable: "面试焦虑", expected_signal: "咨询", repeatable_angle: "面试准备", broad_traffic_risk: 1,
+      priority: "A", title: "面试了几家公司，心里却没个能放心的", title_promise: "讲述面试中的困惑与选择",
+    } as unknown as TopicCandidate;
+    const spec = { format: "paragraphs" as const, minimumSections: 2, rule: "至少用2段完成承诺" };
+    const historicalBodies = [{ body: "一篇无关的历史正文，用来进入历史变体路径。" }];
+    const bodies = ["topic-one", "topic-two"].map((topicId) => {
+      const topic = { ...baseTopic, id: topicId };
+      return composeUniqueDeterministicDraftBody({
+        account,
+        topic,
+        cta: "soft_bridge",
+        spec,
+        blueprint: fallbackDraftBlueprint(account, topic, "soft_bridge", spec),
+        bodyVersion: "long",
+        businessLine: "overseas_student",
+        historicalBodies,
+      }).body;
+    });
+
+    expect(bodies[0]).not.toBe(bodies[1]);
+  });
+
   it("can regenerate the same executive title without repeating its previous body", () => {
     const account = {
       id: "repeat-executive", tenant_id: "tenant", persona: "buyer", business_line: "executive",

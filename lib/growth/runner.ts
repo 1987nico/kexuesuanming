@@ -5685,7 +5685,13 @@ export function composeUniqueDeterministicDraftBody(input: {
     const useProvidedBlueprint = index === 0 && !(input.historicalBodies?.length);
     const varied = useProvidedBlueprint
       ? input.blueprint
-      : fallbackDraftBlueprint(input.account, input.topic, input.cta, input.spec, `history-${index}`);
+      : fallbackDraftBlueprint(
+        input.account,
+        input.topic,
+        input.cta,
+        input.spec,
+        `${input.topic.id}:${input.bodyVersion}:history-${index}`,
+      );
     // 两个版本共享同一核心判断和标题交付合同；只更换叙事表达、身份证据、
     // 专业介入段和执行细节。这样去重不会把内容主题改掉。
     const candidateBlueprint = useProvidedBlueprint ? varied : {
