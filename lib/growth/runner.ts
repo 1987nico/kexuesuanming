@@ -4192,7 +4192,11 @@ function topicTitleParts(title: string) {
 
 function semanticVariationIndex(variationSalt: string, total: number) {
   const historyIndex = variationSalt.match(/history-(\d+)/u)?.[1];
-  if (historyIndex) return Number(historyIndex) % total;
+  if (historyIndex) {
+    const scope = variationSalt.replace(/history-\d+.*$/u, "");
+    const scopeOffset = scope ? stableVariantIndex(scope, "history-scope", total) : 0;
+    return (Number(historyIndex) + scopeOffset) % total;
+  }
   return 0;
 }
 
@@ -4738,7 +4742,7 @@ function topicSpecificOpening(
       : profileIdentity === "overseas_student_parent" ? parentBuyerScenes : selfBuyerScenes;
   // 历史去重回退必须按序切换现场，不能继续依赖哈希碰运气；否则同一标题
   // 连续生成时可能再次抽到相同开头，白白消耗后续模型修复轮次。
-  if (/^history-\d+$/u.test(variationSalt)) {
+  if (/history-\d+/u.test(variationSalt)) {
     return scenes[semanticVariationIndex(variationSalt, scenes.length)];
   }
   return pickStableVariant(seed, "opening", scenes);
@@ -5717,6 +5721,48 @@ export function composeUniqueDeterministicDraftBody(input: {
   return { body: "", blueprint: null, attemptedBodies, variationIndex: -1 };
 }
 
+async function rewriteCertifiedDraftForHistory(input: {
+  draft: ContentDraft;
+  account: GrowthAccount;
+  topic: TopicCandidate;
+  historicalBodies: BodyUniquenessReference[];
+  attempt: number;
+}) {
+  const bodyVersion = input.draft.selected_body_version === "long" ? "long" : "short";
+  const lengthRule = bodyVersion === "long" ? "600—900字" : "180—320字";
+  const recentHistory = input.historicalBodies.slice(0, 4).map((reference, index) =>
+    `历史${index + 1}：${reference.body.slice(0, 900)}`
+  ).join("\n\n");
+  const result = await llmJSON<any>({
+    system: GROWTH_SYSTEM_PROMPT,
+    user: `请为下面已通过内容合同的正文做一次“历史去重改写”，只输出 JSON：{"body":"改写后的完整正文"}。
+
+标题：${input.draft.title}
+标题承诺：${input.draft.title_promise}
+业务：${input.account.business_line}
+视角：${input.account.persona}
+账号人设：${input.account.one_liner}
+版本：${bodyVersion}，正文控制在${lengthRule}
+本轮内部改写序号：${input.attempt}
+
+必须同时满足：
+1. 保持原标题、核心判断、身份、标题兑现和自然转化因果不变，不增加未经证实的成功保证。
+2. 更换开头现场、段落顺序、论证路径和具体动作表达；不能只替换同义词。
+3. 不得复用下列历史正文的开头或连续句子，也不得出现两段完全相同的段落。
+4. 仍须自然、具体、有画面；专业老师或顾问的介入必须包含“卡点—具体动作—阶段变化”。
+5. 不输出标题、话题、解释、标注或 Markdown，只输出正文 JSON。
+
+当前正文：
+${input.draft.body}
+
+需避开的历史正文：
+${recentHistory || "无"}`,
+    maxTokens: bodyVersion === "long" ? 3000 : 1600,
+    temperature: Math.min(0.9, 0.72 + input.attempt * 0.06),
+  });
+  return asText(result.data?.body);
+}
+
 async function generateSingleDraft(input: {
   tenantId?: string; account: GrowthAccount; run: GrowthRun; topic: TopicCandidate;
   bodyVersion: "short" | "long"; excludeBodies?: string[]; learningBrief?: GrowthLearningBrief;
@@ -5981,6 +6027,62 @@ async function generateSingleDraft(input: {
     draft = certifyDraftForOperator(candidate);
     selectedBlueprint = repaired.blueprint;
     finalDuplicate = null;
+  }
+  // 极重度测试账号可能已经覆盖全部确定性叙事。只有这种少数情形才调用
+  // 质量模型重写，并继续使用完全相同的三项合同、字数、身份和历史门禁。
+  // 操作者仍只看到最终通过的正文，不需要自己反复点“重新生成”。
+  for (let rewriteAttempt = 1; finalDuplicate && rewriteAttempt <= 2; rewriteAttempt += 1) {
+    try {
+      const rewrittenBody = await rewriteCertifiedDraftForHistory({
+        draft,
+        account: input.account,
+        topic: input.topic,
+        historicalBodies: input.historicalBodies ?? [],
+        attempt: rewriteAttempt,
+      });
+      if (!rewrittenBody) continue;
+      let candidate = withDraftValidation(attachBlueprintContract(enforceDraftCompliance({
+        ...draft,
+        body: rewrittenBody,
+        certification_status: "repairing",
+        certified_at: undefined,
+        fallback_used: true,
+        repair_history: [...(draft.repair_history ?? []), {
+          field: "fallback",
+          reason_code: `final_history_model_rewrite_${rewriteAttempt}`,
+          action: "质量模型更换叙事现场、段落顺序和论证路径后重新认证",
+          repaired_at: now(),
+        }],
+        word_count: countPublishChars(draft.title, rewrittenBody, draft.hashtags),
+        updated_at: now(),
+      }, input.topic.title), selectedBlueprint), input.account.persona, (draft.validation_report?.attempts ?? 0) + 1);
+      if (candidate.word_count.total > XHS_PUBLISH_CHAR_TARGET) {
+        candidate = await fitDraftWithinPublishTarget(candidate, {
+          account: input.account,
+          persona: input.account.persona,
+          businessLine,
+          topic: input.topic,
+          blueprint: selectedBlueprint,
+          fallbackBlueprint: selectedBlueprint,
+          spec: input.spec,
+        });
+      }
+      if (
+        candidate.validation_report?.status !== "passed"
+        || candidate.word_count.total > XHS_PUBLISH_CHAR_TARGET
+        || candidate.compliance?.status === "blocked"
+        || bodyProfileIdentityProblem(candidate.body, input.account)
+      ) continue;
+      const candidateDuplicate = bodyUniquenessProblem(candidate.body, input.historicalBodies ?? []);
+      if (candidateDuplicate) {
+        finalDuplicate = candidateDuplicate;
+        continue;
+      }
+      draft = certifyDraftForOperator(candidate);
+      finalDuplicate = null;
+    } catch (error) {
+      console.warn(`[growth] final history rewrite ${rewriteAttempt} failed:`, (error as Error).message);
+    }
   }
   if (finalDuplicate) {
     throw pipelineFailure("history_duplicate", finalDuplicate.reason);
