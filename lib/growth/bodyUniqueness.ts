@@ -138,9 +138,19 @@ export function bodyHistoryReferences(input: {
 export function historyExcludingCurrentPair(
   history: BodyUniquenessReference[],
   currentPairBodies: string[],
+  currentPair?: {
+    topicIds?: string[];
+    draftIds?: string[];
+  },
 ) {
   const current = new Set(currentPairBodies.filter(Boolean).map(bodyFingerprint));
-  return history.filter((reference) => !current.has(bodyFingerprint(reference.body)));
+  const topicIds = new Set(currentPair?.topicIds?.filter(Boolean) ?? []);
+  const draftIds = new Set(currentPair?.draftIds?.filter(Boolean) ?? []);
+  return history.filter((reference) => (
+    !current.has(bodyFingerprint(reference.body))
+    && (!reference.topic_id || !topicIds.has(reference.topic_id))
+    && (!reference.draft_id || !draftIds.has(reference.draft_id))
+  ));
 }
 
 export function appendBodyGenerationHistory(

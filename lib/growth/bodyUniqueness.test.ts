@@ -62,6 +62,26 @@ describe("body history uniqueness", () => {
     expect(filtered).toEqual([{ body: olderDraft, topic_id: "older" }]);
   });
 
+  it("removes the current pair by topic even when its saved body format changed", () => {
+    const filtered = historyExcludingCurrentPair([
+      {
+        body: "当前短版正文。#留学生求职",
+        topic_id: "topic-current",
+        draft_id: "draft-current",
+      },
+      {
+        body: "另一篇真正的历史正文。",
+        topic_id: "topic-history",
+        draft_id: "draft-history",
+      },
+    ], ["当前短版正文。"], {
+      topicIds: ["topic-current"],
+      draftIds: ["draft-current"],
+    });
+
+    expect(filtered.map((item) => item.draft_id)).toEqual(["draft-history"]);
+  });
+
   it("records unselected generated bodies inside the run payload", () => {
     const now = new Date().toISOString();
     const run = {

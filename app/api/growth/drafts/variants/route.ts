@@ -131,6 +131,10 @@ export async function POST(req: Request) {
   const historicalBodies = historyExcludingCurrentPair(
     allHistoricalBodies,
     referenceDraft ? [referenceDraft.body] : [],
+    referenceDraft ? {
+      topicIds: [topic.id],
+      draftIds: [referenceDraft.id],
+    } : undefined,
   );
   // 渐进式单版本正文使用的是已经锁定的标题合同，不需要先重新计算周复盘
   // 学习摘要。原先这里会额外读取全部复盘并可能写回账号，既不参与确定性
