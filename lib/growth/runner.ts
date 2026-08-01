@@ -105,6 +105,7 @@ import {
   type NativeTitleNoveltyDecision,
   type NativeTitleNoveltyReference,
 } from "./titleNoveltyAudit";
+import { fastCandidateModelEnabled } from "./performanceCache";
 
 const DEFAULT_TENANT_ID = "mianbajun";
 const now = () => new Date().toISOString();
@@ -2789,6 +2790,7 @@ export async function generateTopicBatch(input: {
           timeoutMs: 28_000,
           jsonRetries: 0,
           allowFallback: true,
+          route: fastCandidateModelEnabled() ? "fast" : "default",
         }),
       })));
       for (const [chunkIndex, chunkResult] of chunkResults.entries()) {
@@ -3155,6 +3157,7 @@ export async function generateTopicBatch(input: {
         timeoutMs: 18_000,
         jsonRetries: 0,
         allowFallback: true,
+        route: fastCandidateModelEnabled() ? "fast" : "default",
       });
       usage = { ...(usage ?? {}), native_targeted_recovery: resultUsage(recoveryResult) };
       const recoveryRows = Array.isArray(recoveryResult.data?.topics) ? recoveryResult.data.topics : [];
@@ -3481,6 +3484,43 @@ export async function generateTopicBatch(input: {
         };
       }
 
+      // 远程语义审核只需要兜住模型动态候选。静态安全池中的标题已经逐条
+      // 通过标题质量、账号身份、业务隔离、全历史近似和批内冲突门禁；若首审
+      // 没有交付某个槽位，直接从这组已验证候选补位，不再为同一批候选连续
+      // 等第二次远程审核。这样不会放松重复标准，却能去掉后几批50—80秒的
+      // 串行复核单点。
+      const fallbackReserveMethods = nativeMethods.filter((method) => !accepted.has(method.id));
+      if (fallbackReserveMethods.length) {
+        const fallbackReserve = new Map<TitleMethodId, NativeTitleCandidateOption[]>();
+        for (const method of fallbackReserveMethods) {
+          const options = (nativeCandidatesByMethod.get(method.id) ?? [])
+            .filter((option) => option.audit.kind === "fallback");
+          if (options.length) fallbackReserve.set(method.id, options);
+        }
+        const certifiedReserve = selectLocallyVerifiedNativeTitleOptions({
+          methods: fallbackReserveMethods,
+          candidatesByMethod: fallbackReserve,
+          alreadyAccepted: [...accepted.values()],
+          historyTitles,
+          historyTopics,
+          account: input.account,
+          businessLine: input.account.business_line ?? "executive",
+          directionLocks: input.directionLocks,
+        });
+        for (const [methodId, topic] of certifiedReserve.accepted) accepted.set(methodId, topic);
+        rejectedTitles.push(...certifiedReserve.rejectedTitles);
+        if (certifiedReserve.accepted.size) {
+          localNativeAuditRecoveryUsed = true;
+          usage = {
+            ...(usage ?? {}),
+            certified_native_reserve: {
+              accepted_count: certifiedReserve.accepted.size,
+              fallback_count: certifiedReserve.fallbackCount,
+            },
+          };
+        }
+      }
+
       // 首轮没有选中的方法继续审核还没看过的候选。此前候选池里确实有
       // 安全备选，但 compactNativeAuditOptions 只取前三个，导致一个模型题
       // 撞到旧历史就把整批原生法一并挡住。
@@ -3667,6 +3707,7 @@ export async function generateTopicBatch(input: {
             timeoutMs: 18_000,
             jsonRetries: 0,
             allowFallback: true,
+            route: fastCandidateModelEnabled() ? "fast" : "default",
           });
           usage = { ...(usage ?? {}), native_targeted_recovery: resultUsage(recoveryResult) };
           const recoveryRows = Array.isArray(recoveryResult.data?.topics) ? recoveryResult.data.topics : [];
@@ -4293,7 +4334,7 @@ function fallbackDeliverySections(
         "第3—4周：做一次低成本试做或小样本验证，用真实反馈决定继续、调整还是停止。",
       ];
     return sections.map((section, index) => index === 0
-      ? `${topic.title.replace(/[。！？!?]+$/u, "")}这件事，我按下面的节点执行。${section}`
+      ? `这份时间安排，我按下面的节点执行。${section}`
       : section);
   }
   const semanticSections = semanticDeliverySections(topic, businessLine, variationSalt);
@@ -4338,9 +4379,9 @@ function fallbackDeliverySections(
     .trim();
   const first = pickStableVariant(seed, "delivery-first", [
     `${promise || "眼前这个选择"}，先别急着继续搜答案。把能在一周内拿到现实反馈的变量圈出来，判断才会往前走。`,
-    `回到“${topic.title}”这个问题，我先区分事实和猜测：已经发生的写左边，还没验证的写右边。`,
+    `回到这个具体问题，我先区分事实和猜测：已经发生的写左边，还没验证的写右边。`,
     `${promise || topic.title}，不能只靠一个漂亮结论。至少要拿一次访谈、试做或真实反馈来校准。`,
-    `我后来处理“${topic.title}”时，第一步不是做决定，而是写下最担心的代价和最小验证动作。`,
+    `我后来处理这个卡点时，第一步不是做决定，而是写下最担心的代价和最小验证动作。`,
   ]);
   const second = pickStableVariant(seed, "delivery-second", overseas ? [
     "学校背景只能说明过去，岗位要求、项目证据和招聘节奏，才决定这一轮该往哪里用力。",
@@ -4614,6 +4655,21 @@ function topicPromiseSubject(topic: TopicCandidate) {
     .trim() || topic.title;
 }
 
+function topicReferenceLabel(title: string, businessLine: GrowthBusinessLine) {
+  if (businessLine === "overseas_student") {
+    if (/面试|追问|答案|自我介绍|背题/u.test(title)) return "被连续追问时卡住的这个问题";
+    if (/简历|项目|材料|经历/u.test(title)) return "这次材料匹配问题";
+    if (/回国|留下|国内|海外|两边/u.test(title)) return "这次两边选择";
+    if (/时间|截止|节奏|秋招/u.test(title)) return "这次秋招安排";
+    return "这次求职卡点";
+  }
+  if (/离职|裸辞|不敢走|辞职/u.test(title)) return "这次离职犹豫";
+  if (/平台|头衔|总监|职位/u.test(title)) return "这次职业定价问题";
+  if (/副业|创业|客户|顾问|第二曲线/u.test(title)) return "这次转型验证";
+  if (/方向|转型|选择|赛道/u.test(title)) return "这次方向选择";
+  return "这个具体卡点";
+}
+
 function topicSpecificOpening(
   account: GrowthAccount,
   topic: TopicCandidate,
@@ -4715,14 +4771,15 @@ export function fallbackDraftBlueprint(
     "一条路值不值得走，不靠想象中的上限，而靠现实反馈和可承受的试错成本。",
     "真正稳妥的决定不是零风险，而是提前写清验证动作、反对证据和停止条件。",
   ]);
-  const contextualBridge = `${conversionContract.bridge_paragraph} 对“${topic.title}”这件事，我因此知道下一步该看哪一种现实证据。`;
+  const topicReference = topicReferenceLabel(topic.title, businessLine);
+  const contextualBridge = `${conversionContract.bridge_paragraph} 经过这一步，我也知道${topicReference}接下来该看哪一种现实证据。`;
   return {
     contract_version: "v3_4",
     promise_type: promiseTypeForTopic(topic, spec),
     opening_intent: topic.title,
     identity_contract: {
       ...identityContract,
-      evidence: `${identityContract.evidence.replace(/[。！？!?]+$/u, "")}。这次我只复盘“${topic.title}”暴露出来的那个卡点。`,
+      evidence: `${identityContract.evidence.replace(/[。！？!?]+$/u, "")}。这次我只复盘其中暴露出来的一个具体卡点。`,
     },
     fulfillment_contract: fulfillmentContract,
     conversion_contract: {
@@ -4745,10 +4802,10 @@ export function fallbackDraftBlueprint(
     service_bridge: contextualBridge,
     stage_result: conversionContract.stage_result,
     closing: semanticClosing(topic, businessLine, variationSalt) || pickStableVariant(seed, "closing", [
-      `${fallbackClosing(cta, businessLine)} 先把“${topic.title}”从结论改成一个待验证的问题。`,
-      `先别急着把“${topic.title}”变成最终答案，今天只完成一个能拿到外部反馈的动作。`,
+      `${fallbackClosing(cta, businessLine)} 先把${topicReference}从结论改成一个待验证的问题。`,
+      `先别急着把${topicReference}变成最终答案，今天只完成一个能拿到外部反馈的动作。`,
       `回到自己的处境，把${promiseSubject}里最没有证据的一项圈出来，下一步先验证它。`,
-      `围绕“${topic.title}”，如果只能推进一点，就记录一个现实反馈；它比再看十个成功故事更接近答案。`,
+      `围绕${topicReference}，如果只能推进一点，就记录一个现实反馈；它比再看十个成功故事更接近答案。`,
     ]),
   };
 }
@@ -5021,6 +5078,10 @@ function blueprintTopicAnchor(blueprint: DraftBlueprintContext) {
   return Array.from(cleaned).slice(0, 34).join("");
 }
 
+function blueprintTopicReference(blueprint: DraftBlueprintContext, businessLine: GrowthBusinessLine) {
+  return topicReferenceLabel(blueprintTopicTitle(blueprint), businessLine);
+}
+
 function blueprintTopicTitle(blueprint: DraftBlueprintContext) {
   const quoted = blueprint.opening.match(/“([^”]{4,40})”/u)?.[1];
   return quoted || blueprintTopicAnchor(blueprint);
@@ -5072,7 +5133,7 @@ export function composeBlueprintBody(
     : {};
   const bodyVersion = options?.bodyVersion ?? "short";
   const businessLine = options?.businessLine ?? "executive";
-  const topicAnchor = blueprintTopicAnchor(blueprint);
+  const topicAnchor = blueprintTopicReference(blueprint, businessLine);
   const evidenceLine = topicEvidenceLine(blueprint);
   const opening = asText(structure.opening) || blueprint.opening;
   // 身份是交付合同的硬字段，由系统直接装配；不允许正文模型省略后再靠关键词猜测。

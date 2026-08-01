@@ -859,7 +859,7 @@ export interface GrowthRun {
     status: "queued" | "consumed" | "expired";
     cache_key: string;
     profile_version: string;
-    generation_version: "topic-prefetch-v1";
+    generation_version: "topic-prefetch-v1" | "topic-prefetch-v2-fast";
     batch_number: number;
     queued_at: string;
     expires_at: string;
@@ -871,7 +871,7 @@ export interface GrowthRun {
     topic_id: string;
     cache_key: string;
     profile_version: string;
-    generation_version: "draft-prewarm-v1" | "draft-prewarm-v2" | "draft-prewarm-v3" | "draft-prewarm-v4" | "draft-prewarm-v5" | "draft-prewarm-v6" | "draft-prewarm-v7";
+    generation_version: "draft-prewarm-v1" | "draft-prewarm-v2" | "draft-prewarm-v3" | "draft-prewarm-v4" | "draft-prewarm-v5" | "draft-prewarm-v6" | "draft-prewarm-v7" | "draft-prewarm-v8";
     status: "ready" | "expired";
     drafts: ContentDraft[];
     generated_at: string;

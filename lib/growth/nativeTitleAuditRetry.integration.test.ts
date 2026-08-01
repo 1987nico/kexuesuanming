@@ -71,7 +71,7 @@ describe("原生标题语义审核二次恢复", () => {
     llmJSONMock.mockReset();
   });
 
-  it("首审全部拒绝后，二审会优先审核安全候选并完成整批交付", async () => {
+  it("首审全部拒绝后，直接用严格安全候选完成整批交付", async () => {
     const auditBatches: Array<Array<{ candidate_id: string; method_id: string; title: string }>> = [];
     llmJSONMock.mockImplementation(async (input: { user: string }) => {
       if (!input.user.includes("语义新颖度终审")) return modelResponse(generatedTopics());
@@ -95,20 +95,18 @@ describe("原生标题语义审核二次恢复", () => {
       methodIds: ["human_pain", "tug_of_war"],
     });
 
-    expect(auditBatches).toHaveLength(2);
-    expect(result.nativeTitleAudit?.status).toBe("passed");
+    expect(auditBatches).toHaveLength(1);
+    expect(result.nativeTitleAudit?.status).toBe("fallback_recovery");
     expect(result.topics.map((topic) => topic.method_id)).toEqual(["human_pain", "tug_of_war"]);
     const firstAuditTitles = new Set(auditBatches[0].map((candidate) => candidate.title));
-    const secondAuditTitles = new Set(auditBatches[1].map((candidate) => candidate.title));
     for (const topic of result.topics) {
       expect(firstAuditTitles.has(topic.title)).toBe(false);
-      expect(secondAuditTitles.has(topic.title)).toBe(true);
     }
     const modelTitles = new Set(generatedTopics().topics.flatMap((topic) => [
       topic.title,
       ...topic.alternative_titles,
     ]));
-    expect(auditBatches[1].every((candidate) => !modelTitles.has(candidate.title))).toBe(true);
+    expect(result.topics.every((topic) => !modelTitles.has(topic.title))).toBe(true);
   });
 
   it("语义审核传输超时时，用严格本地门禁交付动态候选而不整批失败", async () => {
@@ -174,14 +172,14 @@ describe("原生标题语义审核二次恢复", () => {
       allowSourcePause: true,
     });
 
-    expect(auditCalls).toBe(2);
+    expect(auditCalls).toBe(1);
     expect(result.topics.map((topic) => topic.method_id)).toEqual(["human_pain", "tug_of_war"]);
     expect(result.nativeTitleAudit?.status).toBe("fallback_recovery");
     expect(result.methodDeliveries.find((delivery) => delivery.method_id === "human_pain")?.status).toBe("ready");
     expect(result.methodDeliveries.find((delivery) => delivery.method_id === "tug_of_war")?.status).toBe("ready");
   });
 
-  it("首审拒绝后，二审完整返回每个方法即可完成安全交付", async () => {
+  it("首审拒绝后，不再等待二审即可完成安全交付", async () => {
     let auditCalls = 0;
     llmJSONMock.mockImplementation(async (input: { user: string }) => {
       if (!input.user.includes("语义新颖度终审")) return modelResponse(generatedTopics());
@@ -219,8 +217,8 @@ describe("原生标题语义审核二次恢复", () => {
       methodIds: ["human_pain", "tug_of_war"],
     });
 
-    expect(auditCalls).toBe(2);
-    expect(result.nativeTitleAudit?.status).toBe("passed");
+    expect(auditCalls).toBe(1);
+    expect(result.nativeTitleAudit?.status).toBe("fallback_recovery");
     expect(result.topics).toHaveLength(2);
   });
 
@@ -259,8 +257,7 @@ describe("原生标题语义审核二次恢复", () => {
       methodIds: ["human_pain", "tug_of_war"],
     });
 
-    expect(auditBatches).toHaveLength(2);
-    expect(auditBatches[1].some((candidate) => candidate.title === "绩效不错，我却越来越想走")).toBe(false);
+    expect(auditBatches).toHaveLength(1);
     expect(result.topics.some((topic) => topic.title === "绩效不错，我却越来越想走")).toBe(true);
     expect(result.nativeTitleAudit?.status).toBe("fallback_recovery");
     expect(result.topics).toHaveLength(2);
@@ -391,7 +388,7 @@ describe("原生标题语义审核二次恢复", () => {
     expect(result.topics[0].title_promise).not.toBe(firstPromise);
   });
 
-  it("已有候选全被拒绝时，只为缺失槽位定向补题并交付新标题", async () => {
+  it("已有候选全被拒绝时，优先使用严格安全库存而不触发第三轮补题", async () => {
     let generationCalls = 0;
     let auditCalls = 0;
     const recoveredPain = "年终奖到账，我却更怕留错";
@@ -428,10 +425,12 @@ describe("原生标题语义审核二次恢复", () => {
       methodIds: ["human_pain", "tug_of_war"],
     });
 
-    expect(generationCalls).toBe(3);
-    expect(auditCalls).toBe(3);
-    expect(result.topics.map((topic) => topic.title)).toEqual([recoveredPain, recoveredChoice]);
-    expect(result.nativeTitleAudit?.status).toBe("passed");
+    expect(generationCalls).toBe(2);
+    expect(auditCalls).toBe(1);
+    expect(result.topics).toHaveLength(2);
+    expect(result.topics.map((topic) => topic.title)).not.toContain(recoveredPain);
+    expect(result.topics.map((topic) => topic.title)).not.toContain(recoveredChoice);
+    expect(result.nativeTitleAudit?.status).toBe("fallback_recovery");
   });
 
   it("语义审核传输异常后，直接用严格本地门禁恢复而不再请求操作者", async () => {

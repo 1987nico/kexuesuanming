@@ -6,20 +6,20 @@ import type {
   TopicCandidate,
 } from "./types";
 
-// 缓存结构没有变化，沿用v1以保留上线前已经通过质量门禁的可用库存。
-export const TOPIC_PREFETCH_GENERATION_VERSION = "topic-prefetch-v1" as const;
+// 快速标题路由与更深库存启用后升级版本，避免把旧的浅库存误认为已经补齐。
+export const TOPIC_PREFETCH_GENERATION_VERSION = "topic-prefetch-v2-fast" as const;
 // v2 的蓝图会把当前标题独有的场景与承诺写进身份、判断和转化合同。
 // 旧缓存仍可读取历史数据，但不能继续作为新渐进正文的可交付缓存。
 // Bump whenever the certified draft contract or deterministic composer changes.
 // Old cached bodies may still be structurally valid while carrying the wrong
 // account identity or an obsolete topic template, so they must not survive a
 // quality-contract release.
-export const DRAFT_PREWARM_GENERATION_VERSION = "draft-prewarm-v7" as const;
-/** 活跃账号尽量始终保有 6 批可直接消费的标题。 */
-export const TOPIC_PREFETCH_TARGET = 6;
-/** 低于 3 批时进入高优先级补货，避免用户连续换批后重新等待。 */
-export const TOPIC_PREFETCH_LOW_WATERMARK = 3;
-export const TOPIC_PREFETCH_MAX = 8;
+export const DRAFT_PREWARM_GENERATION_VERSION = "draft-prewarm-v8" as const;
+/** 活跃账号尽量始终保有 8 批可直接消费的标题。 */
+export const TOPIC_PREFETCH_TARGET = 8;
+/** 低于 4 批时进入高优先级补货，避免用户连续换批后重新等待。 */
+export const TOPIC_PREFETCH_LOW_WATERMARK = 4;
+export const TOPIC_PREFETCH_MAX = 12;
 /**
  * 一批后台库存至少要真正换出 3 个标题，才有资格被用户一键消费。
  * 否则“秒开”只是把上一批原样端回来，速度变快却破坏了换题承诺。
@@ -85,7 +85,7 @@ export function bodyPrewarmEnabled() {
 }
 
 export function fastCandidateModelEnabled() {
-  return process.env.GROWTH_FAST_MODEL_CANDIDATES_ENABLED === "true";
+  return process.env.GROWTH_FAST_MODEL_CANDIDATES_ENABLED !== "false";
 }
 
 export function topicCacheKey(account: GrowthAccount, mode: MethodGenerationMode) {

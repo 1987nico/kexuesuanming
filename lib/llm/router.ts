@@ -32,6 +32,11 @@ export interface LLMRequest {
    * 一个完整备用模型调用。
    */
   allowFallback?: boolean;
+  /**
+   * 轻量结构化任务使用低延迟路由。标题候选与语义复核不需要正文模型的
+   * 长上下文能力；分流后既保留相同业务规则，也不会被正文队列拖慢。
+   */
+  route?: "default" | "fast";
 }
 
 export interface LLMResponse {
@@ -52,6 +57,8 @@ const PRIMARY_PROVIDER = (process.env.LLM_PRIMARY_PROVIDER || "anthropic") as Pr
 const PRIMARY_MODEL = process.env.LLM_PRIMARY_MODEL || "claude-sonnet-4-5-20250929";
 const FALLBACK_PROVIDER = (process.env.LLM_FALLBACK_PROVIDER || "deepseek") as Provider;
 const FALLBACK_MODEL = process.env.LLM_FALLBACK_MODEL || "deepseek-chat";
+const FAST_PROVIDER = (process.env.LLM_FAST_PROVIDER || "openai") as Provider;
+const FAST_MODEL = process.env.LLM_FAST_MODEL || "gpt-4o-mini";
 
 async function callAnthropic(req: LLMRequest, model: string): Promise<LLMResponse> {
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -130,16 +137,20 @@ function hasKey(provider: Provider): boolean {
 }
 
 export async function llmComplete(req: LLMRequest): Promise<LLMResponse> {
-  const primaryOK = hasKey(PRIMARY_PROVIDER);
+  const requestedProvider = req.route === "fast" ? FAST_PROVIDER : PRIMARY_PROVIDER;
+  const requestedModel = req.route === "fast" ? FAST_MODEL : PRIMARY_MODEL;
+  const primaryOK = hasKey(requestedProvider);
   // 生产环境可能把主、备都配置成同一个供应商和同一个模型。
   // 这种情况下超时后再次调用同一路由只会把等待时间翻倍，不是真正的故障转移。
-  const fallbackIsDistinct = FALLBACK_PROVIDER !== PRIMARY_PROVIDER || FALLBACK_MODEL !== PRIMARY_MODEL;
+  const fallbackProvider = req.route === "fast" ? PRIMARY_PROVIDER : FALLBACK_PROVIDER;
+  const fallbackModel = req.route === "fast" ? PRIMARY_MODEL : FALLBACK_MODEL;
+  const fallbackIsDistinct = fallbackProvider !== requestedProvider || fallbackModel !== requestedModel;
   const fallbackOK = req.allowFallback !== false
-    && hasKey(FALLBACK_PROVIDER)
+    && hasKey(fallbackProvider)
     && fallbackIsDistinct;
   if (!primaryOK && !fallbackOK) {
     if (req.allowFallback === false) {
-      throw new Error(`主模型 ${PRIMARY_PROVIDER}/${PRIMARY_MODEL} 不可用，且本次调用不允许使用备用模型`);
+      throw new Error(`主模型 ${requestedProvider}/${requestedModel} 不可用，且本次调用不允许使用备用模型`);
     }
     throw new Error(
       "未配置任何 AI 模型 API key。请在 .env 中设置以下任一变量：ARK_API_KEY（豆包/火山方舟）、DEEPSEEK_API_KEY、ANTHROPIC_API_KEY 或 OPENAI_API_KEY"
@@ -148,14 +159,14 @@ export async function llmComplete(req: LLMRequest): Promise<LLMResponse> {
   // 主路径
   if (primaryOK) {
     try {
-      return await callProvider(req, PRIMARY_PROVIDER, PRIMARY_MODEL);
+      return await callProvider(req, requestedProvider, requestedModel);
     } catch (e) {
       console.warn("[LLMRouter] primary failed:", (e as Error)?.message);
       if (!fallbackOK) throw e;
     }
   }
   // 兜底
-  return callProvider(req, FALLBACK_PROVIDER, FALLBACK_MODEL);
+  return callProvider(req, fallbackProvider, fallbackModel);
 }
 
 /**

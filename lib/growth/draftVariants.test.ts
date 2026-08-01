@@ -62,6 +62,8 @@ const spec = {
 };
 
 describe("draft variants", () => {
+  const exactOccurrences = (text: string, needle: string) => text.split(needle).length - 1;
+
   it("repairs the production human-pain incident before the final delivery gate", () => {
     const normalized = normalizeDraftSpecificBlueprint({
       opening: "我最近越想越乱。",
@@ -244,6 +246,8 @@ describe("draft variants", () => {
     expect(longBody).toMatch(/为什么|贡献/u);
     expect(longBody).toMatch(/失败|反思/u);
     expect(longBody.length).toBeGreaterThan(shortBody.length + 100);
+    expect(exactOccurrences(shortBody, topic.title)).toBeLessThanOrEqual(1);
+    expect(exactOccurrences(longBody, topic.title)).toBeLessThanOrEqual(1);
     expect(countPublishChars(topic.title, longBody, ["#留学生求职"]).total).toBeLessThanOrEqual(1000);
   });
 

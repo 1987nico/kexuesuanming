@@ -6,6 +6,7 @@ import type {
   TitleMethodId,
 } from "./types";
 import { titlesAreMethodAwareSemanticDuplicates } from "./titleQuality";
+import { fastCandidateModelEnabled } from "./performanceCache";
 
 /**
  * 标题的规则去重能识别已知模式，却无法可靠识别“同一件事换了整句话”的情况。
@@ -319,6 +320,7 @@ export async function auditNativeTitleBatchNovelty(
       timeoutMs: 15_000,
       jsonRetries: 0,
       allowFallback: true,
+      route: fastCandidateModelEnabled() ? "fast" : "default",
     });
   const result = await requestAudit(candidates);
   const decisions = normalizeNativeTitleNoveltyDecisions(result.data, candidates, references);
