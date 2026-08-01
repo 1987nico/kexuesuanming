@@ -6076,11 +6076,16 @@ async function generateSingleDraft(input: {
   // 操作者仍只看到最终通过的正文，不需要自己反复点“重新生成”。
   for (let rewriteAttempt = 1; finalDuplicate && rewriteAttempt <= 2; rewriteAttempt += 1) {
     try {
+      const blockingReference = finalDuplicate.reference;
+      const rewriteHistory = [
+        blockingReference,
+        ...(input.historicalBodies ?? []).filter((reference) => reference !== blockingReference),
+      ];
       const rawRewrittenBody = await rewriteCertifiedDraftForHistory({
         draft,
         account: input.account,
         topic: input.topic,
-        historicalBodies: input.historicalBodies ?? [],
+        historicalBodies: rewriteHistory,
         attempt: rewriteAttempt,
       });
       if (!rawRewrittenBody) continue;
