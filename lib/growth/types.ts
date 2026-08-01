@@ -884,7 +884,7 @@ export interface GrowthRun {
     generation_ms?: number;
     save_ms?: number;
     /** 仅用于定位标题批次失败阶段，不展示模型内部内容。 */
-    failure_phase?: "source" | "native_generation" | "native_audit" | "unknown";
+    failure_phase?: "source" | "native_generation" | "native_audit" | "cache_consumption_novelty" | "unknown";
     failed_method_ids?: TitleMethodId[];
     native_title_audit?: {
       status: "passed" | "fallback_recovery" | "timeout" | "incomplete" | "unavailable" | "not_needed";

@@ -6,6 +6,7 @@ import {
   buildTopicDiversitySignature,
   generateTopicBatch,
   normalizeTitleHistoryFingerprint,
+  topicBatchDuplicateProblems,
 } from "@/lib/growth/runner";
 import { growthStore } from "@/lib/growth/store";
 import type {
@@ -381,8 +382,62 @@ export async function POST(req: Request) {
     && rollingTopicCacheEnabled()
     && freshQueuedRuns.length > 0
   ) {
+    // 预生成发生在用户操作之前。即使后台补货请求按顺序运行，跨函数实例、
+    // 页面重开或补货任务重叠仍可能让两批库存基于同一份旧历史生成。消费前
+    // 必须再用“用户此刻真正看过的标题”做一次零模型硬校验，避免把只换一个
+    // 近义词的缓存标题连续展示给用户。失败库存仅标记过期，原始记录仍保留。
+    const visibleHistoryTitles = Array.from(new Set([
+      ...runs
+        .filter((run) => run.prefetch?.status !== "queued" && run.prefetch?.status !== "expired")
+        .flatMap((run) => run.topic_pool.map((topic) => topic.title)),
+      ...notes.map((draft) => draft.title),
+    ].filter(Boolean)));
+    let queuedForConsumption: GrowthRun | undefined;
+    const skippedQueuedRunIds = new Set<string>();
+    for (const queuedRun of freshQueuedRuns) {
+      const duplicateProblems = topicBatchDuplicateProblems(
+        queuedRun.topic_pool,
+        visibleHistoryTitles,
+        [],
+        account.business_line ?? "executive",
+      );
+      if (!duplicateProblems.length) {
+        queuedForConsumption = queuedRun;
+        break;
+      }
+      const expiredAt = now();
+      skippedQueuedRunIds.add(queuedRun.id);
+      const failedMethodIds = [...new Set(duplicateProblems.flatMap((problem) => {
+        const methodId = problem.split(":", 1)[0] as TitleMethodId;
+        return methodId in TITLE_METHOD_BY_ID ? [methodId] : [];
+      }))];
+      await store.saveRun({
+        ...queuedRun,
+        generation_status: "failed",
+        uniqueness_status: "failed",
+        prefetch: queuedRun.prefetch ? {
+          ...queuedRun.prefetch,
+          status: "expired",
+          expires_at: expiredAt,
+        } : queuedRun.prefetch,
+        generation_diagnostics: {
+          ...(queuedRun.generation_diagnostics ?? {}),
+          total_ms: queuedRun.generation_diagnostics?.total_ms ?? 0,
+          failure_phase: "cache_consumption_novelty",
+          failed_method_ids: failedMethodIds,
+        },
+        updated_at: expiredAt,
+      });
+      console.warn("[growth] skipped stale prefetched title batch at consumption", {
+        run_id: queuedRun.id,
+        duplicate_problems: duplicateProblems.slice(0, 6),
+      });
+    }
+    if (!queuedForConsumption) {
+      return pendingGenerationResponse();
+    }
     const timestamp = now();
-    const consumed = markTopicRunConsumed(freshQueuedRuns[0], timestamp, parsed.data.requestId);
+    const consumed = markTopicRunConsumed(queuedForConsumption, timestamp, parsed.data.requestId);
     await store.saveRun(consumed);
     await store.saveUsage({
       tenant_id: DEFAULT_TENANT_ID,
@@ -396,7 +451,9 @@ export async function POST(req: Request) {
         generationMode,
         runId: consumed.id,
         cache_hit: true,
-        queue_remaining: freshQueuedRuns.length - 1,
+        queue_remaining: freshQueuedRuns.filter((run) => (
+          run.id !== consumed.id && !skippedQueuedRunIds.has(run.id)
+        )).length,
         duration_ms: Date.now() - requestStartedAt,
       },
     });

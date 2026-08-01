@@ -75,6 +75,13 @@ describe("标题完整历史语义去重", () => {
     )).toBe(true);
   });
 
+  it("把只交换近义结尾词序的标题识别为同一个", () => {
+    expect(titlesAreNearDuplicate(
+      "笔试通过快，但面试岗位未必合适",
+      "笔试通过快，但面试岗位未必适合",
+    )).toBe(true);
+  });
+
   it("数字变化不能伪装成新标题", () => {
     expect(normalizeTitleHistoryFingerprint("高管离职前查这5项"))
       .toBe(normalizeTitleHistoryFingerprint("高管离职前查这3项"));
