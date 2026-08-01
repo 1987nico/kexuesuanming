@@ -6,10 +6,14 @@ import type {
   TopicCandidate,
 } from "./types";
 
+// 缓存结构没有变化，沿用v1以保留上线前已经通过质量门禁的可用库存。
 export const TOPIC_PREFETCH_GENERATION_VERSION = "topic-prefetch-v1" as const;
 export const DRAFT_PREWARM_GENERATION_VERSION = "draft-prewarm-v1" as const;
-export const TOPIC_PREFETCH_TARGET = 2;
-export const TOPIC_PREFETCH_MAX = 6;
+/** 活跃账号尽量始终保有 6 批可直接消费的标题。 */
+export const TOPIC_PREFETCH_TARGET = 6;
+/** 低于 3 批时进入高优先级补货，避免用户连续换批后重新等待。 */
+export const TOPIC_PREFETCH_LOW_WATERMARK = 3;
+export const TOPIC_PREFETCH_MAX = 8;
 /**
  * 一批后台库存至少要真正换出 3 个标题，才有资格被用户一键消费。
  * 否则“秒开”只是把上一批原样端回来，速度变快却破坏了换题承诺。

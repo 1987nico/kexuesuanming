@@ -63,7 +63,10 @@ import {
   manualTitleLength,
   manualTitleValidationError,
 } from "@/lib/growth/titleEditing";
-import { visibleTopicRuns } from "@/lib/growth/performanceCache";
+import {
+  TOPIC_PREFETCH_TARGET,
+  visibleTopicRuns,
+} from "@/lib/growth/performanceCache";
 
 interface BootstrapData {
   loadedScopes: WorkspaceScope[];
@@ -772,7 +775,7 @@ export default function GrowthPage() {
   useEffect(() => {
     const account = data?.account;
     if (!account || !runs.default || (visibleStep !== "2" && visibleStep !== "3")) return;
-    void ensureTopicPrefetch(account);
+    void ensureTopicPrefetch(account, TOPIC_PREFETCH_TARGET);
   // runs.default.id is intentional: a consumed batch should trigger replenishment once.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data?.account?.id, runs.default?.id, visibleStep]);
@@ -786,6 +789,20 @@ export default function GrowthPage() {
       runId: run.id,
       generationMode: run.generation_mode ?? "default",
     });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data?.account?.id, runs.default?.id, visibleStep]);
+
+  useEffect(() => {
+    const account = data?.account;
+    const run = runs.default;
+    const firstTopic = run?.topic_pool[0];
+    if (!account || !run || !firstTopic || visibleStep !== "3") return;
+    // 标题出现后，先为首个推荐槽位预热正文。延迟一小段时间，把页面读取和
+    // 标题交互放在第一优先级；用户直接选择推荐标题时通常可以命中预热结果。
+    const timer = window.setTimeout(() => {
+      void prewarmBodies(account, run, firstTopic).catch(() => undefined);
+    }, 1_200);
+    return () => window.clearTimeout(timer);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data?.account?.id, runs.default?.id, visibleStep]);
   const defaultMethods = useMemo(
@@ -1360,7 +1377,7 @@ export default function GrowthPage() {
 
   async function ensureTopicPrefetch(
     account: GrowthAccount,
-    target = 1,
+    target = TOPIC_PREFETCH_TARGET,
     replenishAfterCurrent = false,
   ): Promise<void> {
     const key = `${businessLine}:${persona}:${account.id}:default`;
@@ -1377,8 +1394,8 @@ export default function GrowthPage() {
       return ensureTopicPrefetch(account, target, false);
     }
     const task = (async () => {
-      // 页面内只补到一批，优先让第一份可交付库存尽快就绪。用户消费后会再次
-      // 触发补货；更深的库存由凌晨任务完成，避免页面后台连续占用两次模型时限。
+      // 请求会在服务端先检查库存，已经达到目标时立即返回 cacheHit；未达到时
+      // 后台逐批补齐。用户操作不等待本循环，但连续换批时能持续命中库存。
       for (let index = 0; index < target; index += 1) {
         // 严格去重账号偶尔会整批未换出新标题。后台最多自动再试两轮，只有
         // 真正换出至少3个标题的批次才会进入可消费库存；失败不会显示给用户。
@@ -1400,9 +1417,9 @@ export default function GrowthPage() {
               requestId: crypto.randomUUID(),
             }),
           });
-          if (result.cacheHit || (result.prefetchStatus === "queued" && (result.generatedCount ?? 0) >= 3)) {
-            break;
-          }
+          // cacheHit 表示服务端库存已经达到目标，无需再发剩余探测请求。
+          if (result.cacheHit) return;
+          if (result.prefetchStatus === "queued" && (result.generatedCount ?? 0) >= 3) break;
         }
         if (activeWorkspace.current !== requestWorkspace) return;
       }
@@ -1684,7 +1701,7 @@ export default function GrowthPage() {
         })}`);
       }
       if (mode === "default" && action === "regenerate_titles") {
-        void ensureTopicPrefetch(account, 1, true);
+        void ensureTopicPrefetch(account, TOPIC_PREFETCH_TARGET, true);
       }
     } catch (error) {
       if (!requestWorkspaceIsActive()) return;
@@ -2739,6 +2756,9 @@ export default function GrowthPage() {
                         if (parent) restoreTopicBatch(mode, parent);
                       }}
                       onSelectTopic={selectTopic}
+                      onPreviewTopic={(run, topic) => {
+                        if (data.account) void prewarmBodies(data.account, run, topic).catch(() => undefined);
+                      }}
                       onTitleChange={changeTopicTitle}
                       onSaveTitle={saveTopicTitle}
                       onSyncPromise={syncTopicPromise}
@@ -3198,6 +3218,7 @@ function MethodArea({
   onRegenerateTitle,
   onUndoTitle,
   onSelectTopic,
+  onPreviewTopic,
   onTitleChange,
   onSaveTitle,
   onSyncPromise,
@@ -3228,6 +3249,7 @@ function MethodArea({
   onRegenerateTitle: (mode: MethodGenerationMode, methodId: TitleMethodId, topicId: string) => void;
   onUndoTitle: (mode: MethodGenerationMode, run: GrowthRun) => void;
   onSelectTopic: (run: GrowthRun, topic: TopicCandidate) => Promise<void>;
+  onPreviewTopic: (run: GrowthRun, topic: TopicCandidate) => void;
   onTitleChange: (topic: TopicCandidate, title: string, composing?: boolean) => void;
   onSaveTitle: (run: GrowthRun, topic: TopicCandidate, title: string) => void;
   onSyncPromise: (run: GrowthRun, topic: TopicCandidate) => void;
@@ -3273,6 +3295,7 @@ function MethodArea({
             editedTitle={topicTitle(defaultRun, method.id, titleEdits)}
             savingTitle={savingTitleId === defaultRun?.topic_pool.find((item) => item.method_id === method.id)?.id}
             onSelectTopic={onSelectTopic}
+            onPreviewTopic={onPreviewTopic}
             onTitleChange={onTitleChange}
             onSaveTitle={onSaveTitle}
             onSyncPromise={onSyncPromise}
@@ -3313,6 +3336,7 @@ function MethodArea({
                   editedTitle={topicTitle(exploreRun, method.id, titleEdits)}
                   savingTitle={savingTitleId === exploreRun?.topic_pool.find((item) => item.method_id === method.id)?.id}
                   onSelectTopic={onSelectTopic}
+                  onPreviewTopic={onPreviewTopic}
                   onTitleChange={onTitleChange}
                   onSaveTitle={onSaveTitle}
                   onSyncPromise={onSyncPromise}
@@ -3347,6 +3371,7 @@ function MethodSlot({
   editedTitle,
   savingTitle,
   onSelectTopic,
+  onPreviewTopic,
   onTitleChange,
   onSaveTitle,
   onSyncPromise,
@@ -3371,6 +3396,7 @@ function MethodSlot({
   editedTitle?: string;
   savingTitle: boolean;
   onSelectTopic: (run: GrowthRun, topic: TopicCandidate) => Promise<void>;
+  onPreviewTopic: (run: GrowthRun, topic: TopicCandidate) => void;
   onTitleChange: (topic: TopicCandidate, title: string, composing?: boolean) => void;
   onSaveTitle: (run: GrowthRun, topic: TopicCandidate, title: string) => void;
   onSyncPromise: (run: GrowthRun, topic: TopicCandidate) => void;
@@ -3516,7 +3542,12 @@ function MethodSlot({
                 {currentTitleError || "最多20字；中文输入完成后再校验，不会自动删字。"}
               </span>
             </label>
-            <details className="mt-2 rounded-xl bg-slate-50 px-3 py-2 text-sm leading-6 text-slate-600">
+            <details
+              className="mt-2 rounded-xl bg-slate-50 px-3 py-2 text-sm leading-6 text-slate-600"
+              onToggle={(event) => {
+                if ((event.currentTarget as HTMLDetailsElement).open) onPreviewTopic(run, topic);
+              }}
+            >
               <summary className="cursor-pointer font-medium">查看正文承诺</summary>
               <p className="mt-2">{topic.title_promise}</p>
             </details>

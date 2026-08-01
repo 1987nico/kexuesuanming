@@ -5212,28 +5212,47 @@ export async function generateDraftVariants(input: {
   let longCandidates: Awaited<ReturnType<typeof generateSingleDraft>>[] = [];
 
   if (parallelRaceEnabled) {
+    const hedgeDelayMs = Math.min(
+      Math.max(Number(process.env.GROWTH_DRAFT_HEDGE_DELAY_MS ?? 18_000), 5_000),
+      45_000,
+    );
+    const hedgedGenerate = async (bodyVersion: "short" | "long") => {
+      const primary = generateSingleDraft({
+        ...shared,
+        bodyVersion,
+        historicalBodies: input.historicalBodies,
+        candidateIndex: 1,
+      });
+      // 主请求在正常速度下只消耗一次模型调用；只有超过阈值才启动备用请求。
+      // Promise.any 在首个“通过完整质量门禁”的版本返回后立即继续，不再等待
+      // 较慢候选拖住整页。这既保留了质量门禁，也消除了原先4请求全部等待的尾部延迟。
+      let hedgeStarted = false;
+      let hedgeTimer: ReturnType<typeof setTimeout> | undefined;
+      const hedged = new Promise<void>((resolve) => {
+        hedgeTimer = setTimeout(() => {
+          hedgeStarted = true;
+          resolve();
+        }, hedgeDelayMs);
+      }).then(() => generateSingleDraft({
+        ...shared,
+        bodyVersion,
+        historicalBodies: input.historicalBodies,
+        candidateIndex: 2,
+      }));
+      try {
+        return await Promise.any([primary, hedged]);
+      } finally {
+        // 主请求已经按时通过时，取消尚未启动的备用调用，避免为了提速而白白
+        // 消耗模型额度；只有真正慢于阈值时才烧额外token换速度。
+        if (!hedgeStarted && hedgeTimer) clearTimeout(hedgeTimer);
+      }
+    };
     const attempts = await Promise.allSettled([
-      ...([1, 2] as const).map((candidateIndex) => generateSingleDraft({
-        ...shared,
-        bodyVersion: "short" as const,
-        historicalBodies: input.historicalBodies,
-        candidateIndex,
-      })),
-      ...([1, 2] as const).map((candidateIndex) => generateSingleDraft({
-        ...shared,
-        bodyVersion: "long" as const,
-        historicalBodies: input.historicalBodies,
-        candidateIndex,
-      })),
+      hedgedGenerate("short"),
+      hedgedGenerate("long"),
     ]);
-    shortCandidates = attempts.slice(0, 2)
-      .filter((result): result is PromiseFulfilledResult<Awaited<ReturnType<typeof generateSingleDraft>>> =>
-        result.status === "fulfilled")
-      .map((result) => result.value);
-    longCandidates = attempts.slice(2)
-      .filter((result): result is PromiseFulfilledResult<Awaited<ReturnType<typeof generateSingleDraft>>> =>
-        result.status === "fulfilled")
-      .map((result) => result.value);
+    shortCandidates = attempts[0].status === "fulfilled" ? [attempts[0].value] : [];
+    longCandidates = attempts[1].status === "fulfilled" ? [attempts[1].value] : [];
 
     // 某一侧竞速全部失败时只补这一侧，不让已经通过认证的版本重新生成。
     if (!shortCandidates.length) {
