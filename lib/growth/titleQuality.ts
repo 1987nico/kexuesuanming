@@ -644,8 +644,13 @@ export function nativeTitleSemanticTopicKeys(methodId: string, value: string) {
   );
   add(
     "scene:multi_city_no_satisfactory_choice",
-    /(?:(?:数|多|几|两|三|四|五|六|七|八|九|十)(?:个|座)?城(?:市)?|多个城市|好多城市)/u.test(title)
+    /(?:(?:数|多|几|两|三|四|五|六|七|八|九|十)(?:个|座)?城(?:市)?|多个城市|好多城市|不同城市)/u.test(title)
       && /(?:没有|没).{0,8}(?:满意|心动|想去|想留|合适|适合)/u.test(title),
+  );
+  add(
+    "pain:applications_without_interview_response",
+    /(?:投简历|投了|投递|海投|申请).{0,8}(?:岗位|职位|工作|简历)?/u.test(title)
+      && /(?:(?:没|没有|未).{0,8}(?:面试|面邀|面试通知|回应|回音)|(?:面试|面邀|面试通知).{0,5}(?:没|没有|未))/u.test(title),
   );
   add(
     "scene:board_praise_then_exit",
@@ -689,6 +694,17 @@ export function nativeTitleSemanticTopicKeys(methodId: string, value: string) {
     "contrarian:more_applications_not_more_opportunities",
     /(?:海投|投递量|投递.{0,2}多|多投)/u.test(title)
       && /(?:(?:未必|不代表|不等于).{0,7}(?:机会|回音|回应)|(?:没|没有).{0,5}(?:机会|回音|回应))/u.test(title),
+  );
+  add(
+    "contrarian:prestigious_school_not_good_job",
+    /(?:名校|高学历|学历光环|学校光环)/u.test(title)
+      && /(?:(?:不等于|未必|不代表|不一定).{0,8}(?:好工作|好岗位|好机会|发展|适合)|(?:代价|成本).{0,4}(?:大|高))/u.test(title),
+  );
+  add(
+    "contrarian:big_company_reputation_not_personal_fit",
+    /(?:大公司|大厂|名企|头部公司)/u.test(title)
+      && /(?:名气|光环|看起来好|都说好|别人说好|很多人说.{0,3}好|发展|压力)/u.test(title)
+      && /(?:但|却|未必|不一定|真的|反而)/u.test(title),
   );
   add(
     "nostalgia:parent_club_to_job_evidence",
@@ -806,6 +822,11 @@ export function nativeTitleSemanticTopicKeys(methodId: string, value: string) {
     "decision:offer_direct_manager",
     /(?:offer|录用|机会)/iu.test(title)
       && /(?:直属经理|直接上级|汇报对象)/u.test(title),
+  );
+  add(
+    "decision:high_pay_vs_stability_or_benefits",
+    /(?:高薪|更高薪|薪水高|高工资|工资高)/u.test(title)
+      && /(?:福利|稳定|工作环境|安全感|保障)/u.test(title),
   );
   add(
     "decision:specialist_vs_general_management",

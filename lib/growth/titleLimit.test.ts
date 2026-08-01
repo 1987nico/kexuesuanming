@@ -106,6 +106,46 @@ describe("标题完整历史语义去重", () => {
     } as never], ["投递量多，未必能获得更多机会"])).not.toHaveLength(0);
   });
 
+  it("把不同城市但没有满意选择的写法识别为同一母题", () => {
+    expect(topicBatchDuplicateProblems([{
+      method_id: "human_pain",
+      method_group: "native",
+      title: "申请了不同城市，却没一座让我心动",
+    } as never], ["投了五座城，没一个让我心动"])).not.toHaveLength(0);
+  });
+
+  it("把不同投递数量但都没有面试的写法识别为同一母题", () => {
+    expect(topicBatchDuplicateProblems([{
+      method_id: "human_pain",
+      method_group: "native",
+      title: "投了十个岗位，结果连面试通知都没",
+    } as never], ["投了简历却没得到面试通知，心里真难受"])).not.toHaveLength(0);
+  });
+
+  it("把名校不等于好工作的改写识别为同一母题", () => {
+    expect(topicBatchDuplicateProblems([{
+      method_id: "contrarian",
+      method_group: "native",
+      title: "名校毕业不等于好工作，背后的代价是什么？",
+    } as never], ["名校出身不等于好工作，代价却大"])).not.toHaveLength(0);
+  });
+
+  it("把大公司未必更适合的改写识别为同一母题", () => {
+    expect(topicBatchDuplicateProblems([{
+      method_id: "contrarian",
+      method_group: "native",
+      title: "很多人说大公司好，但我却觉得压力更大",
+    } as never], ["大公司名气好，但真能给我带来发展吗？"])).not.toHaveLength(0);
+  });
+
+  it("把高薪与福利稳定的取舍改写识别为同一母题", () => {
+    expect(topicBatchDuplicateProblems([{
+      method_id: "tug_of_war",
+      method_group: "native",
+      title: "更高薪水的岗位，还是更稳定的工作环境？",
+    } as never], ["高薪水却没有福利，值得吗？"])).not.toHaveLength(0);
+  });
+
   it("数字变化不能伪装成新标题", () => {
     expect(normalizeTitleHistoryFingerprint("高管离职前查这5项"))
       .toBe(normalizeTitleHistoryFingerprint("高管离职前查这3项"));

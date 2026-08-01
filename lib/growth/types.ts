@@ -859,7 +859,7 @@ export interface GrowthRun {
     status: "queued" | "consumed" | "expired";
     cache_key: string;
     profile_version: string;
-    generation_version: "topic-prefetch-v1" | "topic-prefetch-v2-fast" | "topic-prefetch-v3-consumption-audit";
+    generation_version: "topic-prefetch-v1" | "topic-prefetch-v2-fast" | "topic-prefetch-v3-consumption-audit" | "topic-prefetch-v4-human-novelty-audit";
     batch_number: number;
     queued_at: string;
     expires_at: string;
