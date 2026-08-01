@@ -5721,6 +5721,49 @@ export function composeUniqueDeterministicDraftBody(input: {
   return { body: "", blueprint: null, attemptedBodies, variationIndex: -1 };
 }
 
+export function repairDraftRepeatedOpening(input: {
+  body: string;
+  account: GrowthAccount;
+  topic: TopicCandidate;
+  historicalBodies: BodyUniquenessReference[];
+}) {
+  const paragraphs = input.body.split(/\n{2,}/u).map((item) => item.trim()).filter(Boolean);
+  if (paragraphs.length < 2) return input.body;
+  const title = input.topic.title.replace(/[。！？!?]+$/u, "");
+  const buyer = input.account.persona === "buyer";
+  const expert = input.account.persona === "expert";
+  const openings = buyer ? [
+    `这次我没有急着给“${title}”下结论，而是把最近发生的事实、自己做过的动作和收到的反馈重新排了一遍。`,
+    `重新翻完这段时间的记录，我才发现“${title}”背后真正卡住我的，并不是最先想到的那个原因。`,
+    `我把最近几次反馈并排写下来后，“${title}”终于从一句焦虑，变成了一个可以拆开处理的问题。`,
+    `这两天我刻意停下继续搜答案，先把“${title}”对应的现场、动作和结果逐项核了一遍。`,
+    `以前想到“${title}”我只会更着急，这次我先回到自己的记录，看看到底在哪一步开始失去判断。`,
+    `我原以为“${title}”只是选择太多，直到把每次尝试和反馈连起来，才看见真正反复出现的卡点。`,
+    `这轮复盘我只盯着“${title}”这一件事，把感受先放到一边，重新核对已经发生的细节。`,
+    `最近我又遇到“${title}”，但这次没有马上做决定，而是先把能验证的事实全部摆到桌面上。`,
+    `把这段经历从头写到尾以后，我对“${title}”第一次有了比焦虑更具体的判断。`,
+    `我给自己留了半个小时，只复盘“${title}”：哪一步是事实，哪一步只是我当时的猜测。`,
+    `这次让我停下来的不是又一个建议，而是“${title}”在几次真实反馈里反复出现。`,
+    `我没有再问别人该怎么选，而是从“${title}”开始，把自己能拿出来的证据一项项补齐。`,
+  ] : expert ? [
+    `最近复盘一段真实咨询记录时，“${title}”再次出现，我先把结论按住，重新核对当事人已经做过的尝试。`,
+    `面对“${title}”，我这次先不讲方法，而是把影响判断的事实、假设和待验证项分开。`,
+    `我把几段相似咨询放在一起看，才发现“${title}”表面相同，真正的决策变量却并不一样。`,
+    `重新拆解“${title}”这个问题时，我先看现实约束，再看能力证据，最后才讨论选择。`,
+  ] : [
+    `最近复盘一次服务过程时，客户最初写下的问题就是“${title}”，我们先停下方案，重新核对真实需求。`,
+    `这次服务从“${title}”开始，但团队第一步不是推产品，而是确认问题、边界和可验证结果。`,
+    `看到“${title}”这句话时，我们先把承诺放到一边，重新核对客户已经做过什么、真正卡在哪里。`,
+    `围绕“${title}”，我们先完成了一轮事实确认，再决定哪些动作值得进入正式交付。`,
+  ];
+  const tail = paragraphs.slice(1).join("\n\n");
+  for (const opening of openings) {
+    const candidate = `${opening}\n\n${tail}`;
+    if (!bodyUniquenessProblem(candidate, input.historicalBodies)) return candidate;
+  }
+  return input.body;
+}
+
 async function rewriteCertifiedDraftForHistory(input: {
   draft: ContentDraft;
   account: GrowthAccount;
@@ -6033,14 +6076,20 @@ async function generateSingleDraft(input: {
   // 操作者仍只看到最终通过的正文，不需要自己反复点“重新生成”。
   for (let rewriteAttempt = 1; finalDuplicate && rewriteAttempt <= 2; rewriteAttempt += 1) {
     try {
-      const rewrittenBody = await rewriteCertifiedDraftForHistory({
+      const rawRewrittenBody = await rewriteCertifiedDraftForHistory({
         draft,
         account: input.account,
         topic: input.topic,
         historicalBodies: input.historicalBodies ?? [],
         attempt: rewriteAttempt,
       });
-      if (!rewrittenBody) continue;
+      if (!rawRewrittenBody) continue;
+      const rewrittenBody = repairDraftRepeatedOpening({
+        body: rawRewrittenBody,
+        account: input.account,
+        topic: input.topic,
+        historicalBodies: input.historicalBodies ?? [],
+      });
       let candidate = withDraftValidation(attachBlueprintContract(enforceDraftCompliance({
         ...draft,
         body: rewrittenBody,

@@ -12,6 +12,7 @@ import {
   draftVariantOrderIsValid,
   fallbackDraftBlueprint,
   normalizeDraftSpecificBlueprint,
+  repairDraftRepeatedOpening,
 } from "./runner";
 import { countPublishChars } from "./validation";
 
@@ -374,6 +375,26 @@ describe("draft variants", () => {
 
     expect(repaired.variationIndex).toBeGreaterThanOrEqual(8);
     expect(bodyUniquenessProblem(repaired.body, [{ body: initial.body }])).toBeNull();
+  });
+
+  it("repairs a repeated opening without changing the remaining delivery", () => {
+    const account = {
+      id: "opening-account", tenant_id: "tenant", persona: "buyer", business_line: "overseas_student",
+      one_liner: "留学生本人求职记录",
+    } as unknown as GrowthAccount;
+    const topic = {
+      id: "opening-topic", title: "面试了几家公司，心里却没个能放心的",
+    } as unknown as TopicCandidate;
+    const repeatedOpening = "刚结束第三场线上面试，关掉摄像头的瞬间我就知道，又卡在连续追问上了。";
+    const tail = "我把每次追问和自己的回答并排记录。\n\n最后只保留一个下一步动作。";
+    const body = `${repeatedOpening}\n\n${tail}`;
+    const repaired = repairDraftRepeatedOpening({
+      body, account, topic, historicalBodies: [{ body: `${repeatedOpening}\n\n另一段旧正文。` }],
+    });
+
+    expect(repaired).not.toBe(body);
+    expect(repaired).toContain(tail);
+    expect(bodyUniquenessProblem(repaired, [{ body: `${repeatedOpening}\n\n另一段旧正文。` }])).toBeNull();
   });
 
   it("can regenerate the same executive title without repeating its previous body", () => {
