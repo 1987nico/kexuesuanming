@@ -5216,7 +5216,20 @@ export async function generateDraftVariants(input: {
   referenceDraft?: ContentDraft;
 }) {
   const cta = ctaType(input.account.persona);
-  const planned = await generateDraftBlueprint({ account: input.account, topic: input.topic, cta });
+  // 单版本请求来自“短版先呈现、长版后台补齐”链路。此时先使用系统内
+  // 已具备完整三项合同的确定性蓝图，避免为了再次描述同一份结构而多等
+  // 一次模型调用。短版仍须通过后续全部认证；长版则再用一次模型展开。
+  // 只有旧版一次生成双版本的兼容入口，才先单独调用模型规划蓝图。
+  const localSpec = promiseDeliverySpec(input.topic);
+  const localFallback = fallbackDraftBlueprint(input.account, input.topic, cta, localSpec);
+  const planned = input.bodyVersion
+    ? {
+      blueprint: localFallback,
+      fallback: localFallback,
+      spec: localSpec,
+      usage: undefined,
+    }
+    : await generateDraftBlueprint({ account: input.account, topic: input.topic, cta });
   const referenceContract = input.referenceDraft?.delivery_contract;
   const sharedBlueprint = input.referenceDraft ? {
     ...planned.blueprint,
