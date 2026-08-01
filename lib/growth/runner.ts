@@ -4875,8 +4875,17 @@ function longVersionContext(businessLine: GrowthBusinessLine, seed = "default") 
   const semantic = semanticLongContext(seed, businessLine);
   if (semantic) {
     const opening = seed.split("::").slice(1).join("::").trim();
-    const sceneAnchor = Array.from(opening.replace(/[。！？!?]+$/u, "")).slice(0, 22).join("");
-    return sceneAnchor ? `回到“${sceneAnchor}”那个现场，${semantic}` : semantic;
+    const transition = pickStableVariant(opening, "semantic-context-transition", [
+      "回到当时那个具体现场，我才发现，",
+      "把那次卡顿重新拆开后，我改了准备方式。",
+      "后来再看那段记录，真正需要改变的是方法。",
+      "从那次真实反馈往回看，问题终于变得具体。",
+      "我没有再找一套新答案，而是重新整理已有事实。",
+      "为了验证这个判断，我把后续动作也留了记录。",
+      "下一轮练习开始前，我先给原来的做法按了暂停。",
+      "等情绪过去以后，我只保留能被复盘的动作。",
+    ]);
+    return `${transition}${semantic}`;
   }
   return pickStableVariant(seed, "long-context", businessLine === "overseas_student" ? [
     "真正执行时，岗位、材料和截止时间要放在同一张表里看。只看投了多少份没有意义，还要记下用了哪个版本、卡在哪一轮，以及下一次只改哪个变量。",
@@ -4970,10 +4979,17 @@ function blueprintTopicTitle(blueprint: DraftBlueprintContext) {
 
 function topicEvidenceLine(blueprint: DraftBlueprintContext) {
   const title = blueprintTopicTitle(blueprint);
-  const sceneAnchor = Array.from(blueprint.opening.replace(/[。！？!?]+$/u, "")).slice(0, 18).join("");
-  const contextualize = (evidence: string) => sceneAnchor
-    ? `复盘“${sceneAnchor}”这次卡点时，${evidence}`
-    : evidence;
+  const evidenceLead = pickStableVariant(blueprint.opening, "semantic-evidence-transition", [
+    "为了确认不是自己的错觉，",
+    "我给这次变化留了一份记录：",
+    "下一轮复盘时，我只看一个证据：",
+    "真正让我确认问题所在的，是后面这条记录：",
+    "我没有用感觉判断效果，而是做了一个对照：",
+    "为了让下一次还能复用，",
+    "这次我特意保留了可核对的反馈：",
+    "判断有没有进步时，",
+  ]);
+  const contextualize = (evidence: string) => `${evidenceLead}${evidence}`;
   if (/面试|追问|答案|自我介绍|背题/u.test(title)) return contextualize("我把一次模拟面试录下来，只标出三类断点：事实想不起来、个人贡献说不清、结果数字没有依据；下一轮只补这些断点。");
   if (/简历|项目|材料|经历/u.test(title)) return contextualize("我把每一版简历对应的岗位和回音单独记录，用下一批真实反馈判断该改匹配还是改表达。");
   if (/验证.{0,5}客户|客户.{0,5}验证|离职前.{0,8}客户/u.test(title)) return contextualize("我把这次客户验证拆成四项：客户从哪里来、为什么付费、交付花了多久、哪些反馈能指导下一次；收入只是其中一项。");

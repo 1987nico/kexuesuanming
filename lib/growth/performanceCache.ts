@@ -14,7 +14,7 @@ export const TOPIC_PREFETCH_GENERATION_VERSION = "topic-prefetch-v1" as const;
 // Old cached bodies may still be structurally valid while carrying the wrong
 // account identity or an obsolete topic template, so they must not survive a
 // quality-contract release.
-export const DRAFT_PREWARM_GENERATION_VERSION = "draft-prewarm-v5" as const;
+export const DRAFT_PREWARM_GENERATION_VERSION = "draft-prewarm-v6" as const;
 /** 活跃账号尽量始终保有 6 批可直接消费的标题。 */
 export const TOPIC_PREFETCH_TARGET = 6;
 /** 低于 3 批时进入高优先级补货，避免用户连续换批后重新等待。 */
