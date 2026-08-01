@@ -5024,7 +5024,30 @@ async function generateSingleDraft(input: {
   let lastProblem = "模型未返回完整正文结构";
   let lastFailureCode: DraftPipelineFailureCode = "model_unavailable";
 
-  for (let attempt = 1; attempt <= 3; attempt += 1) {
+  // 短版的共享蓝图已经包含身份、标题兑现、转化因果和完整交付段落。
+  // 正常路径直接用这份已校准蓝图组装并进入同一套认证门禁，省掉一次
+  // 只为改写结构而发起的模型调用；只有身份或历史去重未通过时，才回退
+  // 到下方模型生成与定点修复，不以提速为由降低质量标准。
+  if (input.bodyVersion === "short") {
+    const blueprintBody = composeBlueprintBody(input.blueprint, input.spec, undefined, {
+      bodyVersion: input.bodyVersion,
+      businessLine,
+    });
+    const identityProblem = bodyProfileIdentityProblem(blueprintBody, input.account);
+    const duplicate = bodyUniquenessProblem(blueprintBody, input.historicalBodies ?? []);
+    if (!identityProblem && !duplicate) {
+      body = blueprintBody;
+      selectedBlueprint = input.blueprint;
+      selectedNormalizationActions = ["compose_short_from_certified_blueprint"];
+      payload = {};
+    } else {
+      lastProblem = identityProblem || duplicate?.reason || lastProblem;
+      lastFailureCode = identityProblem ? "identity_repair_failed" : "history_duplicate";
+      attemptedBodies.unshift({ body: blueprintBody, topic_id: input.topic.id });
+    }
+  }
+
+  for (let attempt = 1; !body && attempt <= 3; attempt += 1) {
     try {
       const promptExclusions = [
         ...(input.excludeBodies ?? []),
