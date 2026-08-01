@@ -6110,6 +6110,18 @@ async function generateSingleDraft(input: {
         word_count: countPublishChars(draft.title, rewrittenBody, draft.hashtags),
         updated_at: now(),
       }, input.topic.title), selectedBlueprint), input.account.persona, (draft.validation_report?.attempts ?? 0) + 1);
+      if (candidate.validation_report?.status !== "passed") {
+        candidate = await passDraftValidationGate(candidate, {
+          account: input.account,
+          persona: input.account.persona,
+          businessLine,
+          topic: input.topic,
+          cta,
+          blueprint: selectedBlueprint,
+          fallbackBlueprint: selectedBlueprint,
+          spec: input.spec,
+        });
+      }
       if (candidate.word_count.total > XHS_PUBLISH_CHAR_TARGET) {
         candidate = await fitDraftWithinPublishTarget(candidate, {
           account: input.account,
@@ -6120,6 +6132,22 @@ async function generateSingleDraft(input: {
           fallbackBlueprint: selectedBlueprint,
           spec: input.spec,
         });
+      }
+      const openingRepairedBody = repairDraftRepeatedOpening({
+        body: candidate.body,
+        account: input.account,
+        topic: input.topic,
+        historicalBodies: input.historicalBodies ?? [],
+      });
+      if (openingRepairedBody !== candidate.body) {
+        candidate = withDraftValidation(attachBlueprintContract(enforceDraftCompliance({
+          ...candidate,
+          body: openingRepairedBody,
+          certification_status: "repairing",
+          certified_at: undefined,
+          word_count: countPublishChars(candidate.title, openingRepairedBody, candidate.hashtags),
+          updated_at: now(),
+        }, input.topic.title), selectedBlueprint), input.account.persona, (candidate.validation_report?.attempts ?? 0) + 1);
       }
       if (
         candidate.validation_report?.status !== "passed"
