@@ -7,7 +7,7 @@ import type {
 } from "./types";
 
 // 快速标题路由与更深库存启用后升级版本，避免把旧的浅库存误认为已经补齐。
-export const TOPIC_PREFETCH_GENERATION_VERSION = "topic-prefetch-v4-human-novelty-audit" as const;
+export const TOPIC_PREFETCH_GENERATION_VERSION = "topic-prefetch-v5-concept-novelty-audit" as const;
 // v2 的蓝图会把当前标题独有的场景与承诺写进身份、判断和转化合同。
 // 旧缓存仍可读取历史数据，但不能继续作为新渐进正文的可交付缓存。
 // Bump whenever the certified draft contract or deterministic composer changes.

@@ -146,6 +146,30 @@ describe("标题完整历史语义去重", () => {
     } as never], ["高薪水却没有福利，值得吗？"])).not.toHaveLength(0);
   });
 
+  it("把申请被无视与投递没有面试识别为同一母题", () => {
+    expect(topicBatchDuplicateProblems([{
+      method_id: "human_pain",
+      method_group: "native",
+      title: "申请多个岗位，却全被无视了",
+    } as never], ["投了十个岗位，结果连面试通知都没"])).not.toHaveLength(0);
+  });
+
+  it("把熟人团队与强上级的简写识别为同一母题", () => {
+    expect(topicBatchDuplicateProblems([{
+      method_id: "tug_of_war",
+      method_group: "native",
+      title: "熟人团队 vs 强上级，我该选谁？",
+    } as never], ["加入熟人团队，还是跟随更强的上司？"])).not.toHaveLength(0);
+  });
+
+  it("把名校不等于高薪与名校不等于好工作识别为同一母题", () => {
+    expect(topicBatchDuplicateProblems([{
+      method_id: "contrarian",
+      method_group: "native",
+      title: "名校出身不等于高薪，背后代价是什么？",
+    } as never], ["名校出身不等于好工作，代价却大"])).not.toHaveLength(0);
+  });
+
   it("数字变化不能伪装成新标题", () => {
     expect(normalizeTitleHistoryFingerprint("高管离职前查这5项"))
       .toBe(normalizeTitleHistoryFingerprint("高管离职前查这3项"));
