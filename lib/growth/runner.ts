@@ -4134,6 +4134,14 @@ function promiseDeliverySpec(topic: TopicCandidate): PromiseDeliverySpec {
   };
 }
 
+function topicTitleParts(title: string) {
+  const parts = title.split(/[，,；;：:？?]/u).map((item) => item.trim()).filter(Boolean);
+  return {
+    left: parts[0] || title,
+    right: parts[1] || parts[0] || title,
+  };
+}
+
 function semanticDeliverySections(topic: TopicCandidate, businessLine: GrowthBusinessLine) {
   const text = `${topic.title} ${topic.title_promise}`;
   if (businessLine === "overseas_student") {
@@ -4166,13 +4174,17 @@ function semanticDeliverySections(topic: TopicCandidate, businessLine: GrowthBus
       "我先标出网申、笔试和签证的硬节点，再倒排简历、项目梳理和模拟面试；每周只根据真实反馈改一个变量。",
     ];
   } else {
-    if (/离职|裸辞|不敢走|辞职/u.test(text)) return [
+    if (/离职|裸辞|不敢走|辞职/u.test(text) && !/副业|创业|客户|顾问|第二曲线/u.test(text)) return [
       "真正让我不敢动的，不只是收入下降，而是离开平台后，过去的成绩还能不能被市场认出来，以及家庭现金流能撑多久。",
       "我把可迁移能力、家庭底线和两条候选路径写在同一页；先做访谈或小样本试做，拿到外部反馈后再决定离不离，而不是靠情绪下注。",
     ];
-    if (/平台|头衔|总监|高管|职位/u.test(text)) return [
+    if (/平台|头衔|总监|职位/u.test(text)) return [
       "头衔能带来资源，却也容易把平台成果误当成个人能力。换到新环境后，真正能带走的是自己主导过的判断、关系和结果证据。",
       "我把每个成绩拆成“平台给了什么、我做了什么、外部如何验证”，再拿这些证据去做市场访谈或报价，职业定价才不靠原公司背书。",
+    ];
+    if (/验证.{0,5}客户|客户.{0,5}验证|离职前.{0,8}客户/u.test(text)) return [
+      "离职前找第一个客户，不是为了证明自己马上能创业，而是验证有没有陌生人愿意为一个明确问题付费。熟人捧场和市场需求要分开看。",
+      "我先限定一个小问题和一项可交付结果，再记录客户从哪里来、为什么愿意付费、交付实际花了多久；跑完一次，才知道下一轮该改获客还是改产品。",
     ];
     if (/副业|创业|客户|顾问|第二曲线/u.test(text)) return [
       "有副业收入不等于商业模式成立。一次熟人付费、偶然项目和可重复获客，是三件完全不同的事。",
@@ -4225,7 +4237,12 @@ function fallbackDeliverySections(
       : section);
   }
   const semanticSections = semanticDeliverySections(topic, businessLine);
-  if (semanticSections && spec.format === "paragraphs") return semanticSections;
+  if (semanticSections && spec.format === "paragraphs") {
+    const titleParts = topicTitleParts(topic.title);
+    return semanticSections.map((section, index) => index === 0
+      ? `${section} 对我这次“${titleParts.left}”的处境来说，先认清这一点很重要。`
+      : `${section} 这也是我不再被“${titleParts.right}”困住的具体练习。`);
+  }
   const items = overseas
     ? [
       "把专业背景与目标岗位要求逐项对齐，先删掉只靠学校光环的方向。",
@@ -4298,6 +4315,27 @@ function fallbackClosing(cta: ContentDraft["cta_type"], businessLine: GrowthBusi
     : "先把当前职位、两条候选路径和最担心的代价写在同一页，再决定先验证哪一项。";
   if (cta === "on_platform_consult") return "如果你的处境已经具体，可以从站内补充当前背景、候选路径和最担心的冲突，先做适配判断。";
   return "如果已经有明确处境和候选路径，可以从站内服务入口提交信息，先确认服务是否适配。";
+}
+
+function semanticClosing(
+  topic: TopicCandidate,
+  businessLine: GrowthBusinessLine,
+) {
+  const text = `${topic.title} ${topic.title_promise}`;
+  const titleParts = topicTitleParts(topic.title);
+  if (businessLine === "overseas_student") {
+    if (/面试|追问|答案|自我介绍|背题/u.test(text)) return `为了不再被“${titleParts.right}”困住，先挑一段最容易被追问的经历，不写完整答案，只补齐目标、动作、数字和反思，再请人连续追问三轮。`;
+    if (/简历|项目|材料|经历/u.test(text)) return `围绕“${titleParts.left}”，先选一个目标岗位，把三项要求和自己的三条证据对齐，再用一小批真实投递验证这一版。`;
+    if (/内推|校友|熟人|人脉/u.test(text)) return `下一次处理“${titleParts.left}”前，先核清岗位日常、招聘原因和面试重点，再决定这次入口值不值得用。`;
+    if (/回国|留下|国内|海外|两边/u.test(text)) return `要回答“${titleParts.right}”，先把国内和海外各自最近的截止点、身份门槛和真实回音写开，下一周只加码证据更清楚的一边。`;
+  } else {
+    if (/离职|裸辞|不敢走|辞职/u.test(text) && !/副业|创业|客户|顾问|第二曲线/u.test(text)) return `面对“${titleParts.right}”，先写清家庭底线、可迁移证据和一次外部验证；三项没有结果前，不用辞不辞职逼自己表态。`;
+    if (/平台|头衔|总监|职位/u.test(text)) return `围绕“${titleParts.left}”，先挑一项最依赖平台的成绩，拆出自己真正做出的判断和结果，再拿它去做一次市场访谈。`;
+    if (/验证.{0,5}客户|客户.{0,5}验证|离职前.{0,8}客户/u.test(text)) return `围绕“${titleParts.left}”，先完成一次非熟人付费验证，把获客来源、真实交付和客户反馈记下来，再决定是否扩大投入。`;
+    if (/副业|创业|客户|顾问|第二曲线/u.test(text)) return `要判断“${titleParts.left}”，先完成一次非熟人付费交付，记录获客和交付成本，再看它是不是一条能重复的路。`;
+    if (/offer|机会|跳槽|新公司/iu.test(text)) return `处理“${titleParts.right}”时，先向未来上级核清权限、十二个月目标和可用资源，再把最坏退出成本写出来，不让一个职位名称替自己做决定。`;
+  }
+  return null;
 }
 
 function fallbackStageResult(account: GrowthAccount, businessLine: GrowthBusinessLine) {
@@ -4437,7 +4475,9 @@ function fallbackConversionContract(
       : defaultRole;
   const semanticAttempted = overseas && /面试|追问|答案|自我介绍|背题/u.test(topicText)
     ? "背了不少面经和完整答案，遇到追问仍然容易卡住"
-    : !overseas && /离职|裸辞|不敢走|辞职/u.test(topicText)
+    : !overseas && /验证.{0,5}客户|客户.{0,5}验证|离职前.{0,8}客户/u.test(topicText)
+      ? "问过熟人意见，却没有验证陌生客户是否愿意付费"
+    : !overseas && /离职|裸辞|不敢走|辞职/u.test(topicText) && !/副业|创业|客户|顾问|第二曲线/u.test(topicText)
       ? "反复计算辞职得失，却一直没有外部证据"
       : "";
   const attempted = specific.original_attempt
@@ -4445,7 +4485,9 @@ function fallbackConversionContract(
     || (overseas ? "当事人已经反复改材料或扩大投递" : "当事人已经反复搜索信息或推演方向");
   const semanticIntervention = overseas && /面试|追问|答案|自我介绍|背题/u.test(topicText)
     ? "把真实经历拆成目标、动作、结果和反思，再围绕为什么、具体贡献和失败场景连续追问"
-    : !overseas && /离职|裸辞|不敢走|辞职/u.test(topicText)
+    : !overseas && /验证.{0,5}客户|客户.{0,5}验证|离职前.{0,8}客户/u.test(topicText)
+      ? "限定一个客户问题和一项收费交付，再记录获客来源、交付耗时和真实反馈"
+    : !overseas && /离职|裸辞|不敢走|辞职/u.test(topicText) && !/副业|创业|客户|顾问|第二曲线/u.test(topicText)
       ? "把个人能力、平台资源和家庭底线分开，并安排外部访谈验证"
       : "";
   const intervention = specific.intervention_action
@@ -4459,7 +4501,9 @@ function fallbackConversionContract(
     ? studentSelf
       ? "我不再死记整段答案，遇到换问法也能从自己的经历里组织回应"
       : "孩子不再死记整段答案，遇到换问法也能从自己的经历里组织回应"
-    : "";
+    : !overseas && /验证.{0,5}客户|客户.{0,5}验证|离职前.{0,8}客户/u.test(topicText)
+      ? "我拿到了一次真实付费和具体反馈，也看清下一轮该验证什么"
+      : "";
   const stageResult = specific.stage_result || semanticResult || fallbackStageResult(account, businessLine);
   return {
     problem_context: specific.struggle
@@ -4547,8 +4591,9 @@ function semanticCoreJudgement(topic: TopicCandidate, businessLine: GrowthBusine
     if (/岗位|方向|专业|适合/u.test(text)) return "方向不是由学校和专业直接推出的，要把个人证据放回岗位日常，再用现实反馈收窄。";
     if (/时间|截止|节奏|秋招/u.test(text)) return "秋招节奏的核心，是先保护不可逆的截止点，再安排可以补做的材料和练习。";
   } else {
-    if (/离职|裸辞|不敢走|辞职/u.test(text)) return "不敢离职往往不是缺勇气，而是平台价值、个人能力和家庭底线还没有被分开验证。";
-    if (/平台|头衔|总监|高管|职位/u.test(text)) return "职业定价不能沿用公司头衔，要看离开平台后仍能被市场验证的能力和结果。";
+    if (/离职|裸辞|不敢走|辞职/u.test(text) && !/副业|创业|客户|顾问|第二曲线/u.test(text)) return "不敢离职往往不是缺勇气，而是平台价值、个人能力和家庭底线还没有被分开验证。";
+    if (/平台|头衔|总监|职位/u.test(text)) return "职业定价不能沿用公司头衔，要看离开平台后仍能被市场验证的能力和结果。";
+    if (/验证.{0,5}客户|客户.{0,5}验证|离职前.{0,8}客户/u.test(text)) return "离职前验证客户，不是提前扮演创业者，而是确认陌生人是否愿意为一个明确问题付费。";
     if (/副业|创业|客户|顾问|第二曲线/u.test(text)) return "副业是否能成为退路，不看一次收入，而看获客和交付能否低成本重复。";
     if (/offer|机会|跳槽|新公司/iu.test(text)) return "比较新机会不能只看涨薪和头衔，还要核对权限、目标、资源和失败后的退路。";
     if (/方向|转型|选择|赛道/u.test(text)) return "职业方向不能按喜欢程度排序，要用进入门槛、现实证据和失败成本做同口径比较。";
@@ -4585,10 +4630,10 @@ export function fallbackDraftBlueprint(
   return {
     contract_version: "v3_4",
     promise_type: promiseTypeForTopic(topic, spec),
-    opening_intent: topic.title_promise,
+    opening_intent: topic.title,
     identity_contract: {
       ...identityContract,
-      evidence: identityContract.evidence,
+      evidence: `${identityContract.evidence.replace(/[。！？!?]+$/u, "")}。这次我只复盘“${topic.title}”暴露出来的那个卡点。`,
     },
     fulfillment_contract: fulfillmentContract,
     conversion_contract: {
@@ -4606,7 +4651,7 @@ export function fallbackDraftBlueprint(
     delivery_sections: fallbackDeliverySections(topic, businessLine, spec, variationSalt),
     service_bridge: contextualBridge,
     stage_result: conversionContract.stage_result,
-    closing: pickStableVariant(seed, "closing", [
+    closing: semanticClosing(topic, businessLine) || pickStableVariant(seed, "closing", [
       `${fallbackClosing(cta, businessLine)} 先把“${topic.title}”从结论改成一个待验证的问题。`,
       `先别急着把“${topic.title}”变成最终答案，今天只完成一个能拿到外部反馈的动作。`,
       `回到自己的处境，把${promiseSubject}里最没有证据的一项圈出来，下一步先验证它。`,
@@ -4758,9 +4803,11 @@ function semanticLongContext(topic: string, businessLine: GrowthBusinessLine) {
     if (/内推|校友|熟人|人脉/u.test(topic)) return "每次使用内推前，我先用三个问题核对岗位日常、招聘原因和面试重点。答不清这些信息的内推，只当作一个入口，不再当成机会质量的证明。";
     if (/回国|留下|国内|海外|两边/u.test(topic)) return "我把国内和海外分成两张表，分别记录开放窗口、身份门槛和真实回音。到每周复盘时，只给反馈更清楚的一边增加时间，不因焦虑同时扩大投递。";
   } else {
-    if (/离职|裸辞|不敢走|辞职/u.test(topic)) return "我把离职拆成三个可以分别验证的问题：个人能力能否脱离平台被认可、家庭现金流能撑多久、候选路径能否拿到外部反馈。三件事没有答案前，不用辞不辞职逼自己表态。";
-    if (/平台|头衔|总监|高管|职位/u.test(topic)) return "我逐项标出成绩里平台提供的资源和自己真正做出的判断，再拿后者去做市场访谈。对方愿意为什么能力继续聊、报价或合作，才是离开头衔后的真实定价。";
+    if (/离职|裸辞|不敢走|辞职/u.test(topic) && !/副业|创业|客户|顾问|第二曲线/u.test(topic)) return "我把离职拆成三个可以分别验证的问题：个人能力能否脱离平台被认可、家庭现金流能撑多久、候选路径能否拿到外部反馈。三件事没有答案前，不用辞不辞职逼自己表态。";
+    if (/平台|头衔|总监|职位/u.test(topic)) return "我逐项标出成绩里平台提供的资源和自己真正做出的判断，再拿后者去做市场访谈。对方愿意为什么能力继续聊、报价或合作，才是离开头衔后的真实定价。";
+    if (/验证.{0,5}客户|客户.{0,5}验证|离职前.{0,8}客户/u.test(topic)) return "我先把服务范围缩到一个具体问题，再找一位非熟人客户完成收费交付。重点不是这次赚多少，而是记录他为什么付费、交付哪里最耗时，以及下一次能否重复。";
     if (/副业|创业|客户|顾问|第二曲线/u.test(topic)) return "我不再用一次熟人付费证明副业成立，而是连续记录客户从哪里来、交付花多少时间、同类问题能否再次成交。只有重复性出现，才讨论是否值得投入更多。";
+    if (/offer|机会|跳槽|新公司/iu.test(topic)) return "我把两个机会放进同一张表：汇报对象、决策权限、十二个月目标、可用资源和最坏退出成本。信息没有核清之前，不用涨薪和头衔替自己下结论。";
   }
   return null;
 }
@@ -4800,12 +4847,30 @@ function longVersionDetail(index: number, businessLine: GrowthBusinessLine, seed
     ];
     return details[index % details.length];
   }
-  if (businessLine === "executive" && /离职|裸辞|不敢走|辞职/u.test(seed)) {
+  if (businessLine === "executive" && /离职|裸辞|不敢走|辞职/u.test(seed) && !/副业|创业|客户|顾问|第二曲线/u.test(seed)) {
     const details = [
       "先把家庭现金流和最坏情况写清楚，避免情绪最强的时候做不可逆决定。",
       "用三次外部访谈核对个人能力离开平台后是否仍被认可。",
       "给候选方向安排一次低成本试做，先拿反馈再增加投入。",
       "提前约定停止条件，到期按事实复盘，不无限拖延也不仓促裸辞。",
+    ];
+    return details[index % details.length];
+  }
+  if (businessLine === "executive" && /验证.{0,5}客户|客户.{0,5}验证|离职前.{0,8}客户/u.test(seed)) {
+    const details = [
+      "先找非熟人客户，避免把关系支持误当成市场需求。",
+      "交付前写清范围和结果，确认客户究竟为什么愿意付费。",
+      "记录真实耗时和反复修改的位置，判断这项服务能否重复。",
+      "交付后追问最有价值和最失望的部分，为下一次验证留下依据。",
+    ];
+    return details[index % details.length];
+  }
+  if (businessLine === "executive" && /offer|机会|跳槽|新公司/iu.test(seed)) {
+    const details = [
+      "向未来上级核对真正负责的指标，避免把职位描述当成实际权限。",
+      "把奖金、资源承诺和团队配置写成可确认的问题，不用口头想象补齐信息。",
+      "提前计算试用期失败或一年后离开的退路，确认最坏结果是否承受得住。",
+      "用同一组标准比较现岗位与新机会，不只比较最吸引人的一项。",
     ];
     return details[index % details.length];
   }
@@ -4842,6 +4907,12 @@ function blueprintTopicTitle(blueprint: DraftBlueprintContext) {
 
 function topicEvidenceLine(blueprint: DraftBlueprintContext) {
   const title = blueprintTopicTitle(blueprint);
+  if (/面试|追问|答案|自我介绍|背题/u.test(title)) return "我把一次模拟面试录下来，只标出三类断点：事实想不起来、个人贡献说不清、结果数字没有依据；下一轮只补这些断点。";
+  if (/简历|项目|材料|经历/u.test(title)) return "我把每一版简历对应的岗位和回音单独记录，用下一批真实反馈判断该改匹配还是改表达。";
+  if (/验证.{0,5}客户|客户.{0,5}验证|离职前.{0,8}客户/u.test(title)) return "我把这次客户验证拆成四项：客户从哪里来、为什么付费、交付花了多久、哪些反馈能指导下一次；收入只是其中一项。";
+  if (/副业|创业|客户|顾问|第二曲线/u.test(title)) return "我把这次收入的客户来源、交付耗时和复购可能单独记下，判断它是偶然项目，还是一条可以重复的路径。";
+  if (/offer|机会|跳槽|新公司/iu.test(title)) return "我把职位名称和涨薪先遮住，只比较权限、资源、十二个月目标和最坏退出成本，再看它是否真的优于现岗位。";
+  if (/离职|裸辞|不敢走|辞职/u.test(title)) return "我分别记录个人能力的外部反馈、家庭现金流底线和候选方向的验证结果，不再把三件事混成一句敢不敢走。";
   const parts = title.split(/[，,；;：:？?]/u).map((item) => item.trim()).filter(Boolean);
   const left = parts[0] || Array.from(title).slice(0, Math.ceil(Array.from(title).length / 2)).join("");
   const right = parts[1] || Array.from(title).slice(Math.ceil(Array.from(title).length / 2)).join("");
@@ -5076,9 +5147,9 @@ function serviceBridgeSentence(
       const result = configured.stageResult.replace(/[。！？!?]+$/u, "");
       return pickStableVariant(seed, "conversion", [
         `我原来${attempted}，但问题没有真正理顺。后来${configured.role}没有替我选答案，而是${configured.intervention}。变化不是立刻成功，而是${result}。`,
-        `卡住之前，我试过${attempted}，越做越难分清问题。请${configured.role}介入后，先做的是${configured.intervention}；做到这里，${result}。`,
-        `真正的转折不是一句鼓励。我把${attempted}的结果交给${configured.role}复盘，对方带我${configured.intervention}，随后${result}。`,
-        `自己折腾时，我一直在${attempted}。后来和${configured.role}一起把问题拆开，具体动作是${configured.intervention}，最后先得到一个阶段结果：${result}。`,
+        `卡住之前，我一直在尝试：${attempted}。请${configured.role}介入后，先做的是${configured.intervention}；做到这里，${result}。`,
+        `真正的转折不是一句鼓励。我把自己尝试“${attempted}”时留下的记录交给${configured.role}复盘，对方带我${configured.intervention}，随后${result}。`,
+        `自己折腾时，我试过${attempted}。后来和${configured.role}一起把问题拆开，具体动作是${configured.intervention}，最后先得到一个阶段结果：${result}。`,
       ]);
     }
     if (persona === "expert") {

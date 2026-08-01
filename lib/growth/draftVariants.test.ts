@@ -285,7 +285,11 @@ describe("draft variants", () => {
         historicalBodies: history,
       });
       const body = generated.body;
-      expect(generated.variationIndex).toBeGreaterThanOrEqual(0);
+      const failures = generated.attemptedBodies.map((candidate) => ({
+        identity: bodyProfileIdentityProblem(candidate.body, account),
+        duplicate: bodyUniquenessProblem(candidate.body, history)?.reason,
+      }));
+      expect(generated.variationIndex, `no deterministic variant: ${title}; ${JSON.stringify(failures)}`).toBeGreaterThanOrEqual(0);
       expect(bodyUniquenessProblem(body, history), `duplicate title: ${title}`).toBeNull();
       history.push({ body });
     });
