@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   appendBodyGenerationHistory,
   bodyFingerprint,
+  historyExcludingCurrentPair,
   bodySimilarityScore,
   bodyUniquenessProblem,
   repeatedParagraphCount,
@@ -48,6 +49,17 @@ describe("body history uniqueness", () => {
     ].join("\n\n");
 
     expect(bodyUniquenessProblem(next, [{ body: previous }])).toBeNull();
+  });
+
+  it("removes only the current paired short draft from long-version history", () => {
+    const currentShort = "当前标题的短版正文，保留相同核心判断。";
+    const olderDraft = "另一篇真正属于近90天历史的正文。";
+    const filtered = historyExcludingCurrentPair([
+      { body: currentShort, topic_id: "current" },
+      { body: olderDraft, topic_id: "older" },
+    ], [currentShort]);
+
+    expect(filtered).toEqual([{ body: olderDraft, topic_id: "older" }]);
   });
 
   it("records unselected generated bodies inside the run payload", () => {

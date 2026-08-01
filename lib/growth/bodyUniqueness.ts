@@ -130,6 +130,19 @@ export function bodyHistoryReferences(input: {
     });
 }
 
+/**
+ * 渐进式长版生成时，已经呈现的短版属于当前配对稿，不是“近90天历史稿”。
+ * 两者的差异由 draftVariantOrderIsValid / draftBodiesAreTooSimilar 单独检查；
+ * 若把短版继续放进历史门禁，长版共享核心判断和合同段落就会被自己误伤。
+ */
+export function historyExcludingCurrentPair(
+  history: BodyUniquenessReference[],
+  currentPairBodies: string[],
+) {
+  const current = new Set(currentPairBodies.filter(Boolean).map(bodyFingerprint));
+  return history.filter((reference) => !current.has(bodyFingerprint(reference.body)));
+}
+
 export function appendBodyGenerationHistory(
   run: GrowthRun,
   drafts: ContentDraft[],

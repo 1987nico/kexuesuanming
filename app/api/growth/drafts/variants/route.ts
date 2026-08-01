@@ -17,6 +17,7 @@ import {
 import {
   appendBodyGenerationHistory,
   bodyHistoryReferences,
+  historyExcludingCurrentPair,
 } from "@/lib/growth/bodyUniqueness";
 import {
   accountProfileVersion,
@@ -119,10 +120,18 @@ export async function POST(req: Request) {
     store.listRuns(account.id),
   ]);
   const historyDurationMs = Date.now() - historyStartedAt;
-  const historicalBodies = [
+  const referenceDraft = parsed.data.bodyVersion === "long"
+    ? freshDraftCache(run, account, topic, Date.now(), "short")
+      ?.drafts.find((draft) => draft.selected_body_version === "short")
+    : undefined;
+  const allHistoricalBodies = [
     ...bodyHistoryReferences({ drafts: notes, runs }),
     ...(parsed.data.excludeBodies ?? []).map((body) => ({ body })),
   ];
+  const historicalBodies = historyExcludingCurrentPair(
+    allHistoricalBodies,
+    referenceDraft ? [referenceDraft.body] : [],
+  );
   // 渐进式单版本正文使用的是已经锁定的标题合同，不需要先重新计算周复盘
   // 学习摘要。原先这里会额外读取全部复盘并可能写回账号，既不参与确定性
   // 组装，也把数据库尾部延迟带进用户等待路径。旧版“双版本一次生成”入口
@@ -155,10 +164,6 @@ export async function POST(req: Request) {
   let generated: Awaited<ReturnType<typeof generateDraftVariants>>;
   const generationStartedAt = Date.now();
   try {
-    const referenceDraft = parsed.data.bodyVersion === "long"
-      ? freshDraftCache(run, account, topic, Date.now(), "short")
-        ?.drafts.find((draft) => draft.selected_body_version === "short")
-      : undefined;
     generated = await generateDraftVariants({
       tenantId: DEFAULT_TENANT_ID,
       account: generationAccount,
