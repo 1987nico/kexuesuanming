@@ -170,6 +170,22 @@ describe("标题完整历史语义去重", () => {
     } as never], ["名校出身不等于好工作，代价却大"])).not.toHaveLength(0);
   });
 
+  it("把海投零回信与投递无面试识别为同一母题", () => {
+    expect(topicBatchDuplicateProblems([{
+      method_id: "human_pain",
+      method_group: "native",
+      title: "海投简历后，竟然一封回信都没有",
+    } as never], ["投了十个岗位，结果连面试通知都没"])).not.toHaveLength(0);
+  });
+
+  it("把名校反而面试更少与名校不等于好工作识别为同一母题", () => {
+    expect(topicBatchDuplicateProblems([{
+      method_id: "contrarian",
+      method_group: "native",
+      title: "高名校毕业，反而面试机会更少？",
+    } as never], ["名校出身不等于好工作，代价却大"])).not.toHaveLength(0);
+  });
+
   it("数字变化不能伪装成新标题", () => {
     expect(normalizeTitleHistoryFingerprint("高管离职前查这5项"))
       .toBe(normalizeTitleHistoryFingerprint("高管离职前查这3项"));

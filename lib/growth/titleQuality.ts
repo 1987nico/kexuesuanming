@@ -650,7 +650,7 @@ export function nativeTitleSemanticTopicKeys(methodId: string, value: string) {
   add(
     "pain:applications_without_interview_response",
     /(?:投简历|投了|投递|海投|申请).{0,8}(?:岗位|职位|工作|简历)?/u.test(title)
-      && /(?:(?:没|没有|未).{0,8}(?:面试|面邀|面试通知|回应|回音|结果|机会)|(?:面试|面邀|面试通知).{0,5}(?:没|没有|未)|(?:被无视|石沉大海|零回应|无回应|没下文))/u.test(title),
+      && /(?:(?:没|没有|未).{0,8}(?:面试|面邀|面试通知|回应|回音|回信|结果|机会)|(?:面试|面邀|面试通知|回信).{0,5}(?:没|没有|未)|(?:被无视|石沉大海|零回应|无回应|没下文))/u.test(title),
   );
   add(
     "scene:board_praise_then_exit",
@@ -698,7 +698,8 @@ export function nativeTitleSemanticTopicKeys(methodId: string, value: string) {
   add(
     "contrarian:prestigious_school_not_good_job",
     /(?:名校|高学历|学历光环|学校光环)/u.test(title)
-      && /(?:(?:不等于|未必|不代表|不一定).{0,8}(?:好工作|好岗位|好机会|高薪|收入|发展|适合)|(?:代价|成本).{0,4}(?:大|高))/u.test(title),
+      && /(?:工作|岗位|机会|面试|高薪|收入|发展|适合)/u.test(title)
+      && /(?:不等于|未必|不代表|不一定|反而|更少|更难|没|没有|代价|成本)/u.test(title),
   );
   add(
     "contrarian:big_company_reputation_not_personal_fit",
