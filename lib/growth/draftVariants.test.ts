@@ -346,6 +346,36 @@ describe("draft variants", () => {
     expect(bodies[0]).not.toBe(bodies[1]);
   });
 
+  it("can continue with a fresh variation window after final assembly becomes repetitive", () => {
+    const account = {
+      id: "final-history-account", tenant_id: "tenant", persona: "buyer", business_line: "overseas_student",
+      one_liner: "留子回国求职踩坑实录", target_user: "准备秋招的留学生",
+      core_problem: "面试后无法判断机会", account_value: "记录本人求职过程",
+      trust_source: "本人投递与面试记录", persona_specific: { profile_identity: "overseas_student_self" },
+    } as unknown as GrowthAccount;
+    const topic = {
+      id: "final-history-topic", method_group: "native", method_id: "human_pain", method_label: "行业人性痛点",
+      generation_mode: "default", target_user: "留学生", pain: "面试后焦虑", hook: "", follow_reason: "本人经历",
+      test_variable: "面试判断", expected_signal: "咨询", repeatable_angle: "面试复盘", broad_traffic_risk: 1,
+      priority: "A", title: "面试了几家公司，心里却没个能放心的", title_promise: "讲述面试中的困惑与选择",
+    } as unknown as TopicCandidate;
+    const ordinarySpec = { format: "paragraphs" as const, minimumSections: 2, rule: "至少用2段完成承诺" };
+    const initial = composeUniqueDeterministicDraftBody({
+      account, topic, cta: "soft_bridge", spec: ordinarySpec,
+      blueprint: fallbackDraftBlueprint(account, topic, "soft_bridge", ordinarySpec),
+      bodyVersion: "long", businessLine: "overseas_student",
+    });
+    const repaired = composeUniqueDeterministicDraftBody({
+      account, topic, cta: "soft_bridge", spec: ordinarySpec,
+      blueprint: fallbackDraftBlueprint(account, topic, "soft_bridge", ordinarySpec),
+      bodyVersion: "long", businessLine: "overseas_student",
+      historicalBodies: [{ body: initial.body }], variationStartIndex: 8, variationCount: 8,
+    });
+
+    expect(repaired.variationIndex).toBeGreaterThanOrEqual(8);
+    expect(bodyUniquenessProblem(repaired.body, [{ body: initial.body }])).toBeNull();
+  });
+
   it("can regenerate the same executive title without repeating its previous body", () => {
     const account = {
       id: "repeat-executive", tenant_id: "tenant", persona: "buyer", business_line: "executive",

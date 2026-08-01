@@ -5679,9 +5679,14 @@ export function composeUniqueDeterministicDraftBody(input: {
   bodyVersion: "short" | "long";
   businessLine: GrowthBusinessLine;
   historicalBodies?: BodyUniquenessReference[];
+  variationStartIndex?: number;
+  variationCount?: number;
 }) {
   const attemptedBodies: BodyUniquenessReference[] = [];
-  for (let index = 0; index < 8; index += 1) {
+  const variationStartIndex = input.variationStartIndex ?? 0;
+  const variationCount = input.variationCount ?? 8;
+  for (let offset = 0; offset < variationCount; offset += 1) {
+    const index = variationStartIndex + offset;
     const useProvidedBlueprint = index === 0 && !(input.historicalBodies?.length);
     const varied = useProvidedBlueprint
       ? input.blueprint
@@ -5910,7 +5915,73 @@ async function generateSingleDraft(input: {
     throw pipelineFailure("identity_repair_failed", identityProblem);
   }
   draft = certifyDraftForOperator(draft);
-  const finalDuplicate = bodyUniquenessProblem(draft.body, input.historicalBodies ?? []);
+  let finalDuplicate = bodyUniquenessProblem(draft.body, input.historicalBodies ?? []);
+  // 字段修复或长度压缩有可能把已经去重的正文重新收敛成历史表达。
+  // 此时不能把失败交给操作者，也不能放宽历史去重阈值；改用当前标题专属的
+  // 另一组确定性叙事，在系统内部重新跑完身份、兑现、转化、字数和历史门禁。
+  for (let repairIndex = 8; finalDuplicate && repairIndex < 16; repairIndex += 1) {
+    const repaired = composeUniqueDeterministicDraftBody({
+      account: input.account,
+      topic: input.topic,
+      cta,
+      spec: input.spec,
+      blueprint: selectedBlueprint,
+      bodyVersion: input.bodyVersion,
+      businessLine,
+      historicalBodies: input.historicalBodies,
+      variationStartIndex: repairIndex,
+      variationCount: 1,
+    });
+    if (!repaired.body || !repaired.blueprint) continue;
+    let candidate = withDraftValidation(attachBlueprintContract(enforceDraftCompliance({
+      ...draft,
+      body: repaired.body,
+      certification_status: "repairing",
+      certified_at: undefined,
+      fallback_used: true,
+      repair_history: [...(draft.repair_history ?? []), {
+        field: "fallback",
+        reason_code: `final_history_duplicate_${repairIndex}`,
+        action: "更换当前标题下的叙事现场和论证顺序，并重新完成全部交付认证",
+        repaired_at: now(),
+      }],
+      word_count: countPublishChars(draft.title, repaired.body, draft.hashtags),
+      updated_at: now(),
+    }, input.topic.title), repaired.blueprint), input.account.persona, (draft.validation_report?.attempts ?? 0) + 1);
+    candidate = await passDraftValidationGate(candidate, {
+      account: input.account,
+      persona: input.account.persona,
+      businessLine,
+      topic: input.topic,
+      cta,
+      blueprint: repaired.blueprint,
+      fallbackBlueprint: repaired.blueprint,
+      spec: input.spec,
+    });
+    candidate = await fitDraftWithinPublishTarget(candidate, {
+      account: input.account,
+      persona: input.account.persona,
+      businessLine,
+      topic: input.topic,
+      blueprint: repaired.blueprint,
+      fallbackBlueprint: repaired.blueprint,
+      spec: input.spec,
+    });
+    if (
+      candidate.validation_report?.status !== "passed"
+      || candidate.word_count.total > XHS_PUBLISH_CHAR_TARGET
+      || candidate.compliance?.status === "blocked"
+      || bodyProfileIdentityProblem(candidate.body, input.account)
+    ) continue;
+    const candidateDuplicate = bodyUniquenessProblem(candidate.body, input.historicalBodies ?? []);
+    if (candidateDuplicate) {
+      finalDuplicate = candidateDuplicate;
+      continue;
+    }
+    draft = certifyDraftForOperator(candidate);
+    selectedBlueprint = repaired.blueprint;
+    finalDuplicate = null;
+  }
   if (finalDuplicate) {
     throw pipelineFailure("history_duplicate", finalDuplicate.reason);
   }
