@@ -643,6 +643,11 @@ export function nativeTitleSemanticTopicKeys(methodId: string, value: string) {
       && /(?:不知搬哪|不知道搬哪|没一座想|没有一座想|不想落脚|不想留下)/u.test(title),
   );
   add(
+    "scene:multi_city_no_satisfactory_choice",
+    /(?:(?:数|多|几|两|三|四|五|六|七|八|九|十)(?:个|座)?城(?:市)?|多个城市|好多城市)/u.test(title)
+      && /(?:没有|没).{0,8}(?:满意|心动|想去|想留|合适|适合)/u.test(title),
+  );
+  add(
     "scene:board_praise_then_exit",
     /董事会/u.test(title)
       && /(?:夸|认可|表扬)/u.test(title)
