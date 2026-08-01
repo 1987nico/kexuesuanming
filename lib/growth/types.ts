@@ -871,7 +871,7 @@ export interface GrowthRun {
     topic_id: string;
     cache_key: string;
     profile_version: string;
-    generation_version: "draft-prewarm-v1" | "draft-prewarm-v2";
+    generation_version: "draft-prewarm-v1" | "draft-prewarm-v2" | "draft-prewarm-v3";
     status: "ready" | "expired";
     drafts: ContentDraft[];
     generated_at: string;
