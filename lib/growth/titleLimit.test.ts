@@ -98,6 +98,14 @@ describe("标题完整历史语义去重", () => {
     } as never], ["申请了多个城市却没有一份满意的offer"])).not.toHaveLength(0);
   });
 
+  it("把多投递但没有更多机会的近义标题识别为同一母题", () => {
+    expect(topicBatchDuplicateProblems([{
+      method_id: "contrarian",
+      method_group: "native",
+      title: "海投多了未必有回音，反而耽误了机会",
+    } as never], ["投递量多，未必能获得更多机会"])).not.toHaveLength(0);
+  });
+
   it("数字变化不能伪装成新标题", () => {
     expect(normalizeTitleHistoryFingerprint("高管离职前查这5项"))
       .toBe(normalizeTitleHistoryFingerprint("高管离职前查这3项"));

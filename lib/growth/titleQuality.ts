@@ -686,6 +686,11 @@ export function nativeTitleSemanticTopicKeys(methodId: string, value: string) {
       && /(?:(?:未必|不一定|可能不|其实不|并不).{0,3}(?:合适|适合|匹配|对口)|(?:不合适|不适合|不匹配|不对口))/u.test(title),
   );
   add(
+    "contrarian:more_applications_not_more_opportunities",
+    /(?:海投|投递量|投递.{0,2}多|多投)/u.test(title)
+      && /(?:(?:未必|不代表|不等于).{0,7}(?:机会|回音|回应)|(?:没|没有).{0,5}(?:机会|回音|回应))/u.test(title),
+  );
+  add(
     "nostalgia:parent_club_to_job_evidence",
     /(?:孩子|娃|儿子|女儿)/u.test(title)
       && /社团/u.test(title)
