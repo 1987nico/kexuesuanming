@@ -4142,13 +4142,40 @@ function topicTitleParts(title: string) {
   };
 }
 
-function semanticDeliverySections(topic: TopicCandidate, businessLine: GrowthBusinessLine) {
+function semanticVariationIndex(variationSalt: string, total: number) {
+  const historyIndex = variationSalt.match(/history-(\d+)/u)?.[1];
+  if (historyIndex) return Number(historyIndex) % total;
+  return 0;
+}
+
+function semanticDeliverySections(
+  topic: TopicCandidate,
+  businessLine: GrowthBusinessLine,
+  variationSalt = "base",
+) {
   const text = `${topic.title} ${topic.title_promise}`;
   if (businessLine === "overseas_student") {
-    if (/面试|追问|答案|自我介绍|背题/u.test(text)) return [
-      "我后来发现，背完整答案最容易卡在追问：面试官只要换一个主语、数字或失败场景，原来记住的句子就接不上了。问题不是背得少，而是没有掌握经历里的事实。",
-      "我把每段经历改成四格：当时目标、自己动作、结果数字、复盘反思；再用“为什么这样做、如果重来怎么改、你具体贡献什么”连续追问。能用自己的细节回答，才算真正准备好。",
-    ];
+    if (/面试|追问|答案|自我介绍|背题/u.test(text)) {
+      const variants = [
+        [
+          "我后来发现，背完整答案最容易卡在追问：面试官只要换一个主语、数字或失败场景，原来记住的句子就接不上了。问题不是背得少，而是没有掌握经历里的事实。",
+          "我把每段经历改成四格：当时目标、自己动作、结果数字、复盘反思；再用“为什么这样做、如果重来怎么改、你具体贡献什么”连续追问。能用自己的细节回答，才算真正准备好。",
+        ],
+        [
+          "整段背诵会把注意力放在下一句是什么，而不是面试官究竟在问哪段经历。问题一偏离脚本，大脑就只剩下寻找原句。",
+          "我改用追问树练习：先说一个事实，再分别追问为什么、怎么做、遇到什么阻力、数字如何得出。每次只记关键词，让答案跟着问题重新组织。",
+        ],
+        [
+          "自我介绍顺利不等于项目经得住追问。真正容易暴露的，是说得出结果，却说不清自己的贡献、取舍和失败处理。",
+          "我把模拟面试录下来，只标三类断点：事实想不起来、贡献说不清、数字没有依据。下一轮不再重背全部答案，只补这三个断点。",
+        ],
+        [
+          "面试官连续问两次“为什么”时，模板答案往往会越来越空。能继续回答的部分，通常都来自亲自做过的动作和当时留下的记录。",
+          "我为每段经历做一张证据卡：背景、难点、个人动作、结果、反思各写一句；再请别人随机抽一个点追问，直到不用固定顺序也能讲清。",
+        ],
+      ];
+      return variants[semanticVariationIndex(variationSalt, variants.length)];
+    }
     if (/简历|项目|材料|经历/u.test(text)) return [
       "同一份简历海投时，我写的是自己做过什么，却没回答这个岗位为什么需要我。招聘方看到很多经历，也找不到最相关的证据。",
       "我先从岗位说明圈出三项核心要求，再为每项只保留一个能量化的项目证据；不同方向单独存版本，并记录哪一版换来了笔试或面试。",
@@ -4174,10 +4201,27 @@ function semanticDeliverySections(topic: TopicCandidate, businessLine: GrowthBus
       "我先标出网申、笔试和签证的硬节点，再倒排简历、项目梳理和模拟面试；每周只根据真实反馈改一个变量。",
     ];
   } else {
-    if (/离职|裸辞|不敢走|辞职/u.test(text) && !/副业|创业|客户|顾问|第二曲线/u.test(text)) return [
-      "真正让我不敢动的，不只是收入下降，而是离开平台后，过去的成绩还能不能被市场认出来，以及家庭现金流能撑多久。",
-      "我把可迁移能力、家庭底线和两条候选路径写在同一页；先做访谈或小样本试做，拿到外部反馈后再决定离不离，而不是靠情绪下注。",
-    ];
+    if (/离职|裸辞|不敢走|辞职/u.test(text) && !/副业|创业|客户|顾问|第二曲线/u.test(text)) {
+      const variants = [
+        [
+          "真正让我不敢动的，不只是收入下降，而是离开平台后，过去的成绩还能不能被市场认出来，以及家庭现金流能撑多久。",
+          "我把可迁移能力、家庭底线和两条候选路径写在同一页；先做访谈或小样本试做，拿到外部反馈后再决定离不离，而不是靠情绪下注。",
+        ],
+        [
+          "我最初把犹豫归结为胆子小，后来才发现，自己没有分清公司品牌带来的信用和真正能带走的能力。",
+          "我挑出三个离开平台仍成立的成果，分别找外部从业者核对；同时写清家庭能承受的验证周期，再决定是否提交离职。",
+        ],
+        [
+          "职位越高，离开的损失越具体：收入、团队、身份感和家庭预期会一起拉住人。只给自己打气，并不能回答这些代价能不能承受。",
+          "我把每项损失写成数字或事实，再给候选方向安排一次低成本试做；能拿到真实反馈的路继续，没有证据的先停下。",
+        ],
+        [
+          "反复问要不要走，让我一直停在情绪里。真正缺少的不是结论，而是一个能推翻或支持当前判断的外部信号。",
+          "我先约三次市场访谈，核对能力定价和进入门槛；再设定现金流底线与停止条件，到日期后按证据复盘。",
+        ],
+      ];
+      return variants[semanticVariationIndex(variationSalt, variants.length)];
+    }
     if (/平台|头衔|总监|职位/u.test(text)) return [
       "头衔能带来资源，却也容易把平台成果误当成个人能力。换到新环境后，真正能带走的是自己主导过的判断、关系和结果证据。",
       "我把每个成绩拆成“平台给了什么、我做了什么、外部如何验证”，再拿这些证据去做市场访谈或报价，职业定价才不靠原公司背书。",
@@ -4236,7 +4280,7 @@ function fallbackDeliverySections(
       ? `${topic.title.replace(/[。！？!?]+$/u, "")}这件事，我按下面的节点执行。${section}`
       : section);
   }
-  const semanticSections = semanticDeliverySections(topic, businessLine);
+  const semanticSections = semanticDeliverySections(topic, businessLine, variationSalt);
   if (semanticSections && spec.format === "paragraphs") {
     const titleParts = topicTitleParts(topic.title);
     return semanticSections.map((section, index) => index === 0
@@ -4320,20 +4364,30 @@ function fallbackClosing(cta: ContentDraft["cta_type"], businessLine: GrowthBusi
 function semanticClosing(
   topic: TopicCandidate,
   businessLine: GrowthBusinessLine,
+  variationSalt = "base",
 ) {
   const text = `${topic.title} ${topic.title_promise}`;
   const titleParts = topicTitleParts(topic.title);
+  const vary = (instruction: string) => {
+    const variants = [
+      instruction,
+      `我给自己的下一步很具体：${instruction}`,
+      `今天先完成一个动作：${instruction}`,
+      `下次复盘前，我只要求自己做到这一步：${instruction}`,
+    ];
+    return variants[semanticVariationIndex(variationSalt, variants.length)];
+  };
   if (businessLine === "overseas_student") {
-    if (/面试|追问|答案|自我介绍|背题/u.test(text)) return `为了不再被“${titleParts.right}”困住，先挑一段最容易被追问的经历，不写完整答案，只补齐目标、动作、数字和反思，再请人连续追问三轮。`;
-    if (/简历|项目|材料|经历/u.test(text)) return `围绕“${titleParts.left}”，先选一个目标岗位，把三项要求和自己的三条证据对齐，再用一小批真实投递验证这一版。`;
-    if (/内推|校友|熟人|人脉/u.test(text)) return `下一次处理“${titleParts.left}”前，先核清岗位日常、招聘原因和面试重点，再决定这次入口值不值得用。`;
-    if (/回国|留下|国内|海外|两边/u.test(text)) return `要回答“${titleParts.right}”，先把国内和海外各自最近的截止点、身份门槛和真实回音写开，下一周只加码证据更清楚的一边。`;
+    if (/面试|追问|答案|自我介绍|背题/u.test(text)) return vary(`为了不再被“${titleParts.right}”困住，先挑一段最容易被追问的经历，不写完整答案，只补齐目标、动作、数字和反思，再请人连续追问三轮。`);
+    if (/简历|项目|材料|经历/u.test(text)) return vary(`围绕“${titleParts.left}”，先选一个目标岗位，把三项要求和自己的三条证据对齐，再用一小批真实投递验证这一版。`);
+    if (/内推|校友|熟人|人脉/u.test(text)) return vary(`下一次处理“${titleParts.left}”前，先核清岗位日常、招聘原因和面试重点，再决定这次入口值不值得用。`);
+    if (/回国|留下|国内|海外|两边/u.test(text)) return vary(`要回答“${titleParts.right}”，先把国内和海外各自最近的截止点、身份门槛和真实回音写开，下一周只加码证据更清楚的一边。`);
   } else {
-    if (/离职|裸辞|不敢走|辞职/u.test(text) && !/副业|创业|客户|顾问|第二曲线/u.test(text)) return `面对“${titleParts.right}”，先写清家庭底线、可迁移证据和一次外部验证；三项没有结果前，不用辞不辞职逼自己表态。`;
-    if (/平台|头衔|总监|职位/u.test(text)) return `围绕“${titleParts.left}”，先挑一项最依赖平台的成绩，拆出自己真正做出的判断和结果，再拿它去做一次市场访谈。`;
-    if (/验证.{0,5}客户|客户.{0,5}验证|离职前.{0,8}客户/u.test(text)) return `围绕“${titleParts.left}”，先完成一次非熟人付费验证，把获客来源、真实交付和客户反馈记下来，再决定是否扩大投入。`;
-    if (/副业|创业|客户|顾问|第二曲线/u.test(text)) return `要判断“${titleParts.left}”，先完成一次非熟人付费交付，记录获客和交付成本，再看它是不是一条能重复的路。`;
-    if (/offer|机会|跳槽|新公司/iu.test(text)) return `处理“${titleParts.right}”时，先向未来上级核清权限、十二个月目标和可用资源，再把最坏退出成本写出来，不让一个职位名称替自己做决定。`;
+    if (/离职|裸辞|不敢走|辞职/u.test(text) && !/副业|创业|客户|顾问|第二曲线/u.test(text)) return vary(`面对“${titleParts.right}”，先写清家庭底线、可迁移证据和一次外部验证；三项没有结果前，不用辞不辞职逼自己表态。`);
+    if (/平台|头衔|总监|职位/u.test(text)) return vary(`围绕“${titleParts.left}”，先挑一项最依赖平台的成绩，拆出自己真正做出的判断和结果，再拿它去做一次市场访谈。`);
+    if (/验证.{0,5}客户|客户.{0,5}验证|离职前.{0,8}客户/u.test(text)) return vary(`围绕“${titleParts.left}”，先完成一次非熟人付费验证，把获客来源、真实交付和客户反馈记下来，再决定是否扩大投入。`);
+    if (/副业|创业|客户|顾问|第二曲线/u.test(text)) return vary(`要判断“${titleParts.left}”，先完成一次非熟人付费交付，记录获客和交付成本，再看它是不是一条能重复的路。`);
+    if (/offer|机会|跳槽|新公司/iu.test(text)) return vary(`处理“${titleParts.right}”时，先向未来上级核清权限、十二个月目标和可用资源，再把最坏退出成本写出来，不让一个职位名称替自己做决定。`);
   }
   return null;
 }
@@ -4577,6 +4631,11 @@ function topicSpecificOpening(
         `这次服务从“${topic.title}”开始，但第一步不是推产品，而是确认这是不是客户眼下真正要解决的问题。`,
       ]
       : profileIdentity === "overseas_student_parent" ? parentBuyerScenes : selfBuyerScenes;
+  // 历史去重回退必须按序切换现场，不能继续依赖哈希碰运气；否则同一标题
+  // 连续生成时可能再次抽到相同开头，白白消耗后续模型修复轮次。
+  if (/^history-\d+$/u.test(variationSalt)) {
+    return scenes[semanticVariationIndex(variationSalt, scenes.length)];
+  }
   return pickStableVariant(seed, "opening", scenes);
 }
 
@@ -4641,17 +4700,17 @@ export function fallbackDraftBlueprint(
       bridge_paragraph: contextualBridge,
     },
     opening: topicSpecificOpening(account, topic, variationSalt),
-    core_judgement: pickStableVariant(seed, "core-lead", [
+    core_judgement: [
       `我后来才看清：${coreJudgement}`,
       `这件事最后落到一个判断：${coreJudgement}`,
       `答案并不在更多选项里。${coreJudgement}`,
       `把情绪拿掉以后，我留下的核心判断是：${coreJudgement}`,
-    ]),
+    ][semanticVariationIndex(variationSalt, 4)],
     delivery_format: spec.format,
     delivery_sections: fallbackDeliverySections(topic, businessLine, spec, variationSalt),
     service_bridge: contextualBridge,
     stage_result: conversionContract.stage_result,
-    closing: semanticClosing(topic, businessLine) || pickStableVariant(seed, "closing", [
+    closing: semanticClosing(topic, businessLine, variationSalt) || pickStableVariant(seed, "closing", [
       `${fallbackClosing(cta, businessLine)} 先把“${topic.title}”从结论改成一个待验证的问题。`,
       `先别急着把“${topic.title}”变成最终答案，今天只完成一个能拿到外部反馈的动作。`,
       `回到自己的处境，把${promiseSubject}里最没有证据的一项圈出来，下一步先验证它。`,
@@ -4814,7 +4873,11 @@ function semanticLongContext(topic: string, businessLine: GrowthBusinessLine) {
 
 function longVersionContext(businessLine: GrowthBusinessLine, seed = "default") {
   const semantic = semanticLongContext(seed, businessLine);
-  if (semantic) return semantic;
+  if (semantic) {
+    const opening = seed.split("::").slice(1).join("::").trim();
+    const sceneAnchor = Array.from(opening.replace(/[。！？!?]+$/u, "")).slice(0, 22).join("");
+    return sceneAnchor ? `回到“${sceneAnchor}”那个现场，${semantic}` : semantic;
+  }
   return pickStableVariant(seed, "long-context", businessLine === "overseas_student" ? [
     "真正执行时，岗位、材料和截止时间要放在同一张表里看。只看投了多少份没有意义，还要记下用了哪个版本、卡在哪一轮，以及下一次只改哪个变量。",
     "我后来把每天的忙乱改成按周复盘：哪类岗位有回音、哪份材料被看见、哪个截止点不能错过。记录一具体，焦虑就不再替事实做决定。",
@@ -4907,12 +4970,16 @@ function blueprintTopicTitle(blueprint: DraftBlueprintContext) {
 
 function topicEvidenceLine(blueprint: DraftBlueprintContext) {
   const title = blueprintTopicTitle(blueprint);
-  if (/面试|追问|答案|自我介绍|背题/u.test(title)) return "我把一次模拟面试录下来，只标出三类断点：事实想不起来、个人贡献说不清、结果数字没有依据；下一轮只补这些断点。";
-  if (/简历|项目|材料|经历/u.test(title)) return "我把每一版简历对应的岗位和回音单独记录，用下一批真实反馈判断该改匹配还是改表达。";
-  if (/验证.{0,5}客户|客户.{0,5}验证|离职前.{0,8}客户/u.test(title)) return "我把这次客户验证拆成四项：客户从哪里来、为什么付费、交付花了多久、哪些反馈能指导下一次；收入只是其中一项。";
-  if (/副业|创业|客户|顾问|第二曲线/u.test(title)) return "我把这次收入的客户来源、交付耗时和复购可能单独记下，判断它是偶然项目，还是一条可以重复的路径。";
-  if (/offer|机会|跳槽|新公司/iu.test(title)) return "我把职位名称和涨薪先遮住，只比较权限、资源、十二个月目标和最坏退出成本，再看它是否真的优于现岗位。";
-  if (/离职|裸辞|不敢走|辞职/u.test(title)) return "我分别记录个人能力的外部反馈、家庭现金流底线和候选方向的验证结果，不再把三件事混成一句敢不敢走。";
+  const sceneAnchor = Array.from(blueprint.opening.replace(/[。！？!?]+$/u, "")).slice(0, 18).join("");
+  const contextualize = (evidence: string) => sceneAnchor
+    ? `复盘“${sceneAnchor}”这次卡点时，${evidence}`
+    : evidence;
+  if (/面试|追问|答案|自我介绍|背题/u.test(title)) return contextualize("我把一次模拟面试录下来，只标出三类断点：事实想不起来、个人贡献说不清、结果数字没有依据；下一轮只补这些断点。");
+  if (/简历|项目|材料|经历/u.test(title)) return contextualize("我把每一版简历对应的岗位和回音单独记录，用下一批真实反馈判断该改匹配还是改表达。");
+  if (/验证.{0,5}客户|客户.{0,5}验证|离职前.{0,8}客户/u.test(title)) return contextualize("我把这次客户验证拆成四项：客户从哪里来、为什么付费、交付花了多久、哪些反馈能指导下一次；收入只是其中一项。");
+  if (/副业|创业|客户|顾问|第二曲线/u.test(title)) return contextualize("我把这次收入的客户来源、交付耗时和复购可能单独记下，判断它是偶然项目，还是一条可以重复的路径。");
+  if (/offer|机会|跳槽|新公司/iu.test(title)) return contextualize("我把职位名称和涨薪先遮住，只比较权限、资源、十二个月目标和最坏退出成本，再看它是否真的优于现岗位。");
+  if (/离职|裸辞|不敢走|辞职/u.test(title)) return contextualize("我分别记录个人能力的外部反馈、家庭现金流底线和候选方向的验证结果，不再把三件事混成一句敢不敢走。");
   const parts = title.split(/[，,；;：:？?]/u).map((item) => item.trim()).filter(Boolean);
   const left = parts[0] || Array.from(title).slice(0, Math.ceil(Array.from(title).length / 2)).join("");
   const right = parts[1] || Array.from(title).slice(Math.ceil(Array.from(title).length / 2)).join("");
@@ -4994,7 +5061,7 @@ export function composeBlueprintBody(
           ? "使用这份安排时，把岗位、材料版本和截止时间放在一起记录，每轮只根据真实反馈调整一个变量。"
           : "使用这套判断时，把进入门槛、能力证据和停止条件放在一起记录，再根据现实反馈调整。"
         : topicAnchor
-          ? `围绕“${topicAnchor}”，${longVersionContext(businessLine, topicAnchor)}\n\n${evidenceLine}`
+          ? `围绕“${topicAnchor}”，${longVersionContext(businessLine, `${topicAnchor}::${opening}`)}\n\n${evidenceLine}`
           : longVersionContext(businessLine, topicAnchor)
     : "";
   return [opening, identityEvidence, coreJudgement, versionContext, serviceBridge, renderedSections, closing]
@@ -5467,7 +5534,6 @@ export function composeUniqueDeterministicDraftBody(input: {
     // 专业介入段和执行细节。这样去重不会把内容主题改掉。
     const candidateBlueprint = index === 0 ? varied : {
       ...varied,
-      core_judgement: input.blueprint.core_judgement,
       fulfillment_contract: input.blueprint.fulfillment_contract,
     };
     const body = composeBlueprintBody(candidateBlueprint, input.spec, undefined, {

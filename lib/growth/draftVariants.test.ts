@@ -247,6 +247,64 @@ describe("draft variants", () => {
     expect(countPublishChars(topic.title, longBody, ["#留学生求职"]).total).toBeLessThanOrEqual(1000);
   });
 
+  it("can regenerate the same interview title without repeating its previous body", () => {
+    const account = {
+      id: "repeat-student", tenant_id: "tenant", persona: "buyer", business_line: "overseas_student",
+      one_liner: "留子回国求职踩坑实录｜边找方向边更新", target_user: "准备秋招的留学生",
+      core_problem: "面试追问容易卡住", account_value: "记录本人求职过程",
+      trust_source: "本人投递与面试记录", persona_specific: { profile_identity: "overseas_student_self" },
+    } as unknown as GrowthAccount;
+    const topic = {
+      id: "repeat-interview", method_group: "native", method_id: "human_pain", method_label: "行业人性痛点",
+      generation_mode: "default", target_user: "留学生", pain: "面试追问", hook: "", follow_reason: "本人经历",
+      test_variable: "面试焦虑", expected_signal: "咨询", repeatable_angle: "面试准备", broad_traffic_risk: 1,
+      priority: "A", title: "背了半本答案，怕被追着问", title_promise: "讲清背答案却接不住面试追问的真实卡点和改法",
+    } as unknown as TopicCandidate;
+    const ordinarySpec = { format: "paragraphs" as const, minimumSections: 2, rule: "至少用2段完成承诺" };
+    const history: Array<{ body: string }> = [];
+
+    for (let index = 0; index < 3; index += 1) {
+      const generated = composeUniqueDeterministicDraftBody({
+        account, topic, cta: "soft_bridge", spec: ordinarySpec,
+        blueprint: fallbackDraftBlueprint(account, topic, "soft_bridge", ordinarySpec, `round-${index}`),
+        bodyVersion: "long", businessLine: "overseas_student", historicalBodies: history,
+      });
+      const reasons = generated.attemptedBodies.map((candidate) => bodyUniquenessProblem(candidate.body, history));
+      expect(generated.variationIndex, `same-title round ${index}: ${JSON.stringify(reasons.map((reason) => ({ reason: reason?.reason, score: reason?.score })))}`).toBeGreaterThanOrEqual(0);
+      expect(bodyUniquenessProblem(generated.body, history)).toBeNull();
+      history.push({ body: generated.body });
+    }
+  });
+
+  it("can regenerate the same executive title without repeating its previous body", () => {
+    const account = {
+      id: "repeat-executive", tenant_id: "tenant", persona: "buyer", business_line: "executive",
+      one_liner: "34岁前中层裸辞找方向的真实记录", target_user: "转型中的中高管",
+      core_problem: "想离职但缺少现实验证", account_value: "记录本人职业决策过程",
+      trust_source: "本人职业转型记录", persona_specific: {},
+    } as unknown as GrowthAccount;
+    const topic = {
+      id: "repeat-resignation", method_group: "native", method_id: "human_pain", method_label: "行业人性痛点",
+      generation_mode: "default", target_user: "中高管", pain: "不敢离职", hook: "", follow_reason: "本人经历",
+      test_variable: "离职焦虑", expected_signal: "咨询", repeatable_angle: "离职决策", broad_traffic_risk: 1,
+      priority: "A", title: "当了总监，不敢提离职", title_promise: "讲清中高管不敢轻易离职的深层顾虑和验证动作",
+    } as unknown as TopicCandidate;
+    const ordinarySpec = { format: "paragraphs" as const, minimumSections: 2, rule: "至少用2段完成承诺" };
+    const history: Array<{ body: string }> = [];
+
+    for (let index = 0; index < 3; index += 1) {
+      const generated = composeUniqueDeterministicDraftBody({
+        account, topic, cta: "soft_bridge", spec: ordinarySpec,
+        blueprint: fallbackDraftBlueprint(account, topic, "soft_bridge", ordinarySpec, `round-${index}`),
+        bodyVersion: "long", businessLine: "executive", historicalBodies: history,
+      });
+      const reasons = generated.attemptedBodies.map((candidate) => bodyUniquenessProblem(candidate.body, history));
+      expect(generated.variationIndex, `same-title executive round ${index}: ${JSON.stringify(reasons.map((reason) => ({ reason: reason?.reason, score: reason?.score })))}`).toBeGreaterThanOrEqual(0);
+      expect(bodyUniquenessProblem(generated.body, history)).toBeNull();
+      history.push({ body: generated.body });
+    }
+  });
+
   it("keeps repeated fast long generations distinct across a realistic title set", () => {
     const account = {
       id: "buyer-account", tenant_id: "tenant", business_line: "executive", persona: "buyer",
