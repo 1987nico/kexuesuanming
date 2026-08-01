@@ -6,6 +6,7 @@ const STRICT_SIMILARITY_THRESHOLD = 0.72;
 
 export interface BodyUniquenessReference {
   body: string;
+  title?: string;
   topic_id?: string;
   draft_id?: string;
   created_at?: string;
@@ -105,6 +106,7 @@ export function bodyHistoryReferences(input: {
     .filter((draft) => Date.parse(draft.created_at) >= cutoff)
     .map((draft) => ({
       body: draft.body,
+      title: draft.title,
       topic_id: input.runs.find((run) => run.id === draft.run_id)?.selected_topic?.id,
       draft_id: draft.id,
       created_at: draft.created_at,
@@ -114,6 +116,7 @@ export function bodyHistoryReferences(input: {
       .filter((entry) => Date.parse(entry.created_at) >= cutoff)
       .map((entry) => ({
         body: entry.body,
+        title: entry.title,
         topic_id: entry.topic_id,
         draft_id: entry.draft_id,
         created_at: entry.created_at,
@@ -139,15 +142,18 @@ export function historyExcludingCurrentPair(
   history: BodyUniquenessReference[],
   currentPairBodies: string[],
   currentPair?: {
+    titles?: string[];
     topicIds?: string[];
     draftIds?: string[];
   },
 ) {
   const current = new Set(currentPairBodies.filter(Boolean).map(bodyFingerprint));
+  const titles = new Set(currentPair?.titles?.filter(Boolean).map(normalizedText) ?? []);
   const topicIds = new Set(currentPair?.topicIds?.filter(Boolean) ?? []);
   const draftIds = new Set(currentPair?.draftIds?.filter(Boolean) ?? []);
   return history.filter((reference) => (
     !current.has(bodyFingerprint(reference.body))
+    && (!reference.title || !titles.has(normalizedText(reference.title)))
     && (!reference.topic_id || !topicIds.has(reference.topic_id))
     && (!reference.draft_id || !draftIds.has(reference.draft_id))
   ));

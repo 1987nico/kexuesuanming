@@ -132,6 +132,7 @@ export async function POST(req: Request) {
     allHistoricalBodies,
     referenceDraft ? [referenceDraft.body] : [],
     referenceDraft ? {
+      titles: [topic.title],
       topicIds: [topic.id],
       draftIds: [referenceDraft.id],
     } : undefined,

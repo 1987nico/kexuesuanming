@@ -82,6 +82,28 @@ describe("body history uniqueness", () => {
     expect(filtered.map((item) => item.draft_id)).toEqual(["draft-history"]);
   });
 
+  it("removes earlier retries of the same selected title from the paired long gate", () => {
+    const filtered = historyExcludingCurrentPair([
+      {
+        body: "同一标题此前生成过的短版正文。",
+        title: "面试了几家公司，心里却没个能放心的",
+        topic_id: "older-topic-id",
+        draft_id: "older-retry",
+      },
+      {
+        body: "另一个标题的真实历史正文。",
+        title: "另外一个选题",
+        topic_id: "history-topic",
+        draft_id: "history-draft",
+      },
+    ], [], {
+      titles: ["面试了几家公司，心里却没个能放心的"],
+      topicIds: ["current-topic-id"],
+    });
+
+    expect(filtered.map((item) => item.draft_id)).toEqual(["history-draft"]);
+  });
+
   it("records unselected generated bodies inside the run payload", () => {
     const now = new Date().toISOString();
     const run = {
