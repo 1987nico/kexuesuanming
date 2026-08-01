@@ -5111,6 +5111,7 @@ async function generateSingleDraft(input: {
     source_snapshot: input.topic.source_snapshot, selected_body_version: input.bodyVersion,
     raw_body_tags: [], tagging_status: "pending", canonical_tag_ids: [], cta_type: cta, validation_checks: [],
     delivery_contract: deliveryContractFromBlueprint(selectedBlueprint), certification_status: "generating",
+    generation_core_judgement: selectedBlueprint.core_judgement,
     repair_history: [], fallback_used: false,
     generation_pipeline_version: "v3_5",
     generation_diagnostics: {
@@ -5188,21 +5189,39 @@ export async function generateDraftVariants(input: {
   count?: number; excludeBodies?: string[]; learningBrief?: GrowthLearningBrief;
   bodyVersion?: "short" | "long";
   historicalBodies?: BodyUniquenessReference[];
+  /** 长版后台补齐时复用已认证短版的核心判断与三项合同。 */
+  referenceDraft?: ContentDraft;
 }) {
   const cta = ctaType(input.account.persona);
   const planned = await generateDraftBlueprint({ account: input.account, topic: input.topic, cta });
+  const referenceContract = input.referenceDraft?.delivery_contract;
+  const sharedBlueprint = input.referenceDraft ? {
+    ...planned.blueprint,
+    core_judgement: input.referenceDraft.generation_core_judgement
+      || planned.blueprint.core_judgement,
+    identity_contract: referenceContract?.identity_contract
+      || planned.blueprint.identity_contract,
+    fulfillment_contract: referenceContract?.fulfillment_contract
+      || planned.blueprint.fulfillment_contract,
+    conversion_contract: referenceContract?.conversion_contract
+      || planned.blueprint.conversion_contract,
+  } : planned.blueprint;
   const shared = {
     ...input,
-    blueprint: planned.blueprint,
+    blueprint: sharedBlueprint,
     // 通用业务模板只用于生成蓝图时的字段校准，不得再作为整篇正文交付。
-    fallbackBlueprint: planned.blueprint,
+    fallbackBlueprint: sharedBlueprint,
     spec: planned.spec,
   };
   if (input.bodyVersion) {
     const generated = await generateSingleDraft({
       ...shared,
       bodyVersion: input.bodyVersion,
-      excludeBodies: input.excludeBodies,
+      excludeBodies: [
+        ...(input.excludeBodies ?? []),
+        ...(input.referenceDraft ? [input.referenceDraft.body] : []),
+      ],
+      currentPairBodies: input.referenceDraft ? [input.referenceDraft.body] : undefined,
     });
     return { drafts: [generated.draft], usage: generated.usage || planned.usage };
   }

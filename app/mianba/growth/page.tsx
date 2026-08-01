@@ -1442,6 +1442,7 @@ export default function GrowthPage() {
     run: GrowthRun,
     topic: TopicCandidate,
     requestMode: "interactive" | "prewarm",
+    bodyVersion?: "short" | "long",
   ) {
     return requestJSON<DraftVariantResponse>("/api/growth/drafts/variants", {
       method: "POST",
@@ -1452,6 +1453,7 @@ export default function GrowthPage() {
         businessLine,
         persona,
         requestMode,
+        bodyVersion,
       }),
     });
   }
@@ -1463,7 +1465,9 @@ export default function GrowthPage() {
     const cached = bodyPrewarmResults.current.get(key);
     if (cached) return Promise.resolve(cached);
     trackGrowthEvent("body_preheat_started", account, { runId: run.id, topicId: topic.id });
-    const promise = requestBodyVariants(account, run, topic, "prewarm")
+    // 预热只生成短版：优先把用户点击后第一屏的等待压到最低；
+    // 长版在短版可见后继续后台补齐，不再拖住短版交付。
+    const promise = requestBodyVariants(account, run, topic, "prewarm", "short")
       .then((result) => {
         bodyPrewarmResults.current.set(key, result);
         return result;
@@ -1887,6 +1891,7 @@ export default function GrowthPage() {
       stageIndex = Math.min(stageIndex + 1, BODY_GENERATION_STAGES.length - 1);
       setBodyProgressMessage(BODY_GENERATION_STAGES[stageIndex]);
     }, 7_000);
+    let longVersionPending = false;
     try {
       const requestStartedAt = performance.now();
       const editedTitle = titleEdits[topic.id] ?? topic.title;
@@ -1907,7 +1912,9 @@ export default function GrowthPage() {
         const pending = bodyPrewarmInFlight.current.get(prewarmKey);
         if (pending) result = await pending.catch(() => undefined);
       }
-      if (!result) result = await requestBodyVariants(account, saved.run, saved.topic, "interactive");
+      if (!result) result = await requestBodyVariants(account, saved.run, saved.topic, "interactive", "short");
+      const shortDrafts = result.drafts.filter((draft) => draft.selected_body_version !== "long");
+      if (!shortDrafts.length) throw new Error("短版正文暂未完成，系统已保留标题，请稍后重试。");
       setVariants(result.drafts);
       trackGrowthEvent("body_shown", account, {
         runId: saved.run.id,
@@ -1915,15 +1922,41 @@ export default function GrowthPage() {
         cacheHit: result.cacheHit ?? bodyPrewarmResults.current.has(prewarmKey),
         durationMs: Math.round(performance.now() - requestStartedAt),
       });
-      setMessage("短版和长版已完成系统认证，可以直接选择使用。");
-      setBodyProgressMessage("");
+      setMessage(result.drafts.some((draft) => draft.selected_body_version === "long")
+        ? "短版和长版已完成系统认证，可以直接选择使用。"
+        : "短版已完成，可以先查看或使用；长版正在后台补齐。"
+      );
       setBodyVersionView(result.drafts.some((draft) => draft.selected_body_version !== "long") ? "short" : "long");
       goToStep("4");
+      if (!result.drafts.some((draft) => draft.selected_body_version === "long")) {
+        longVersionPending = true;
+        const requestWorkspace = workspaceKey(businessLine, persona, account.id);
+        setBodyProgressMessage("短版已可使用，长版正在后台生成并完成认证…");
+        void requestBodyVariants(account, saved.run, saved.topic, "interactive", "long")
+          .then((longResult) => {
+            if (activeWorkspace.current !== requestWorkspace) return;
+            setVariants((current) => {
+              const merged = [...current, ...longResult.drafts];
+              return merged.filter((draft, index, drafts) => drafts.findIndex((candidate) =>
+                candidate.selected_body_version === draft.selected_body_version,
+              ) === index);
+            });
+            setMessage("长版也已完成系统认证；短版和长版现在都可以使用。");
+          })
+          .catch((error) => {
+            if (activeWorkspace.current === requestWorkspace) {
+              setMessage(`短版可以正常使用；长版暂未完成：${(error as Error).message}`);
+            }
+          })
+          .finally(() => {
+            if (activeWorkspace.current === requestWorkspace) setBodyProgressMessage("");
+          });
+      }
     } catch (error) {
       setMessage((error as Error).message);
     } finally {
       window.clearInterval(stageTimer);
-      setBodyProgressMessage("");
+      if (!longVersionPending) setBodyProgressMessage("");
       setBusy(null);
     }
   }
@@ -2805,6 +2838,11 @@ export default function GrowthPage() {
                 >
                   {variants.length > 0 && visibleBodyDraft ? (
                     <div>
+                      {!chosen && bodyProgressMessage && (
+                        <div className="mb-4 rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-800">
+                          {bodyProgressMessage}
+                        </div>
+                      )}
                       {!chosen && variants.length > 1 && (
                         <div className="mb-5 inline-flex rounded-xl bg-slate-100 p-1" role="tablist" aria-label="正文版本">
                           {(["short", "long"] as const).map((version) => {

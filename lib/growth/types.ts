@@ -958,6 +958,11 @@ export interface ContentDraft {
   validation_report?: DraftValidationReport;
   /** v3.4 正文交付合同：生成、修复和标注共享同一份结构化依据。 */
   delivery_contract?: DraftDeliveryContract;
+  /**
+   * 短版先行、长版后台补齐时共享的核心判断。仅供生成管线复用，
+   * 不展示给操作者，也不会进入复制发布内容。
+   */
+  generation_core_judgement?: string;
   certification_status?: DraftCertificationStatus;
   certified_at?: string;
   repair_history?: DraftRepairRecord[];

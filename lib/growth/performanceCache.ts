@@ -197,6 +197,7 @@ export function freshDraftCache(
   account: GrowthAccount,
   topic: TopicCandidate,
   at = Date.now(),
+  bodyVersion?: "short" | "long",
 ) {
   const key = draftCacheKey(account, topic);
   return run.draft_variant_cache?.find((entry) =>
@@ -206,7 +207,9 @@ export function freshDraftCache(
     && entry.generation_version === DRAFT_PREWARM_GENERATION_VERSION
     && entry.status === "ready"
     && Date.parse(entry.expires_at) > at
-    && entry.drafts.length >= 2
+    && (bodyVersion
+      ? entry.drafts.some((draft) => draft.selected_body_version === bodyVersion)
+      : entry.drafts.length >= 2)
     && entry.drafts.every((draft) => draft.certification_status === "certified"),
   );
 }
@@ -220,13 +223,20 @@ export function withDraftCache(input: {
 }) {
   const cacheKey = draftCacheKey(input.account, input.topic);
   const ttl = input.topic.source_snapshot ? DAY_MS : 3 * DAY_MS;
+  const existingDrafts = input.run.draft_variant_cache
+    ?.find((item) => item.cache_key === cacheKey)
+    ?.drafts ?? [];
+  const mergedDrafts = [...input.drafts, ...existingDrafts]
+    .filter((draft, index, drafts) => drafts.findIndex((candidate) =>
+      candidate.selected_body_version === draft.selected_body_version,
+    ) === index);
   const entry: NonNullable<GrowthRun["draft_variant_cache"]>[number] = {
     topic_id: input.topic.id,
     cache_key: cacheKey,
     profile_version: accountProfileVersion(input.account),
     generation_version: DRAFT_PREWARM_GENERATION_VERSION,
     status: "ready",
-    drafts: input.drafts,
+    drafts: mergedDrafts,
     generated_at: input.timestamp,
     expires_at: new Date(Date.parse(input.timestamp) + ttl).toISOString(),
   };

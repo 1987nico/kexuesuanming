@@ -81,8 +81,13 @@ export async function POST(req: Request) {
   }
   const generationAccount = accountForBusinessGeneration(account);
   const requestMode = parsed.data.requestMode ?? "interactive";
-  const cached = bodyPrewarmEnabled() ? freshDraftCache(run, account, topic) : undefined;
+  const cached = bodyPrewarmEnabled()
+    ? freshDraftCache(run, account, topic, Date.now(), parsed.data.bodyVersion)
+    : undefined;
   if (cached) {
+    const cachedDrafts = parsed.data.bodyVersion
+      ? cached.drafts.filter((draft) => draft.selected_body_version === parsed.data.bodyVersion)
+      : cached.drafts;
     await store.saveUsage({
       tenant_id: DEFAULT_TENANT_ID,
       user_id: guard.auth.user.id,
@@ -99,7 +104,7 @@ export async function POST(req: Request) {
       },
     });
     const response = NextResponse.json({
-      drafts: cached.drafts,
+      drafts: cachedDrafts,
       topic,
       cacheHit: true,
       prewarm: requestMode === "prewarm",
@@ -137,6 +142,10 @@ export async function POST(req: Request) {
 
   let generated: Awaited<ReturnType<typeof generateDraftVariants>>;
   try {
+    const referenceDraft = parsed.data.bodyVersion === "long"
+      ? freshDraftCache(run, account, topic, Date.now(), "short")
+        ?.drafts.find((draft) => draft.selected_body_version === "short")
+      : undefined;
     generated = await generateDraftVariants({
       tenantId: DEFAULT_TENANT_ID,
       account: generationAccount,
@@ -144,6 +153,7 @@ export async function POST(req: Request) {
       topic,
       count: parsed.data.count ?? 2,
       bodyVersion: parsed.data.bodyVersion,
+      referenceDraft,
       excludeBodies: parsed.data.excludeBodies,
       historicalBodies,
       learningBrief,

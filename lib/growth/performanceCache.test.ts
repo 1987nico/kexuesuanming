@@ -161,4 +161,41 @@ describe("growth performance cache", () => {
       .not.toBe(draftCacheKey(current, item));
     expect(freshDraftCache(cachedRun, current, topic("换了标题后缓存应失效"))).toBeUndefined();
   });
+
+  it("serves a certified short draft before the long draft is ready", () => {
+    const current = account();
+    const item = topic();
+    const shortRun = withDraftCache({
+      run: run(item),
+      account: current,
+      topic: item,
+      drafts: [{
+        id: "draft-short",
+        certification_status: "certified",
+        selected_body_version: "short",
+      } as ContentDraft],
+      timestamp: new Date().toISOString(),
+    });
+
+    expect(freshDraftCache(shortRun, current, item)).toBeUndefined();
+    expect(freshDraftCache(shortRun, current, item, Date.now(), "short")?.drafts)
+      .toHaveLength(1);
+    expect(freshDraftCache(shortRun, current, item, Date.now(), "long")).toBeUndefined();
+
+    const completeRun = withDraftCache({
+      run: shortRun,
+      account: current,
+      topic: item,
+      drafts: [{
+        id: "draft-long",
+        certification_status: "certified",
+        selected_body_version: "long",
+      } as ContentDraft],
+      timestamp: new Date().toISOString(),
+    });
+
+    expect(freshDraftCache(completeRun, current, item)?.drafts
+      .map((draft) => draft.selected_body_version))
+      .toEqual(["long", "short"]);
+  });
 });
