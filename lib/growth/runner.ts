@@ -5024,11 +5024,12 @@ async function generateSingleDraft(input: {
   let lastProblem = "模型未返回完整正文结构";
   let lastFailureCode: DraftPipelineFailureCode = "model_unavailable";
 
-  // 短版的共享蓝图已经包含身份、标题兑现、转化因果和完整交付段落。
-  // 正常路径直接用这份已校准蓝图组装并进入同一套认证门禁，省掉一次
-  // 只为改写结构而发起的模型调用；只有身份或历史去重未通过时，才回退
-  // 到下方模型生成与定点修复，不以提速为由降低质量标准。
-  if (input.bodyVersion === "short") {
+  // 单版本渐进交付使用的共享蓝图已经包含身份、标题兑现、转化因果和完整
+  // 交付段落。短版和长版都先由同一份合同确定性装配，再进入完全相同的
+  // 认证门禁。长版装配器会额外补充现场、判断依据和执行细节，因此不是把
+  // 短版简单拉长。只有身份或历史去重未通过时，才回退到下方模型改写；
+  // 这样供应商的尾部延迟不会再让一个本可交付的长版等待数轮后失败。
+  if (input.bodyVersion === "short" || input.bodyVersion === "long") {
     const blueprintBody = composeBlueprintBody(input.blueprint, input.spec, undefined, {
       bodyVersion: input.bodyVersion,
       businessLine,
@@ -5038,7 +5039,11 @@ async function generateSingleDraft(input: {
     if (!identityProblem && !duplicate) {
       body = blueprintBody;
       selectedBlueprint = input.blueprint;
-      selectedNormalizationActions = ["compose_short_from_certified_blueprint"];
+      selectedNormalizationActions = [
+        input.bodyVersion === "short"
+          ? "compose_short_from_certified_blueprint"
+          : "compose_long_from_certified_blueprint",
+      ];
       payload = {};
     } else {
       lastProblem = identityProblem || duplicate?.reason || lastProblem;
@@ -5250,7 +5255,7 @@ export async function generateDraftVariants(input: {
     spec: planned.spec,
   };
   if (input.bodyVersion) {
-    const generated = await generateSingleDraft({
+    let generated = await generateSingleDraft({
       ...shared,
       bodyVersion: input.bodyVersion,
       excludeBodies: [
@@ -5259,6 +5264,28 @@ export async function generateDraftVariants(input: {
       ],
       currentPairBodies: input.referenceDraft ? [input.referenceDraft.body] : undefined,
     });
+    // 长版后台补齐时，不只检查自身合同，还要与已经呈现的短版核对篇幅和
+    // 表达差异。若共享合同在特殊标题下没有自然拉开篇幅，系统在后台直接
+    // 用同一蓝图重组长版；操作者无需重选标题或重复点击。
+    if (input.bodyVersion === "long" && input.referenceDraft
+      && (!draftVariantOrderIsValid(input.referenceDraft, generated.draft)
+        || draftBodiesAreTooSimilar(input.referenceDraft.body, generated.draft.body))) {
+      const rebuilt = await rebuildVariantForLengthOrder({
+        draft: generated.draft,
+        account: input.account,
+        topic: input.topic,
+        blueprint: generated.blueprint,
+        spec: planned.spec,
+        businessLine: input.account.business_line ?? "executive",
+        compact: false,
+        aggressive: false,
+      });
+      if (!draftVariantOrderIsValid(input.referenceDraft, rebuilt)
+        || draftBodiesAreTooSimilar(input.referenceDraft.body, rebuilt.body)) {
+        throw pipelineFailure("variant_too_similar", "确定性长版重组后仍未拉开差异");
+      }
+      generated = { ...generated, draft: rebuilt };
+    }
     return { drafts: [generated.draft], usage: generated.usage || planned.usage };
   }
 

@@ -113,34 +113,47 @@ export async function POST(req: Request) {
     return response;
   }
 
+  const historyStartedAt = Date.now();
   const [notes, runs] = await Promise.all([
     store.listDrafts(account.id),
     store.listRuns(account.id),
   ]);
+  const historyDurationMs = Date.now() - historyStartedAt;
   const historicalBodies = [
     ...bodyHistoryReferences({ drafts: notes, runs }),
     ...(parsed.data.excludeBodies ?? []).map((body) => ({ body })),
   ];
-  const reviews = await store.listReviewsByAccount(account.id, notes.map((draft) => draft.id));
-  let weeklyReview = account.weekly_review ?? account.stage_review;
-  if (!weeklyReview || isWeeklyReviewStale(weeklyReview, reviews)) {
-    weeklyReview = buildWeeklyReviewResult({ account, notes, reviews });
-    await store.saveAccount({
-      ...account,
-      weekly_review: weeklyReview,
-      stage_review: weeklyReview,
-      updated_at: new Date().toISOString(),
+  // 渐进式单版本正文使用的是已经锁定的标题合同，不需要先重新计算周复盘
+  // 学习摘要。原先这里会额外读取全部复盘并可能写回账号，既不参与确定性
+  // 组装，也把数据库尾部延迟带进用户等待路径。旧版“双版本一次生成”入口
+  // 仍保留完整学习链路，兼容已有调用。
+  let learningBrief: ReturnType<typeof buildLearningBrief> | undefined;
+  let learningDurationMs = 0;
+  if (!parsed.data.bodyVersion) {
+    const learningStartedAt = Date.now();
+    const reviews = await store.listReviewsByAccount(account.id, notes.map((draft) => draft.id));
+    let weeklyReview = account.weekly_review ?? account.stage_review;
+    if (!weeklyReview || isWeeklyReviewStale(weeklyReview, reviews)) {
+      weeklyReview = buildWeeklyReviewResult({ account, notes, reviews });
+      await store.saveAccount({
+        ...account,
+        weekly_review: weeklyReview,
+        stage_review: weeklyReview,
+        updated_at: new Date().toISOString(),
+      });
+    }
+    learningBrief = buildLearningBrief({
+      account,
+      notes,
+      reviews,
+      weekly: weeklyReview,
+      methodId: topic.method_id,
     });
+    learningDurationMs = Date.now() - learningStartedAt;
   }
-  const learningBrief = buildLearningBrief({
-    account,
-    notes,
-    reviews,
-    weekly: weeklyReview,
-    methodId: topic.method_id,
-  });
 
   let generated: Awaited<ReturnType<typeof generateDraftVariants>>;
+  const generationStartedAt = Date.now();
   try {
     const referenceDraft = parsed.data.bodyVersion === "long"
       ? freshDraftCache(run, account, topic, Date.now(), "short")
@@ -237,6 +250,9 @@ export async function POST(req: Request) {
     requestedVersion: parsed.data.bodyVersion ?? "both",
     parallelRaceEnabled: process.env.GROWTH_PARALLEL_DRAFT_RACE !== "false",
     totalDurationMs: Date.now() - requestStartedAt,
+    historyDurationMs,
+    learningDurationMs,
+    generationDurationMs: Date.now() - generationStartedAt,
     drafts: drafts.map((draft) => ({
       version: draft.selected_body_version,
       status: draft.validation_report?.status ?? "failed",
@@ -293,7 +309,7 @@ export async function POST(req: Request) {
   const response = NextResponse.json({
     drafts,
     topic,
-    learningTrace: learningBrief.trace,
+    learningTrace: learningBrief?.trace,
     cacheHit: false,
     prewarm: requestMode === "prewarm",
   });
