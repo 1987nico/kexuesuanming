@@ -6,14 +6,13 @@ import type {
   TitleMethodId,
 } from "./types";
 import { titlesAreMethodAwareSemanticDuplicates } from "./titleQuality";
-import { fastCandidateModelEnabled } from "./performanceCache";
 
 /**
  * 标题的规则去重能识别已知模式，却无法可靠识别“同一件事换了整句话”的情况。
  * 这个审查器只做一件事：在一整批原生标题写入前，比较它们与历史标题及批内候选
  * 的实际语义。它不生成标题、不改标题、不参与来源型标题的迁移审核。
  */
-export const TITLE_NOVELTY_AUDIT_VERSION = "v2" as const;
+export const TITLE_NOVELTY_AUDIT_VERSION = "v3-quality-model" as const;
 
 /**
  * 语义终审必须比标题生成更轻：它只是挑出已通过本地硬门禁的少量候选，
@@ -320,7 +319,10 @@ export async function auditNativeTitleBatchNovelty(
       timeoutMs: 15_000,
       jsonRetries: 0,
       allowFallback: true,
-      route: fastCandidateModelEnabled() ? "fast" : "default",
+      // 候选仍由快模型并行生成，但最终的新颖度判断必须使用高质量模型。
+      // 这一步在后台预取期间完成，不增加用户点击缓存标题后的等待；若也用
+      // 轻量模型，它会把“投递无回应”“名校未必有回报”等换词题误判为新题。
+      route: "default",
     });
   const result = await requestAudit(candidates);
   const decisions = normalizeNativeTitleNoveltyDecisions(result.data, candidates, references);
