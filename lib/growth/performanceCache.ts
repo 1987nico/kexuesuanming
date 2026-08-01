@@ -10,6 +10,11 @@ export const TOPIC_PREFETCH_GENERATION_VERSION = "topic-prefetch-v1" as const;
 export const DRAFT_PREWARM_GENERATION_VERSION = "draft-prewarm-v1" as const;
 export const TOPIC_PREFETCH_TARGET = 2;
 export const TOPIC_PREFETCH_MAX = 6;
+/**
+ * 一批后台库存至少要真正换出 3 个标题，才有资格被用户一键消费。
+ * 否则“秒开”只是把上一批原样端回来，速度变快却破坏了换题承诺。
+ */
+export const TOPIC_PREFETCH_MIN_NEW_TITLES = 3;
 
 const DAY_MS = 24 * 60 * 60 * 1_000;
 
@@ -95,13 +100,21 @@ export function isFreshQueuedTopicRun(
   mode: MethodGenerationMode,
   at = Date.now(),
 ) {
+  const newTitleCount = run.method_deliveries?.length
+    ? run.method_deliveries.filter((delivery) => (
+      delivery.status === "ready" && delivery.title_origin === "new"
+    )).length
+    // 兼容上线前已经生成、尚未带 method_deliveries 的合格库存。
+    : run.topic_pool.length;
+  const minimumNewTitles = Math.min(TOPIC_PREFETCH_MIN_NEW_TITLES, run.topic_pool.length);
   return run.prefetch?.status === "queued"
     && run.prefetch.cache_key === topicCacheKey(account, mode)
     && run.prefetch.profile_version === accountProfileVersion(account)
     && run.prefetch.generation_version === TOPIC_PREFETCH_GENERATION_VERSION
     && Date.parse(run.prefetch.expires_at) > at
     && run.generation_status === "completed"
-    && run.topic_pool.length > 0;
+    && run.topic_pool.length > 0
+    && newTitleCount >= minimumNewTitles;
 }
 
 export function queuedTopicRuns(

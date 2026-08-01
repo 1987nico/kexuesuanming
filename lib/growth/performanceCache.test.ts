@@ -98,6 +98,32 @@ describe("growth performance cache", () => {
     expect(consumed.prefetch?.consumed_request_id).toBe("request-1");
   });
 
+  it("does not expose a retained-only prefetch batch as fresh inventory", () => {
+    const current = account();
+    const retainedOnly = markTopicRunQueued({
+      run: {
+        ...run(),
+        method_deliveries: [{
+          method_id: "tug_of_war",
+          method_label: "拔河式选题",
+          status: "failed",
+          reason: "本轮没有通过去重的新标题",
+          attempts: 3,
+          topic_id: "topic-1",
+          title_origin: "retained",
+          retained_from_run_id: "previous-run",
+        }],
+      },
+      account: current,
+      mode: "default",
+      batchNumber: 1,
+      timestamp: new Date().toISOString(),
+    });
+    expect(queuedTopicRuns([retainedOnly], current, "default")).toHaveLength(0);
+    // 仍保持后台隐藏，不会污染操作者最近3批。
+    expect(visibleTopicRuns([retainedOnly])).toHaveLength(0);
+  });
+
   it("isolates title queues by account persona facts", () => {
     const student = account();
     const queued = markTopicRunQueued({

@@ -1380,19 +1380,30 @@ export default function GrowthPage() {
       // 页面内只补到一批，优先让第一份可交付库存尽快就绪。用户消费后会再次
       // 触发补货；更深的库存由凌晨任务完成，避免页面后台连续占用两次模型时限。
       for (let index = 0; index < target; index += 1) {
-        await requestJSON("/api/growth/topics", {
-          method: "POST",
-          body: JSON.stringify({
-            accountId: account.id,
-            businessLine,
-            persona,
-            generationMode: "default",
-            action: "regenerate_titles",
-            requestMode: "prefetch",
-            prefetchTarget: target,
-            requestId: crypto.randomUUID(),
-          }),
-        });
+        // 严格去重账号偶尔会整批未换出新标题。后台最多自动再试两轮，只有
+        // 真正换出至少3个标题的批次才会进入可消费库存；失败不会显示给用户。
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+          const result = await requestJSON<{
+            cacheHit?: boolean;
+            generatedCount?: number;
+            prefetchStatus?: "queued" | "disabled";
+          }>("/api/growth/topics", {
+            method: "POST",
+            body: JSON.stringify({
+              accountId: account.id,
+              businessLine,
+              persona,
+              generationMode: "default",
+              action: "regenerate_titles",
+              requestMode: "prefetch",
+              prefetchTarget: target,
+              requestId: crypto.randomUUID(),
+            }),
+          });
+          if (result.cacheHit || (result.prefetchStatus === "queued" && (result.generatedCount ?? 0) >= 3)) {
+            break;
+          }
+        }
         if (activeWorkspace.current !== requestWorkspace) return;
       }
     })().catch((error) => {
