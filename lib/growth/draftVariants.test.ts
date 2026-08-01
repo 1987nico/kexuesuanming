@@ -263,7 +263,9 @@ describe("draft variants", () => {
     const ordinarySpec = { format: "paragraphs" as const, minimumSections: 2, rule: "至少用2段完成承诺" };
     const history: Array<{ body: string }> = [];
 
-    for (let index = 0; index < 3; index += 1) {
+    // 六轮覆盖远高于正常用户对同一精确标题的重复使用频率，同时确保
+    // 90天历史里已有多篇同题内容时仍可继续交付。
+    for (let index = 0; index < 6; index += 1) {
       const generated = composeUniqueDeterministicDraftBody({
         account, topic, cta: "soft_bridge", spec: ordinarySpec,
         blueprint: fallbackDraftBlueprint(account, topic, "soft_bridge", ordinarySpec, `round-${index}`),

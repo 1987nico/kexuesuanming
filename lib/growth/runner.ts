@@ -4173,6 +4173,22 @@ function semanticDeliverySections(
           "面试官连续问两次“为什么”时，模板答案往往会越来越空。能继续回答的部分，通常都来自亲自做过的动作和当时留下的记录。",
           "我为每段经历做一张证据卡：背景、难点、个人动作、结果、反思各写一句；再请别人随机抽一个点追问，直到不用固定顺序也能讲清。",
         ],
+        [
+          "我以前按题库分类准备答案，可一旦面试官把两个问题连在一起，原来的分类就失效了。真正缺的是对自己经历的完整理解。",
+          "我把题库放到一边，改按经历练习：同一个项目分别从冲突、决策、协作、失败和结果五个入口讲，每次都回到真实动作。",
+        ],
+        [
+          "最让我慌的不是不会答，而是说完第一层后没有细节可以继续。答案听着完整，里面却没有时间、角色、取舍和结果。",
+          "我为最重要的两段经历补了一条事实时间线，再让老师从任何节点打断追问；能接着说清前因后果，才结束这一轮。",
+        ],
+        [
+          "背熟STAR结构后，我还是会在“你为什么这么判断”这里停住。结构只能整理表达，不能替我补上当时真正做过的思考。",
+          "我重新翻项目记录，把每次关键选择的备选方案和舍弃原因写出来；练习时先说判断依据，再补动作和结果。",
+        ],
+        [
+          "我曾经把流利当成准备充分，后来录音才发现，越顺的答案越像通用模板，反而听不出我在项目里具体承担了什么。",
+          "我删掉套话，只保留自己负责的任务、遇到的限制和一个可核对结果；每轮随机换问题顺序，确认不是靠记忆句子完成。",
+        ],
       ];
       return variants[semanticVariationIndex(variationSalt, variants.length)];
     }
@@ -4353,6 +4369,12 @@ function pickStableVariant<T>(value: string, salt: string, variants: T[]) {
   return variants[stableVariantIndex(value, salt, variants.length)];
 }
 
+function pickHistoryAwareVariant<T>(value: string, salt: string, variants: T[]) {
+  return /history-\d+/u.test(value)
+    ? variants[semanticVariationIndex(value, variants.length)]
+    : pickStableVariant(value, salt, variants);
+}
+
 function fallbackClosing(cta: ContentDraft["cta_type"], businessLine: GrowthBusinessLine) {
   if (cta === "soft_bridge") return businessLine === "overseas_student"
     ? "先把自己的毕业时间、两边目标岗位和最近一次真实反馈写在同一页，再决定下一步补哪一块。"
@@ -4374,6 +4396,10 @@ function semanticClosing(
       `我给自己的下一步很具体：${instruction}`,
       `今天先完成一个动作：${instruction}`,
       `下次复盘前，我只要求自己做到这一步：${instruction}`,
+      `不再继续加题以后，我先这样做：${instruction}`,
+      `这一轮我只用真实反馈检查这个动作：${instruction}`,
+      `为了让改变能够复用，我把下一步定成：${instruction}`,
+      `先不追求一次解决全部问题，我从这里开始：${instruction}`,
     ];
     return variants[semanticVariationIndex(variationSalt, variants.length)];
   };
@@ -4409,44 +4435,44 @@ function fallbackStageResult(account: GrowthAccount, businessLine: GrowthBusines
 function fallbackIdentityEvidence(account: GrowthAccount, businessLine: GrowthBusinessLine, seed = "default") {
   const persona = account.persona;
   if (businessLine === "overseas_student") {
-    if (persona === "buyer" && resolveProfileIdentity(account) === "overseas_student_self") return pickStableVariant(seed, "identity", [
+    if (persona === "buyer" && resolveProfileIdentity(account) === "overseas_student_self") return pickHistoryAwareVariant(seed, "identity", [
       "这段时间我把自己的毕业时间、目标岗位和每次投递反馈都记在一起，才看清真正卡住的地方。",
       "临近毕业后，我亲自改过岗位表和简历版本，也记下了每次拒信与面试反馈，这些判断都来自自己的求职过程。",
       "我原本只盯结果，后来把每周投了什么、收到什么反馈写下来，才发现焦虑和事实并不是一回事。",
       "这轮求职我核过岗位说明、项目经历和时间节点，踩过的坑让我不再只听网上的标准答案。",
     ]);
-    if (persona === "buyer") return pickStableVariant(seed, "identity", [
+    if (persona === "buyer") return pickHistoryAwareVariant(seed, "identity", [
       "这段时间我把孩子的毕业时间、目标岗位和每次投递反馈都记在一起，才看清我们真正卡住的地方。",
       "陪孩子找工作的这几个月，我经手过他的岗位表、简历版本和拒信记录，很多问题不是听来的。",
       "我原本只盯结果，后来把孩子每周投了什么、收到什么反馈记下来，才发现焦虑和事实并不是一回事。",
       "家里为这次求职反复讨论过方向，我也跟着核过岗位说明和时间节点，这才有了后面的判断。",
     ]);
-    if (persona === "expert") return pickStableVariant(seed, "identity", [
+    if (persona === "expert") return pickHistoryAwareVariant(seed, "identity", [
       "做留学生求职判断时，我会先核对岗位要求、项目证据和招聘节奏，再决定应该改方向还是改材料。",
       "我经手这类求职咨询时，第一张表永远不是简历清单，而是岗位、经历证据和招聘节点的对应关系。",
       "最近几次辅导里，我都先追问学生做过什么、岗位要什么，再判断问题究竟在定位还是表达。",
       "从咨询记录看，真正有用的不是替学生选岗位，而是把每个判断放回可验证的招聘事实里。",
     ]);
-    return pickStableVariant(seed, "identity", [
+    return pickHistoryAwareVariant(seed, "identity", [
       "这类求职辅导交付里，团队先核对学生的岗位目标、项目证据和招聘节点，再决定后续辅导顺序。",
       "我们处理留学生求职问题时，会先把服务对象的目标岗位和现有材料逐项对齐，再安排具体交付。",
       "这项服务不是先改一份简历，而是先确认学生投什么、凭什么匹配，以及最近的招聘窗口在哪里。",
       "团队每次启动辅导都会先做岗位与经历盘点，用现有证据决定接下来改材料还是练表达。",
     ]);
   }
-  if (persona === "buyer") return pickStableVariant(seed, "identity", [
+  if (persona === "buyer") return pickHistoryAwareVariant(seed, "identity", [
     "这段时间我把自己的职业经历、现实约束和几个候选方向放在一起，才看清过去哪些判断只是想当然。",
     "真轮到自己做职业选择，我才发现过去会管团队，不等于能把自己的下一步讲明白。",
     "我把近几年的项目、家庭现金流和想走的方向摊开看过，这不是旁观者给的一句建议。",
     "这次转型我没有只问朋友，而是亲自做了访谈和小范围验证，才慢慢分清机会与想象。",
   ]);
-  if (persona === "expert") return pickStableVariant(seed, "identity", [
+  if (persona === "expert") return pickHistoryAwareVariant(seed, "identity", [
     "做职业决策判断时，我会把候选方向、能力证据和失败成本拆开，而不是替来访者直接选答案。",
     "我处理这类咨询时，会先统一比较口径，再看每条路的进入门槛、代价和可验证证据。",
     "复盘中高管转型案例时，我关注的不是头衔，而是哪些能力离开原平台后仍被市场承认。",
     "面对几个看似都能走的方向，我通常先找反对证据，避免来访者只收集支持自己的信息。",
   ]);
-  return pickStableVariant(seed, "identity", [
+  return pickHistoryAwareVariant(seed, "identity", [
     "这类职业决策交付里，团队先拆开候选路径、能力证据和失败成本，再安排能够拿到现实反馈的验证动作。",
     "我们服务中高管客户时，先核对现实处境和候选路线，再决定使用哪一项诊断或陪跑交付。",
     "这项服务的起点不是劝客户辞职，而是把个人能力、平台资源和家庭约束分开盘清。",
@@ -4603,6 +4629,10 @@ function topicSpecificOpening(
       `模拟面试进行到第三个追问时，我突然发现，背得最熟的那段经历反而最说不明白。`,
       `我把半本面经翻得全是标记，可真让自己解释“为什么这样做”时，答案还是断了。`,
       `那场面试结束后，我记下的不是题目，而是自己三次被追问后答不下去的地方。`,
+      `我对着录音听了两遍，第一问还算流利，追到“你具体做了什么”时，后面只剩下一串套话。`,
+      `昨晚同学临时换了一个问法，我准备好的STAR答案一下找不到入口，只能从头重新背。`,
+      `练习自我介绍时我说得很顺，可对方随手挑出一个项目数字，我才发现自己根本解释不清来源。`,
+      `面试前我又加了十道题，真正坐下来模拟时，最熟的项目还是卡在第二次“为什么”。`,
     ]
     : [
       `昨晚重新翻自己的求职记录，最扎眼的一行是“${topic.title}”。我把当时的动作和反馈又对了一遍。`,
@@ -4705,7 +4735,11 @@ export function fallbackDraftBlueprint(
       `这件事最后落到一个判断：${coreJudgement}`,
       `答案并不在更多选项里。${coreJudgement}`,
       `把情绪拿掉以后，我留下的核心判断是：${coreJudgement}`,
-    ][semanticVariationIndex(variationSalt, 4)],
+      `复盘完这次反馈，我改掉了原来的判断。${coreJudgement}`,
+      `真正需要重做的不是题库，而是准备逻辑。${coreJudgement}`,
+      `我不再用流利程度评价准备效果。${coreJudgement}`,
+      `后来每次练习前，我都会先提醒自己：${coreJudgement}`,
+    ][semanticVariationIndex(variationSalt, 8)],
     delivery_format: spec.format,
     delivery_sections: fallbackDeliverySections(topic, businessLine, spec, variationSalt),
     service_bridge: contextualBridge,
@@ -4871,10 +4905,25 @@ function semanticLongContext(topic: string, businessLine: GrowthBusinessLine) {
   return null;
 }
 
+function semanticSceneLabel(opening: string) {
+  if (/昨晚又练/u.test(opening)) return "昨晚那道临时追问";
+  if (/第三个追问/u.test(opening)) return "模拟面试的第三个追问";
+  if (/半本面经/u.test(opening)) return "那本翻满标记的面经";
+  if (/那场面试结束/u.test(opening)) return "面试结束后的三处卡顿";
+  if (/对着录音/u.test(opening)) return "录音里的那次停顿";
+  if (/同学临时换/u.test(opening)) return "同学临时换掉的问法";
+  if (/练习自我介绍/u.test(opening)) return "自我介绍后的项目数字";
+  if (/又加了十道题/u.test(opening)) return "新增十道题后的那次模拟";
+  return "刚才那次真实反馈";
+}
+
 function longVersionContext(businessLine: GrowthBusinessLine, seed = "default") {
   const semantic = semanticLongContext(seed, businessLine);
   if (semantic) {
     const opening = seed.split("::").slice(1).join("::").trim();
+    if (businessLine === "overseas_student" && /面试|追问|答案|自我介绍|背题/u.test(seed)) {
+      return `复盘${semanticSceneLabel(opening)}时，${semantic}`;
+    }
     const transition = pickStableVariant(opening, "semantic-context-transition", [
       "回到当时那个具体现场，我才发现，",
       "把那次卡顿重新拆开后，我改了准备方式。",
@@ -4990,7 +5039,7 @@ function topicEvidenceLine(blueprint: DraftBlueprintContext) {
     "判断有没有进步时，",
   ]);
   const contextualize = (evidence: string) => `${evidenceLead}${evidence}`;
-  if (/面试|追问|答案|自我介绍|背题/u.test(title)) return contextualize("我把一次模拟面试录下来，只标出三类断点：事实想不起来、个人贡献说不清、结果数字没有依据；下一轮只补这些断点。");
+  if (/面试|追问|答案|自我介绍|背题/u.test(title)) return `为了给${semanticSceneLabel(blueprint.opening)}留下证据，我把一次模拟面试录下来，只标出三类断点：事实想不起来、个人贡献说不清、结果数字没有依据；下一轮只补这些断点。`;
   if (/简历|项目|材料|经历/u.test(title)) return contextualize("我把每一版简历对应的岗位和回音单独记录，用下一批真实反馈判断该改匹配还是改表达。");
   if (/验证.{0,5}客户|客户.{0,5}验证|离职前.{0,8}客户/u.test(title)) return contextualize("我把这次客户验证拆成四项：客户从哪里来、为什么付费、交付花了多久、哪些反馈能指导下一次；收入只是其中一项。");
   if (/副业|创业|客户|顾问|第二曲线/u.test(title)) return contextualize("我把这次收入的客户来源、交付耗时和复购可能单独记下，判断它是偶然项目，还是一条可以重复的路径。");
@@ -5228,11 +5277,15 @@ function serviceBridgeSentence(
     if (persona === "buyer") {
       const attempted = configured.attempted.replace(/^当事人/u, "").replace(/^已经/u, "");
       const result = configured.stageResult.replace(/[。！？!?]+$/u, "");
-      return pickStableVariant(seed, "conversion", [
+      return pickHistoryAwareVariant(seed, "conversion", [
         `我原来${attempted}，但问题没有真正理顺。后来${configured.role}没有替我选答案，而是${configured.intervention}。变化不是立刻成功，而是${result}。`,
         `卡住之前，我一直在尝试：${attempted}。请${configured.role}介入后，先做的是${configured.intervention}；做到这里，${result}。`,
         `真正的转折不是一句鼓励。我把自己尝试“${attempted}”时留下的记录交给${configured.role}复盘，对方带我${configured.intervention}，随后${result}。`,
         `自己折腾时，我试过${attempted}。后来和${configured.role}一起把问题拆开，具体动作是${configured.intervention}，最后先得到一个阶段结果：${result}。`,
+        `原来的做法是${attempted}，继续加量却没有解决卡点。${configured.role}先和我核对已有记录，再${configured.intervention}；这一轮结束后，${result}。`,
+        `我没有因为焦虑继续重复${attempted}。请${configured.role}复盘后，我们把动作改成${configured.intervention}，可观察到的变化是${result}。`,
+        `那次我把${attempted}留下的材料全部摊开，请${configured.role}只找最关键的断点。对方随后${configured.intervention}，结果不是一句保证，而是${result}。`,
+        `我最初以为再努力一点就行，因为一直在${attempted}。后来${configured.role}用${configured.intervention}重做了准备顺序，才出现阶段变化：${result}。`,
       ]);
     }
     if (persona === "expert") {
@@ -5543,12 +5596,13 @@ export function composeUniqueDeterministicDraftBody(input: {
 }) {
   const attemptedBodies: BodyUniquenessReference[] = [];
   for (let index = 0; index < 8; index += 1) {
-    const varied = index === 0
+    const useProvidedBlueprint = index === 0 && !(input.historicalBodies?.length);
+    const varied = useProvidedBlueprint
       ? input.blueprint
       : fallbackDraftBlueprint(input.account, input.topic, input.cta, input.spec, `history-${index}`);
     // 两个版本共享同一核心判断和标题交付合同；只更换叙事表达、身份证据、
     // 专业介入段和执行细节。这样去重不会把内容主题改掉。
-    const candidateBlueprint = index === 0 ? varied : {
+    const candidateBlueprint = useProvidedBlueprint ? varied : {
       ...varied,
       fulfillment_contract: input.blueprint.fulfillment_contract,
     };
