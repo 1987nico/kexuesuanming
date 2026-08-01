@@ -3,6 +3,7 @@ import type { DraftBlueprintContext } from "./agents";
 import type { ContentDraft, GrowthAccount, TopicCandidate } from "./types";
 import { bodyUniquenessProblem } from "./bodyUniqueness";
 import {
+  bodyProfileIdentityProblem,
   certifyDraftForOperator,
   composeBlueprintBody,
   composeUniqueDeterministicDraftBody,
@@ -209,6 +210,41 @@ describe("draft variants", () => {
     expect(firstBody).toContain(firstTopic.title);
     expect(secondBody).toContain(secondTopic.title);
     expect(bodyUniquenessProblem(secondBody, [{ body: firstBody }])).toBeNull();
+  });
+
+  it("keeps an overseas student-self interview draft on identity and on promise", () => {
+    const account = {
+      id: "student-self", tenant_id: "tenant", persona: "buyer", business_line: "overseas_student",
+      one_liner: "留子回国求职踩坑实录｜边找方向边更新", target_user: "准备秋招的留学生",
+      core_problem: "面试时遇到追问容易卡住", account_value: "记录本人求职过程",
+      trust_source: "本人投递与面试记录", persona_specific: { profile_identity: "overseas_student_self" },
+    } as unknown as GrowthAccount;
+    const topic = {
+      id: "interview-followup", method_group: "native", method_id: "human_pain", method_label: "行业人性痛点",
+      generation_mode: "default", target_user: "留学生", pain: "面试追问", hook: "", follow_reason: "本人经历",
+      test_variable: "面试焦虑", expected_signal: "咨询", repeatable_angle: "面试准备", broad_traffic_risk: 1,
+      priority: "A", title: "背了半本答案，怕被追着问", title_promise: "讲清背答案却接不住面试追问的真实卡点和改法",
+    } as unknown as TopicCandidate;
+    const ordinarySpec = { format: "paragraphs" as const, minimumSections: 2, rule: "至少用2段完成承诺" };
+    const blueprint = fallbackDraftBlueprint(account, topic, "soft_bridge", ordinarySpec);
+    const shortBody = composeBlueprintBody(blueprint, ordinarySpec, undefined, {
+      bodyVersion: "short", businessLine: "overseas_student",
+    });
+    const longBody = composeBlueprintBody(blueprint, ordinarySpec, undefined, {
+      bodyVersion: "long", businessLine: "overseas_student",
+    });
+
+    expect(bodyProfileIdentityProblem(shortBody, account)).toBeUndefined();
+    expect(bodyProfileIdentityProblem(longBody, account)).toBeUndefined();
+    expect(shortBody).not.toMatch(/孩子|陪娃|我家/u);
+    expect(longBody).not.toMatch(/孩子|陪娃|我家/u);
+    expect(shortBody).toMatch(/追问/u);
+    expect(shortBody).toMatch(/目标|动作/u);
+    expect(shortBody).toMatch(/结果|数字/u);
+    expect(longBody).toMatch(/为什么|贡献/u);
+    expect(longBody).toMatch(/失败|反思/u);
+    expect(longBody.length).toBeGreaterThan(shortBody.length + 100);
+    expect(countPublishChars(topic.title, longBody, ["#留学生求职"]).total).toBeLessThanOrEqual(1000);
   });
 
   it("keeps repeated fast long generations distinct across a realistic title set", () => {
