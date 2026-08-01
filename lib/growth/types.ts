@@ -871,7 +871,7 @@ export interface GrowthRun {
     topic_id: string;
     cache_key: string;
     profile_version: string;
-    generation_version: "draft-prewarm-v1" | "draft-prewarm-v2" | "draft-prewarm-v3" | "draft-prewarm-v4" | "draft-prewarm-v5" | "draft-prewarm-v6" | "draft-prewarm-v7" | "draft-prewarm-v8";
+    generation_version: "draft-prewarm-v1" | "draft-prewarm-v2" | "draft-prewarm-v3" | "draft-prewarm-v4" | "draft-prewarm-v5" | "draft-prewarm-v6" | "draft-prewarm-v7" | "draft-prewarm-v8" | "draft-prewarm-v9-business-safe-comparison";
     status: "ready" | "expired";
     drafts: ContentDraft[];
     generated_at: string;

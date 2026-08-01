@@ -150,7 +150,14 @@ function modelTitleCandidateRows(row: any) {
     if (!fingerprint || seen.has(fingerprint)) return false;
     seen.add(fingerprint);
     return true;
-  }).slice(0, 5);
+  }).slice(0, 5).map((candidate: any) => candidate.method_id === "tug_of_war"
+    ? {
+      ...candidate,
+      // 拔河标题的承诺必须锁住两边。模型偶尔返回“分享我的思考过程”这类
+      // 泛承诺，会让正文虽有两段，却没有真正比较标题里的两条路径。
+      title_promise: fallbackCandidatePromise("tug_of_war", candidate.title, "", candidate.title_promise),
+    }
+    : candidate);
 }
 
 function accountContext(account: GrowthAccount): AccountContext {
@@ -4370,7 +4377,19 @@ function fallbackDeliverySections(
       "提前写下停止条件，到期后按真实反馈继续、调整或放弃。",
     ];
   const rotatedItems = rotate(items, "delivery-items");
-  if (topic.method_id === "tug_of_war") return rotatedItems.slice(0, 2);
+  if (topic.method_id === "tug_of_war") {
+    const parts = topicTitleParts(topic.title);
+    const left = parts.left.replace(/^(?:选|留在|继续做)/u, "").trim();
+    const right = parts.right.replace(/^(?:还是|或是|去做|转向|选择)/u, "").trim();
+    if (overseas) return [
+      `${left}：先核对这类岗位一周里的核心任务、产出形式和反馈周期，再看自己的课程、项目或实习里有没有对应证据。代价是不能只凭岗位名称想象工作；先找真实从业者访谈，并完成一次小样本任务来验证。`,
+      `${right}：同样核对日常任务、沟通对象、结果压力和成长路径，再看自己是否有能被追问的经历证据。代价是外部反馈更直接、节奏可能更快；先做一次模拟任务或深度访谈，再和前一条路径用同一张表比较。`,
+    ];
+    return [
+      `${left}：先核对进入门槛、可迁移证据和十二个月后的定价空间。代价与风险也写清，再用一次访谈、试做或市场报价验证，不凭职位想象下注。`,
+      `${right}：使用同一组标准核对资源、责任、失败成本和停止条件。先完成一个低成本验证动作，再与前一条路径按现实反馈比较。`,
+    ];
+  }
   const needed = spec.exactSections ?? spec.minimumSections;
   if (spec.format === "numbered") return rotatedItems.slice(0, Math.max(needed, 3));
   const promise = topic.title_promise
@@ -4728,6 +4747,7 @@ function topicSpecificOpening(
 function semanticCoreJudgement(topic: TopicCandidate, businessLine: GrowthBusinessLine) {
   const text = `${topic.title} ${topic.title_promise}`;
   if (businessLine === "overseas_student") {
+    if (topic.method_id === "tug_of_war") return "两类岗位没有抽象的高下之分，要用同一组标准比较日常任务、已有证据、反馈方式和试错成本。";
     if (/面试|追问|答案|自我介绍|背题/u.test(text)) return "面试准备不是把标准答案背熟，而是把自己的经历拆成经得住连续追问的事实。";
     if (/简历|项目|材料|经历/u.test(text)) return "简历不是经历清单，而是岗位要求与个人证据的对应表。";
     if (/内推|校友|熟人|人脉/u.test(text)) return "内推只能缩短进入入口的距离，不能替代岗位判断和经历匹配。";
@@ -5087,7 +5107,7 @@ function blueprintTopicTitle(blueprint: DraftBlueprintContext) {
   return quoted || blueprintTopicAnchor(blueprint);
 }
 
-function topicEvidenceLine(blueprint: DraftBlueprintContext) {
+function topicEvidenceLine(blueprint: DraftBlueprintContext, businessLine: GrowthBusinessLine) {
   const title = blueprintTopicTitle(blueprint);
   const evidenceLead = pickStableVariant(blueprint.opening, "semantic-evidence-transition", [
     "为了确认不是自己的错觉，",
@@ -5100,6 +5120,11 @@ function topicEvidenceLine(blueprint: DraftBlueprintContext) {
     "判断有没有进步时，",
   ]);
   const contextualize = (evidence: string) => `${evidenceLead}${evidence}`;
+  if (businessLine === "overseas_student") {
+    if (/岗位|方向|选择|还是|交付岗|研究岗/u.test(title)) return contextualize("我把两类岗位的日常任务、产出形式、反馈周期和自己已有的项目证据放在同一张表里，再分别找从业者核对；不再只凭岗位名称判断适不适合。");
+    if (/投递|申请|回信|面试/u.test(title)) return contextualize("我把目标岗位、对应材料版本和每次真实反馈单独记录，只根据下一批回音调整一个变量。");
+    return contextualize("我把这次判断对应的岗位要求、个人证据和真实反馈单独记录，下一轮只用这些事实校准方向。");
+  }
   if (/面试|追问|答案|自我介绍|背题/u.test(title)) return `为了给${semanticSceneLabel(blueprint.opening)}留下证据，我把一次模拟面试录下来，只标出三类断点：事实想不起来、个人贡献说不清、结果数字没有依据；下一轮只补这些断点。`;
   if (/简历|项目|材料|经历/u.test(title)) return contextualize("我把每一版简历对应的岗位和回音单独记录，用下一批真实反馈判断该改匹配还是改表达。");
   if (/验证.{0,5}客户|客户.{0,5}验证|离职前.{0,8}客户/u.test(title)) return contextualize("我把这次客户验证拆成四项：客户从哪里来、为什么付费、交付花了多久、哪些反馈能指导下一次；收入只是其中一项。");
@@ -5134,7 +5159,7 @@ export function composeBlueprintBody(
   const bodyVersion = options?.bodyVersion ?? "short";
   const businessLine = options?.businessLine ?? "executive";
   const topicAnchor = blueprintTopicReference(blueprint, businessLine);
-  const evidenceLine = topicEvidenceLine(blueprint);
+  const evidenceLine = topicEvidenceLine(blueprint, businessLine);
   const opening = asText(structure.opening) || blueprint.opening;
   // 身份是交付合同的硬字段，由系统直接装配；不允许正文模型省略后再靠关键词猜测。
   const identityEvidence = blueprint.identity_contract.evidence;

@@ -19,6 +19,12 @@ describe("business compatibility", () => {
     expect(isBusinessCompatibleText("留学生回国求职的真实复盘", "overseas_student")).toBe(true);
   });
 
+  it("blocks merchant economics from overseas copy without blocking client-facing job names", () => {
+    expect(isBusinessCompatibleText("面向客户的交付岗位", "overseas_student")).toBe(true);
+    expect(isBusinessCompatibleText("记录获客来源、交付耗时和复购可能", "overseas_student")).toBe(false);
+    expect(isBusinessCompatibleText("先完成一次收费交付，再看商业模式", "overseas_student")).toBe(false);
+  });
+
   it("sanitizes generation context without mutating the stored account", () => {
     const account = {
       id: "a1",

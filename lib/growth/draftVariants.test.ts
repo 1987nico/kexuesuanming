@@ -62,6 +62,38 @@ const spec = {
 };
 
 describe("draft variants", () => {
+  it("keeps overseas tug-of-war copy on both job paths and out of merchant economics", () => {
+    const account = {
+      id: "overseas-self", tenant_id: "tenant", business_line: "overseas_student", persona: "buyer",
+      one_liner: "留学生本人回国求职记录", target_user: "准备回国求职的留学生",
+      trust_source: "本人真实求职过程", persona_specific: { identity: "留学生本人" },
+    } as unknown as GrowthAccount;
+    const topic = {
+      id: "research-vs-client", method_group: "native", method_id: "tug_of_war", method_label: "拔河式选题",
+      generation_mode: "default", target_user: account.target_user, pain: "岗位选择", hook: "",
+      follow_reason: "真实经历", test_variable: "判断", expected_signal: "咨询",
+      repeatable_angle: "岗位比较", broad_traffic_risk: 1, priority: "A",
+      title: "内部研究岗位，还是面向客户的交付岗？",
+      title_promise: "分析我在不同岗位选择上的思考和过程",
+    } as unknown as TopicCandidate;
+    const spec = {
+      format: "numbered" as const,
+      minimumSections: 2,
+      exactSections: 2,
+      rule: "正好比较两条路径",
+    };
+    const body = composeBlueprintBody(
+      fallbackDraftBlueprint(account, topic, "soft_bridge", spec),
+      spec,
+      undefined,
+      { bodyVersion: "long", businessLine: "overseas_student" },
+    );
+
+    expect(body).toContain("内部研究岗位");
+    expect(body).toContain("面向客户的交付岗");
+    expect(body).toContain("同一组标准");
+    expect(body).not.toMatch(/获客来源|收费交付|复购|商业模式/u);
+  });
   const exactOccurrences = (text: string, needle: string) => text.split(needle).length - 1;
 
   it("repairs the production human-pain incident before the final delivery gate", () => {

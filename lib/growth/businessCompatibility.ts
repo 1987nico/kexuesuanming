@@ -9,6 +9,10 @@ import {
 const EXECUTIVE_STRONG_FOREIGN = /留学生|留学家庭|留学生家长|孩子求职|美国\s*top|海外硕士|秋招陪跑|求职辅导/iu;
 const EXECUTIVE_FOREIGN_SIGNALS = [/孩子/iu, /家长/iu, /offer/iu, /硕士/iu, /秋招/iu, /投递/iu, /群面/iu];
 const OVERSEAS_STRONG_FOREIGN = /中高管|职业决策|事业方向|职业换挡|裸辞|离开体制|管理层转型|高管转型/iu;
+// “客户”也可能出现在留学生的客户成功、客户交付等目标岗位里，不能一刀切。
+// 但获客、收费交付、复购和商业模式属于商家/创业语境；这些词进入留学生
+// 买家正文就是业务合同串线，应在结构归一化阶段直接拦下。
+const OVERSEAS_COMMERCIAL_FOREIGN = /获客来源|收费交付|复购(?:率|可能|意愿)|客户愿意付费|商业模式|交付成本/iu;
 
 /**
  * 历史账号曾把两条业务写进同一组人设字段。这里仅决定当前业务是否展示/参与生成，
@@ -17,7 +21,9 @@ const OVERSEAS_STRONG_FOREIGN = /中高管|职业决策|事业方向|职业换�
 export function isBusinessCompatibleText(value: string | undefined, businessLine: GrowthBusinessLine) {
   const text = String(value ?? "").trim();
   if (!text) return true;
-  if (businessLine === "overseas_student") return !OVERSEAS_STRONG_FOREIGN.test(text);
+  if (businessLine === "overseas_student") {
+    return !OVERSEAS_STRONG_FOREIGN.test(text) && !OVERSEAS_COMMERCIAL_FOREIGN.test(text);
+  }
   if (EXECUTIVE_STRONG_FOREIGN.test(text)) return false;
   return EXECUTIVE_FOREIGN_SIGNALS.filter((pattern) => pattern.test(text)).length < 2;
 }
