@@ -5183,7 +5183,17 @@ export function composeBlueprintBody(
     const window = chars.slice(20, maximum).join("");
     const boundary = Math.max(window.lastIndexOf("，"), window.lastIndexOf("；"), window.lastIndexOf("、"), window.lastIndexOf("。"));
     const end = boundary >= 0 ? 20 + boundary + 1 : maximum - 1;
-    return `${chars.slice(0, end).join("").replace(/[，；、]$/u, "")}。`;
+    const truncated = chars.slice(0, end).join("").replace(/[，；、]$/u, "");
+    // 长版压缩不能把操作者看到的正文截成“半句话”。若裁剪点落在中文
+    // 引号内部，优先闭合引号再补句号，避免出现「为什么这样做、如果重来
+    // 怎么改。之类已经通过机器门禁、但人眼明显不可交付的文本。
+    const closeQuote = (open: string, close: string) => {
+      const openCount = truncated.split(open).length - 1;
+      const closeCount = truncated.split(close).length - 1;
+      return openCount > closeCount ? close : "";
+    };
+    const quoteSuffix = closeQuote("“", "”") || closeQuote("「", "」");
+    return `${truncated}${quoteSuffix}。`;
   };
   sections = bodyVersion === "short"
     ? sections.map((section) => options?.compact ? compactSection(section) : firstSentence(section))
@@ -5732,7 +5742,16 @@ export function repairDraftRepeatedOpening(input: {
   const title = input.topic.title.replace(/[。！？!?]+$/u, "");
   const buyer = input.account.persona === "buyer";
   const expert = input.account.persona === "expert";
+  const buyerSceneOpenings = input.account.business_line === "overseas_student" && /面试|追问|答案|自我介绍|背题/u.test(title)
+    ? [
+      "关掉第三场线上面试的摄像头后，我没有继续搜面经，而是把三次面试里反复卡住的追问并排写了下来。",
+      "最近一次线上面试结束后，我先把没答稳的三处追问记下来，再回头核对自己到底缺答案，还是缺能支撑答案的事实。",
+      "这周复盘面试记录时，我发现让我没底的不是结果没出来，而是同一段经历换个问法，我就很难说清自己的动作。",
+      "面试结束后的半小时，我没有猜录取结果，只把面试官连续追问的地方和自己当时的回答逐条还原。",
+    ]
+    : [];
   const openings = buyer ? [
+    ...buyerSceneOpenings,
     `这次我没有急着给“${title}”下结论，而是把最近发生的事实、自己做过的动作和收到的反馈重新排了一遍。`,
     `重新翻完这段时间的记录，我才发现“${title}”背后真正卡住我的，并不是最先想到的那个原因。`,
     `我把最近几次反馈并排写下来后，“${title}”终于从一句焦虑，变成了一个可以拆开处理的问题。`,

@@ -394,6 +394,8 @@ describe("draft variants", () => {
 
     expect(repaired).not.toBe(body);
     expect(repaired).toContain(tail);
+    expect(repaired).toMatch(/^(关掉|最近一次|这周复盘|面试结束后的半小时)/u);
+    expect(repaired).not.toContain(`“${topic.title}”`);
     expect(bodyUniquenessProblem(repaired, [{ body: `${repeatedOpening}\n\n另一段旧正文。` }])).toBeNull();
   });
 
@@ -532,6 +534,29 @@ describe("draft variants", () => {
 
     expect(countPublishChars("秋招前先查这10项", body, ["#留学生求职", "#秋招"]).total).toBeLessThanOrEqual(950);
     expect(body.match(/^\d+\. /gm)).toHaveLength(10);
+  });
+
+  it("closes Chinese quotes when compacting a long delivery section", () => {
+    const quotedBlueprint: DraftBlueprintContext = {
+      ...blueprint,
+      delivery_sections: [
+        "我把每段经历改成四格：当时目标、自己动作、结果数字、复盘反思；再用“为什么这样做、如果重来怎么改、你具体贡献什么”连续追问。能用自己的细节回答，才算真正准备好。",
+        "面试结束后只复盘三处卡顿，下一次逐项验证，不把整套答案推倒重背。",
+      ],
+    };
+    const body = composeBlueprintBody(quotedBlueprint, {
+      format: "paragraphs",
+      minimumSections: 2,
+      rule: "至少交付2段。",
+    }, undefined, {
+      bodyVersion: "long",
+      businessLine: "overseas_student",
+      compact: true,
+      aggressive: true,
+    });
+
+    expect(body.split("“").length - 1).toBe(body.split("”").length - 1);
+    expect(body).not.toContain("如果重来怎么改。");
   });
 
   it("never accepts a compact fallback on length alone", () => {
