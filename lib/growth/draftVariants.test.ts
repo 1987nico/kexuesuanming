@@ -1,12 +1,15 @@
 import { describe, expect, it } from "vitest";
 import type { DraftBlueprintContext } from "./agents";
-import type { ContentDraft } from "./types";
+import type { ContentDraft, GrowthAccount, TopicCandidate } from "./types";
+import { bodyUniquenessProblem } from "./bodyUniqueness";
 import {
   certifyDraftForOperator,
   composeBlueprintBody,
+  composeUniqueDeterministicDraftBody,
   draftBodiesAreTooSimilar,
   draftMeetsPublishTarget,
   draftVariantOrderIsValid,
+  fallbackDraftBlueprint,
   normalizeDraftSpecificBlueprint,
 } from "./runner";
 import { countPublishChars } from "./validation";
@@ -159,6 +162,97 @@ describe("draft variants", () => {
 
     expect(Array.from(longBody).length - Array.from(shortBody).length).toBeGreaterThanOrEqual(80);
     expect(draftBodiesAreTooSimilar(shortBody, longBody)).toBe(false);
+  });
+
+  it("keeps deterministic long drafts unique across different titles", () => {
+    const account = {
+      id: "account", tenant_id: "tenant", persona: "buyer", business_line: "overseas_student",
+      one_liner: "留学生本人记录秋招", target_user: "留学生", core_problem: "秋招方向不清",
+      account_value: "记录真实决策", trust_source: "本人求职过程", persona_specific: {},
+    } as unknown as GrowthAccount;
+    const topicBase = {
+      id: "topic", method_group: "native", method_id: "contrarian", method_label: "反认知",
+      generation_mode: "default", target_user: "留学生", pain: "岗位日常不清楚", hook: "",
+      follow_reason: "真实经历", test_variable: "反认知", expected_signal: "咨询",
+      repeatable_angle: "岗位判断", broad_traffic_risk: 1, priority: "A",
+    } as unknown as TopicCandidate;
+    const firstTopic = {
+      ...topicBase,
+      id: "first",
+      title: "认识的校友多，反而不懂岗位日常",
+      title_promise: "讲清校友多却不了解岗位日常的真实反差",
+    };
+    const secondTopic = {
+      ...topicBase,
+      id: "second",
+      title: "公司名气大，实际职责却很窄",
+      title_promise: "讲清大公司光环与实际职责局限之间的反差",
+    };
+    const ordinarySpec = {
+      format: "paragraphs" as const,
+      minimumSections: 2,
+      rule: "至少用2个具体段落完成标题承诺。",
+    };
+    const firstBody = composeBlueprintBody(
+      fallbackDraftBlueprint(account, firstTopic, "soft_bridge", ordinarySpec),
+      ordinarySpec,
+      undefined,
+      { bodyVersion: "long", businessLine: "overseas_student" },
+    );
+    const secondBody = composeBlueprintBody(
+      fallbackDraftBlueprint(account, secondTopic, "soft_bridge", ordinarySpec),
+      ordinarySpec,
+      undefined,
+      { bodyVersion: "long", businessLine: "overseas_student" },
+    );
+
+    expect(firstBody).toContain(firstTopic.title);
+    expect(secondBody).toContain(secondTopic.title);
+    expect(bodyUniquenessProblem(secondBody, [{ body: firstBody }])).toBeNull();
+  });
+
+  it("keeps repeated fast long generations distinct across a realistic title set", () => {
+    const account = {
+      id: "buyer-account", tenant_id: "tenant", business_line: "executive", persona: "buyer",
+      one_liner: "34岁前中层裸辞找方向的真实记录", target_user: "转型中的中高管",
+      trust_source: "本人职业转型过程", persona_specific: {},
+    } as unknown as GrowthAccount;
+    const titles = [
+      ["当了总监，不敢提离职", "讲清中高管不敢轻易离职的深层人性顾虑"],
+      ["平台越大，能力越难定价", "讲清平台光环与个人能力定价之间的错位"],
+      ["问了10个前辈，我反而更乱", "讲清信息越多越难做职业判断的原因"],
+      ["副业有收入，我却没敢辞职", "讲清副业验证与正式转型之间的现实差距"],
+      ["职位升了，选择反而变少了", "讲清高职位如何限制下一步职业选择"],
+      ["熟人都劝稳，我先去做了访谈", "讲清中高管如何用外部访谈校准方向"],
+      ["拿到Offer后，我先算失败成本", "讲清中高管比较机会时为什么先看失败成本"],
+      ["离职前，我先验证了一个客户", "讲清从职业经理人转向独立服务的最小验证"],
+    ];
+    const spec = { format: "paragraphs" as const, minimumSections: 2, rule: "至少2段" };
+    const history: Array<{ body: string }> = [];
+    titles.forEach(([title, titlePromise], index) => {
+      const topic = {
+        id: `topic-${index}`, method_group: "native", method_id: "contrarian", method_label: "反认知",
+        generation_mode: "default", target_user: "中高管", pain: "职业选择", hook: "",
+        follow_reason: "真实经历", test_variable: "判断", expected_signal: "咨询",
+        repeatable_angle: "职业决策", broad_traffic_risk: 1, priority: "A", title,
+        title_promise: titlePromise,
+      } as unknown as TopicCandidate;
+      const base = fallbackDraftBlueprint(account, topic, "soft_bridge", spec);
+      const generated = composeUniqueDeterministicDraftBody({
+        account,
+        topic,
+        cta: "soft_bridge",
+        spec,
+        blueprint: base,
+        bodyVersion: "long",
+        businessLine: "executive",
+        historicalBodies: history,
+      });
+      const body = generated.body;
+      expect(generated.variationIndex).toBeGreaterThanOrEqual(0);
+      expect(bodyUniquenessProblem(body, history), `duplicate title: ${title}`).toBeNull();
+      history.push({ body });
+    });
   });
 
   it("detects duplicate or near-duplicate bodies", () => {

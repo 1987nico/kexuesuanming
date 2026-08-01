@@ -8,7 +8,9 @@ import type {
 
 // 缓存结构没有变化，沿用v1以保留上线前已经通过质量门禁的可用库存。
 export const TOPIC_PREFETCH_GENERATION_VERSION = "topic-prefetch-v1" as const;
-export const DRAFT_PREWARM_GENERATION_VERSION = "draft-prewarm-v1" as const;
+// v2 的蓝图会把当前标题独有的场景与承诺写进身份、判断和转化合同。
+// 旧缓存仍可读取历史数据，但不能继续作为新渐进正文的可交付缓存。
+export const DRAFT_PREWARM_GENERATION_VERSION = "draft-prewarm-v2" as const;
 /** 活跃账号尽量始终保有 6 批可直接消费的标题。 */
 export const TOPIC_PREFETCH_TARGET = 6;
 /** 低于 3 批时进入高优先级补货，避免用户连续换批后重新等待。 */

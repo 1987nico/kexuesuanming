@@ -4138,10 +4138,17 @@ function fallbackDeliverySections(
   topic: TopicCandidate,
   businessLine: GrowthBusinessLine,
   spec: PromiseDeliverySpec,
+  variationSalt = "base",
 ) {
   const overseas = businessLine === "overseas_student";
+  const seed = `${topic.id}:${topic.method_id}:${topic.title}:${topic.title_promise}:${variationSalt}`;
+  const rotate = <T,>(items: T[], salt: string) => {
+    if (items.length <= 1) return items;
+    const start = stableVariantIndex(seed, salt, items.length);
+    return [...items.slice(start), ...items.slice(0, start)];
+  };
   if (/时间表|节奏表/.test(`${topic.title}${topic.title_promise}`)) {
-    return overseas
+    const sections = overseas
       ? [
         "7—8月：先定国内外各自的目标岗位和简历版本，国内提前批开始后用小样本投递看回音，不要等开学再准备。",
         "9—10月：国内秋招进入高峰，海外岗位陆续开放；每周分开记录投递、笔试和面试节点，避免两边截止时间撞在一起。",
@@ -4153,6 +4160,9 @@ function fallbackDeliverySections(
         "第2周：访谈目标方向的真实从业者，核对岗位门槛、市场报价和最常见失败原因。",
         "第3—4周：做一次低成本试做或小样本验证，用真实反馈决定继续、调整还是停止。",
       ];
+    return sections.map((section, index) => index === 0
+      ? `${topic.title.replace(/[。！？!?]+$/u, "")}这件事，我按下面的节点执行。${section}`
+      : section);
   }
   const items = overseas
     ? [
@@ -4179,19 +4189,45 @@ function fallbackDeliverySections(
       "每周记录一次反对证据，避免只收集支持自己转型的声音。",
       "提前写下停止条件，到期后按真实反馈继续、调整或放弃。",
     ];
-  if (topic.method_id === "tug_of_war") return items.slice(0, 2);
+  const rotatedItems = rotate(items, "delivery-items");
+  if (topic.method_id === "tug_of_war") return rotatedItems.slice(0, 2);
   const needed = spec.exactSections ?? spec.minimumSections;
-  if (spec.format === "numbered") return items.slice(0, Math.max(needed, 3));
+  if (spec.format === "numbered") return rotatedItems.slice(0, Math.max(needed, 3));
   const promise = topic.title_promise
     .replace(/[。！？!?]+$/u, "")
     .replace(/^(?:讲清|解释|呈现|说明|展示|分享|梳理|比较|提供|交付|盘点|列出|给出)/u, "")
     .trim();
-  return [
-    `${promise || "眼前这个选择"}，真正需要的不是再搜更多信息，而是先确定哪些变量能用现实反馈验证。`,
-    overseas
-      ? "学校、专业和留学投入都可能制造错觉，最后仍要回到岗位要求、项目证据和招聘节奏。"
-      : "职位、收入和平台资源都可能制造错觉，最后仍要回到可迁移能力、市场报价和失败成本。",
-  ];
+  const first = pickStableVariant(seed, "delivery-first", [
+    `${promise || "眼前这个选择"}，先别急着继续搜答案。把能在一周内拿到现实反馈的变量圈出来，判断才会往前走。`,
+    `回到“${topic.title}”这个问题，我先区分事实和猜测：已经发生的写左边，还没验证的写右边。`,
+    `${promise || topic.title}，不能只靠一个漂亮结论。至少要拿一次访谈、试做或真实反馈来校准。`,
+    `我后来处理“${topic.title}”时，第一步不是做决定，而是写下最担心的代价和最小验证动作。`,
+  ]);
+  const second = pickStableVariant(seed, "delivery-second", overseas ? [
+    "学校背景只能说明过去，岗位要求、项目证据和招聘节奏，才决定这一轮该往哪里用力。",
+    "我把岗位说明、现有项目和截止日期并排放好，再看缺的是方向、材料还是表达，不再混在一起改。",
+    "先用一小批真实申请看回音：没有反馈就查匹配，有笔试没面试就查表达，每次只动一个变量。",
+    "国内和海外不能共用一套节奏。我先标出不可逆的截止点，再安排可以补做的材料和练习。",
+  ] : [
+    "头衔和平台资源先放到一边，只看离开现岗位后还能被市场识别的能力证据，再谈下一步。",
+    "我把进入门槛、失败成本和停止条件写在同一页，先验证最便宜的一项，不再靠想象下注。",
+    "市场报价、真实访谈和一次小样本试做，比熟人的鼓励更能说明这条路是否值得继续。",
+    "先把个人能力和原平台贡献拆开，再看新方向愿不愿意为哪一部分付费，答案会具体很多。",
+  ]);
+  return [first, second];
+}
+
+function stableVariantIndex(value: string, salt: string, total: number) {
+  let hash = 2166136261;
+  for (const char of `${salt}:${value}`) {
+    hash ^= char.codePointAt(0) ?? 0;
+    hash = Math.imul(hash, 16777619);
+  }
+  return total > 0 ? (hash >>> 0) % total : 0;
+}
+
+function pickStableVariant<T>(value: string, salt: string, variants: T[]) {
+  return variants[stableVariantIndex(value, salt, variants.length)];
 }
 
 function fallbackClosing(cta: ContentDraft["cta_type"], businessLine: GrowthBusinessLine) {
@@ -4213,20 +4249,51 @@ function fallbackStageResult(persona: GrowthPersona, businessLine: GrowthBusines
   return "客户排除了一个高风险方向，并明确了下一步验证顺序。";
 }
 
-function fallbackIdentityEvidence(persona: GrowthPersona, businessLine: GrowthBusinessLine) {
+function fallbackIdentityEvidence(persona: GrowthPersona, businessLine: GrowthBusinessLine, seed = "default") {
   if (businessLine === "overseas_student") {
-    if (persona === "buyer") return "这段时间我把孩子的毕业时间、目标岗位和每次投递反馈都记在一起，才看清我们真正卡住的地方。";
-    if (persona === "expert") return "做留学生求职判断时，我会先核对岗位要求、项目证据和招聘节奏，再决定应该改方向还是改材料。";
-    return "这类求职辅导交付里，团队先核对学生的岗位目标、项目证据和招聘节点，再决定后续辅导顺序。";
+    if (persona === "buyer") return pickStableVariant(seed, "identity", [
+      "这段时间我把孩子的毕业时间、目标岗位和每次投递反馈都记在一起，才看清我们真正卡住的地方。",
+      "陪孩子找工作的这几个月，我经手过他的岗位表、简历版本和拒信记录，很多问题不是听来的。",
+      "我原本只盯结果，后来把孩子每周投了什么、收到什么反馈记下来，才发现焦虑和事实并不是一回事。",
+      "家里为这次求职反复讨论过方向，我也跟着核过岗位说明和时间节点，这才有了后面的判断。",
+    ]);
+    if (persona === "expert") return pickStableVariant(seed, "identity", [
+      "做留学生求职判断时，我会先核对岗位要求、项目证据和招聘节奏，再决定应该改方向还是改材料。",
+      "我经手这类求职咨询时，第一张表永远不是简历清单，而是岗位、经历证据和招聘节点的对应关系。",
+      "最近几次辅导里，我都先追问学生做过什么、岗位要什么，再判断问题究竟在定位还是表达。",
+      "从咨询记录看，真正有用的不是替学生选岗位，而是把每个判断放回可验证的招聘事实里。",
+    ]);
+    return pickStableVariant(seed, "identity", [
+      "这类求职辅导交付里，团队先核对学生的岗位目标、项目证据和招聘节点，再决定后续辅导顺序。",
+      "我们处理留学生求职问题时，会先把服务对象的目标岗位和现有材料逐项对齐，再安排具体交付。",
+      "这项服务不是先改一份简历，而是先确认学生投什么、凭什么匹配，以及最近的招聘窗口在哪里。",
+      "团队每次启动辅导都会先做岗位与经历盘点，用现有证据决定接下来改材料还是练表达。",
+    ]);
   }
-  if (persona === "buyer") return "这段时间我把自己的职业经历、现实约束和几个候选方向放在一起，才看清过去哪些判断只是想当然。";
-  if (persona === "expert") return "做职业决策判断时，我会把候选方向、能力证据和失败成本拆开，而不是替来访者直接选答案。";
-  return "这类职业决策交付里，团队先拆开候选路径、能力证据和失败成本，再安排能够拿到现实反馈的验证动作。";
+  if (persona === "buyer") return pickStableVariant(seed, "identity", [
+    "这段时间我把自己的职业经历、现实约束和几个候选方向放在一起，才看清过去哪些判断只是想当然。",
+    "真轮到自己做职业选择，我才发现过去会管团队，不等于能把自己的下一步讲明白。",
+    "我把近几年的项目、家庭现金流和想走的方向摊开看过，这不是旁观者给的一句建议。",
+    "这次转型我没有只问朋友，而是亲自做了访谈和小范围验证，才慢慢分清机会与想象。",
+  ]);
+  if (persona === "expert") return pickStableVariant(seed, "identity", [
+    "做职业决策判断时，我会把候选方向、能力证据和失败成本拆开，而不是替来访者直接选答案。",
+    "我处理这类咨询时，会先统一比较口径，再看每条路的进入门槛、代价和可验证证据。",
+    "复盘中高管转型案例时，我关注的不是头衔，而是哪些能力离开原平台后仍被市场承认。",
+    "面对几个看似都能走的方向，我通常先找反对证据，避免来访者只收集支持自己的信息。",
+  ]);
+  return pickStableVariant(seed, "identity", [
+    "这类职业决策交付里，团队先拆开候选路径、能力证据和失败成本，再安排能够拿到现实反馈的验证动作。",
+    "我们服务中高管客户时，先核对现实处境和候选路线，再决定使用哪一项诊断或陪跑交付。",
+    "这项服务的起点不是劝客户辞职，而是把个人能力、平台资源和家庭约束分开盘清。",
+    "团队会把客户的路径假设转成访谈、试做或市场报价，让后续决定有外部证据可用。",
+  ]);
 }
 
 function fallbackIdentityContract(
   account: GrowthAccount,
   businessLine: GrowthBusinessLine,
+  seed = "default",
 ): DraftIdentityContract {
   const required: Record<GrowthPersona, string[]> = {
     buyer: ["本人或家庭的具体处境", "亲历选择、行动或变化"],
@@ -4249,7 +4316,7 @@ function fallbackIdentityContract(
       || account.trust_source
       || "当前业务与人设事实",
     target_section: "identity_evidence",
-    evidence: fallbackIdentityEvidence(account.persona, businessLine),
+    evidence: fallbackIdentityEvidence(account.persona, businessLine, seed),
   };
 }
 
@@ -4283,6 +4350,7 @@ function fallbackFulfillmentContract(
 function fallbackConversionContract(
   account: GrowthAccount,
   businessLine: GrowthBusinessLine,
+  seed = "default",
 ): DraftConversionContract {
   const overseas = businessLine === "overseas_student";
   const specific = account.persona_specific ?? {};
@@ -4318,36 +4386,103 @@ function fallbackConversionContract(
       attempted,
       intervention,
       stageResult,
+      seed,
     }),
   };
 }
 
-function fallbackDraftBlueprint(
+function topicPromiseSubject(topic: TopicCandidate) {
+  return topic.title_promise
+    .replace(/[。！？!?]+$/u, "")
+    .replace(/^(?:讲清|讲明白|解释|呈现|说明|展示|分享|梳理|比较|提供|交付|盘点|列出|给出)/u, "")
+    .trim() || topic.title;
+}
+
+function topicSpecificOpening(
+  account: GrowthAccount,
+  topic: TopicCandidate,
+  variationSalt = "base",
+) {
+  const seed = `${account.id}:${account.persona}:${topic.id}:${topic.title}:${variationSalt}`;
+  const subject = topicPromiseSubject(topic);
+  const scenes = account.persona === "expert"
+    ? [
+      `前两天复盘一段咨询记录，来访者问的正是“${topic.title}”。我先把答案按住，重新核对他已经做过的尝试。`,
+      `一位来访者把三个选项写满一页，最后却卡在“${topic.title}”。我让他先补事实，不急着听结论。`,
+      `最近一次咨询结束后，我又翻回那句“${topic.title}”，因为真正影响判断的是被忽略的现实条件。`,
+      `我把一段咨询录音听了两遍，问题表面是“${topic.title}”，背后却是判断依据一直没有对齐。`,
+    ]
+    : account.persona === "merchant"
+      ? [
+        `最近复盘一份服务记录，客户最初的问题就是“${topic.title}”。团队没有直接给答案，先核对了他的真实处境。`,
+        `一份新提交的资料里，“${topic.title}”被写在最上面。我们先停下方案，重新确认需求和边界。`,
+        `上周交付时，客户围绕“${topic.title}”来回改了几次主意。真正推进事情的，是后来补齐的那组事实。`,
+        `这次服务从“${topic.title}”开始，但第一步不是推产品，而是确认这是不是客户眼下真正要解决的问题。`,
+      ]
+      : [
+        `昨晚重新翻自己的求职记录，最扎眼的一行是“${topic.title}”。我把当时的动作和反馈又对了一遍。`,
+        `那天我盯着一页记录很久，脑子里反复转的是“${topic.title}”。真正让我停下来的是一个现实反馈。`,
+        `我原以为“${topic.title}”只是自己想得太多，直到把最近做过的事按时间排开，才发现问题并不抽象。`,
+        `家里又聊到“${topic.title}”时，我这次没急着争辩，而是把已经发生的事实一项项写了下来。`,
+      ];
+  return pickStableVariant(seed, "opening", scenes);
+}
+
+export function fallbackDraftBlueprint(
   account: GrowthAccount,
   topic: TopicCandidate,
   cta: ContentDraft["cta_type"],
   spec: PromiseDeliverySpec,
+  variationSalt = "base",
 ): DraftBlueprintContext {
   const businessLine = account.business_line ?? "executive";
-  const identityContract = fallbackIdentityContract(account, businessLine);
+  const seed = `${account.id}:${account.persona}:${topic.id}:${topic.method_id}:${topic.title}:${topic.title_promise}:${variationSalt}`;
+  const identityContract = fallbackIdentityContract(account, businessLine, seed);
   const fulfillmentContract = fallbackFulfillmentContract(account, topic, spec);
-  const conversionContract = fallbackConversionContract(account, businessLine);
+  const conversionContract = fallbackConversionContract(account, businessLine, seed);
+  const promiseSubject = topicPromiseSubject(topic);
+  const coreJudgement = pickStableVariant(seed, "core", businessLine === "overseas_student" ? [
+    "秋招真正难的不是同时准备两边，而是没有把岗位、材料和截止时间放进同一套节奏里。",
+    "求职信息再多，也替代不了岗位要求与本人经历的一次正面对照。",
+    "方向不是想出来的，要靠小批投递、访谈和面试反馈逐步收窄。",
+    "国内外机会不能只比名气，真正要比的是入场条件、时间窗口和已有证据。",
+  ] : [
+    "职业选择真正难的不是缺少选项，而是没有把能力证据、市场机会和失败成本放在一起判断。",
+    "中高管转型不能只看下一份头衔，先要确认离开平台后哪些价值仍然成立。",
+    "一条路值不值得走，不靠想象中的上限，而靠现实反馈和可承受的试错成本。",
+    "真正稳妥的决定不是零风险，而是提前写清验证动作、反对证据和停止条件。",
+  ]);
+  const contextualBridge = `${conversionContract.bridge_paragraph} 对“${topic.title}”这件事，我因此知道下一步该看哪一种现实证据。`;
   return {
     contract_version: "v3_4",
     promise_type: promiseTypeForTopic(topic, spec),
     opening_intent: topic.title_promise,
-    identity_contract: identityContract,
+    identity_contract: {
+      ...identityContract,
+      evidence: `${identityContract.evidence.replace(/[。！？!?]+$/u, "")}。这次记录时，我只追问一件事：${promiseSubject}。`,
+    },
     fulfillment_contract: fulfillmentContract,
-    conversion_contract: conversionContract,
-    opening: identityOpening(account.persona, businessLine),
-    core_judgement: businessLine === "overseas_student"
-      ? "秋招真正难的不是同时准备两边，而是没有把岗位、材料和截止时间放进同一套节奏里。"
-      : "职业选择真正难的不是缺少选项，而是没有把能力证据、市场机会和失败成本放在一起判断。",
+    conversion_contract: {
+      ...conversionContract,
+      bridge_paragraph: contextualBridge,
+    },
+    opening: topicSpecificOpening(account, topic, variationSalt),
+    core_judgement: pickStableVariant(seed, "core-lead", [
+      `我后来才看清：${promiseSubject}。${coreJudgement}`,
+      `这件事最后落到一个判断：${coreJudgement} 这也解释了${promiseSubject}。`,
+      `答案并不在更多选项里。${coreJudgement} 回头看，${promiseSubject}才是关键。`,
+      `把情绪拿掉以后，我留下的核心判断是：${coreJudgement} 只有这样，${promiseSubject}才有依据。`,
+    ]),
     delivery_format: spec.format,
-    delivery_sections: fallbackDeliverySections(topic, businessLine, spec),
-    service_bridge: conversionContract.bridge_paragraph,
+    delivery_sections: fallbackDeliverySections(topic, businessLine, spec, variationSalt),
+    service_bridge: contextualBridge,
     stage_result: conversionContract.stage_result,
-    closing: fallbackClosing(cta, businessLine),
+    closing: pickStableVariant(seed, "closing", [
+      `${fallbackClosing(cta, businessLine)} 先把“${topic.title}”从结论改成一个待验证的问题。`,
+      `先别急着把“${topic.title}”变成最终答案，今天只完成一个能拿到外部反馈的动作。`,
+      `回到自己的处境，把${promiseSubject}里最没有证据的一项圈出来，下一步先验证它。`,
+      `围绕“${topic.title}”，如果只能推进一点，就记录一个现实反馈；它比再看十个成功故事更接近答案。`,
+    ]),
   };
 }
 
@@ -4487,13 +4622,21 @@ function firstSentence(value: string) {
   return (match?.[0] || value).trim();
 }
 
-function longVersionContext(businessLine: GrowthBusinessLine) {
-  return businessLine === "overseas_student"
-    ? "真正执行时，岗位、材料和截止时间要放在同一张表里看。只看投了多少份没有意义，还要记下用了哪个版本、卡在哪一轮，以及下一次只改哪个变量。"
-    : "真正验证时，职位头衔、平台资源和个人能力要拆开记录。不能只问这条路听起来好不好，还要写清进入门槛、失败成本，以及下一步能拿到什么现实反馈。";
+function longVersionContext(businessLine: GrowthBusinessLine, seed = "default") {
+  return pickStableVariant(seed, "long-context", businessLine === "overseas_student" ? [
+    "真正执行时，岗位、材料和截止时间要放在同一张表里看。只看投了多少份没有意义，还要记下用了哪个版本、卡在哪一轮，以及下一次只改哪个变量。",
+    "我后来把每天的忙乱改成按周复盘：哪类岗位有回音、哪份材料被看见、哪个截止点不能错过。记录一具体，焦虑就不再替事实做决定。",
+    "两条求职线并行时，最怕把不同市场混成一套动作。海外看开放窗口和身份条件，国内看批次和笔面节奏，交叉处再单独安排。",
+    "判断方向不能只看别人拿到什么。我把自己的课程、项目和反馈逐项放回岗位要求，缺口才能变成下一周可以补的动作。",
+  ] : [
+    "真正验证时，职位头衔、平台资源和个人能力要拆开记录。不能只问这条路听起来好不好，还要写清进入门槛、失败成本，以及下一步能拿到什么现实反馈。",
+    "我把职业选择改写成一个验证计划：先说清假设，再约真实访谈，最后用一次试做或报价检验。每一步都有停止条件，才不会越投入越舍不得放弃。",
+    "中高管容易高估过去平台带来的信用，也容易低估自己能迁移的能力。把两者拆开后，下一份工作或第二曲线才有真实的定价基础。",
+    "家庭现金流、竞业限制和市场窗口必须放到同一张纸上。只谈梦想会忽略代价，只谈风险又会错过能低成本试出来的机会。",
+  ]);
 }
 
-function longVersionDetail(index: number, businessLine: GrowthBusinessLine) {
+function longVersionDetail(index: number, businessLine: GrowthBusinessLine, seed = "default") {
   const overseas = [
     "执行时把目标岗位、截止日期和对应简历版本写在同一行，下一轮才能分清是方向还是材料出了问题。",
     "每周只根据真实投递、笔试和面试反馈调整一个变量，别因为焦虑同时推翻全部计划。",
@@ -4507,7 +4650,35 @@ function longVersionDetail(index: number, businessLine: GrowthBusinessLine) {
     "到了约定日期就看反对证据，不因为已经投入了时间而无限延长一条低胜率路径。",
   ];
   const details = businessLine === "overseas_student" ? overseas : executive;
-  return details[index % details.length];
+  const start = stableVariantIndex(seed, "long-details", details.length);
+  return details[(start + index) % details.length];
+}
+
+function blueprintTopicAnchor(blueprint: DraftBlueprintContext) {
+  const source = blueprint.opening_intent || blueprint.core_judgement;
+  const cleaned = source
+    .replace(/[。！？!?]+$/u, "")
+    .replace(/^(?:讲清|讲明白|解释|呈现|说明|展示|分享|梳理|比较|提供|交付|盘点|列出|给出)/u, "")
+    .trim();
+  return Array.from(cleaned).slice(0, 34).join("");
+}
+
+function blueprintTopicTitle(blueprint: DraftBlueprintContext) {
+  const quoted = blueprint.opening.match(/“([^”]{4,40})”/u)?.[1];
+  return quoted || blueprintTopicAnchor(blueprint);
+}
+
+function topicEvidenceLine(blueprint: DraftBlueprintContext) {
+  const title = blueprintTopicTitle(blueprint);
+  const parts = title.split(/[，,；;：:？?]/u).map((item) => item.trim()).filter(Boolean);
+  const left = parts[0] || Array.from(title).slice(0, Math.ceil(Array.from(title).length / 2)).join("");
+  const right = parts[1] || Array.from(title).slice(Math.ceil(Array.from(title).length / 2)).join("");
+  return pickStableVariant(title, "evidence-line", [
+    `我把“${left}”当作已经发生的处境，把“${right}”改写成待验证的问题，分别补上支持证据和反对证据。`,
+    `为了不被“${title}”带着走，我单独记录了${left}的事实来源，也为${right}设了一个可观察的结果。`,
+    `这次我不再笼统讨论${left}，而是拿${right}去做一次小验证，再用反馈决定是否继续。`,
+    `复盘“${title}”时，我先问：什么证据能证明${left}，又有什么结果会推翻${right}？`,
+  ]);
 }
 
 export function composeBlueprintBody(
@@ -4526,6 +4697,8 @@ export function composeBlueprintBody(
     : {};
   const bodyVersion = options?.bodyVersion ?? "short";
   const businessLine = options?.businessLine ?? "executive";
+  const topicAnchor = blueprintTopicAnchor(blueprint);
+  const evidenceLine = topicEvidenceLine(blueprint);
   const opening = asText(structure.opening) || blueprint.opening;
   // 身份是交付合同的硬字段，由系统直接装配；不允许正文模型省略后再靠关键词猜测。
   const identityEvidence = blueprint.identity_contract.evidence;
@@ -4555,8 +4728,14 @@ export function composeBlueprintBody(
         if (options.aggressive || index > 1) return compact;
         return `${compact} ${longVersionDetail(index, businessLine)}`;
       }
-      const detail = longVersionDetail(index, businessLine);
-      return section.includes(detail) ? section : `${section.trim()} ${detail}`;
+      const detail = longVersionDetail(index, businessLine, topicAnchor);
+      if (section.includes(detail)) return section;
+      const contextualDetail = topicAnchor
+        ? index % 2 === 0
+          ? `放回“${topicAnchor}”这个具体处境，${detail}`
+          : `判断“${topicAnchor}”时，${detail}`
+        : detail;
+      return `${section.trim()} ${contextualDetail}`;
     });
   const renderedSections = spec.format === "numbered"
     ? sections.map((section, index) => `${index + 1}. ${cleanDeliverySection(section)}`).join("\n\n")
@@ -4571,7 +4750,9 @@ export function composeBlueprintBody(
         ? businessLine === "overseas_student"
           ? "使用这份安排时，把岗位、材料版本和截止时间放在一起记录，每轮只根据真实反馈调整一个变量。"
           : "使用这套判断时，把进入门槛、能力证据和停止条件放在一起记录，再根据现实反馈调整。"
-        : longVersionContext(businessLine)
+        : topicAnchor
+          ? `围绕“${topicAnchor}”，${longVersionContext(businessLine, topicAnchor)}\n\n${evidenceLine}`
+          : longVersionContext(businessLine, topicAnchor)
     : "";
   return [opening, identityEvidence, coreJudgement, versionContext, serviceBridge, renderedSections, closing]
     .map((section) => section.trim())
@@ -4712,15 +4893,30 @@ function serviceBridgeSentence(
     attempted: string;
     intervention: string;
     stageResult: string;
+    seed?: string;
   },
 ) {
   const persona = account.persona;
   if (configured) {
+    const seed = configured.seed || `${account.id}:${businessLine}:${persona}`;
     if (persona === "buyer") {
-      return `我原来${configured.attempted.replace(/^当事人/u, "").replace(/^已经/u, "")}，但问题没有真正理顺。后来${configured.role}没有直接替我选答案，而是${configured.intervention}。阶段变化不是一个确定结果，而是${configured.stageResult.replace(/[。！？!?]+$/u, "")}。`;
+      const attempted = configured.attempted.replace(/^当事人/u, "").replace(/^已经/u, "");
+      const result = configured.stageResult.replace(/[。！？!?]+$/u, "");
+      return pickStableVariant(seed, "conversion", [
+        `我原来${attempted}，但问题没有真正理顺。后来${configured.role}没有替我选答案，而是${configured.intervention}。变化不是立刻成功，而是${result}。`,
+        `卡住之前，我试过${attempted}，越做越难分清问题。请${configured.role}介入后，先做的是${configured.intervention}；做到这里，${result}。`,
+        `真正的转折不是一句鼓励。我把${attempted}的结果交给${configured.role}复盘，对方带我${configured.intervention}，随后${result}。`,
+        `自己折腾时，我一直在${attempted}。后来和${configured.role}一起把问题拆开，具体动作是${configured.intervention}，最后先得到一个阶段结果：${result}。`,
+      ]);
     }
     if (persona === "expert") {
-      return `面对这个问题，我先按同一组标准拆开比较，而不是直接给排名。具体会${configured.intervention}；这样读者能看清每种方案的适用条件，阶段结果是${configured.stageResult.replace(/[。！？!?]+$/u, "")}。`;
+      const result = configured.stageResult.replace(/[。！？!?]+$/u, "");
+      return pickStableVariant(seed, "conversion", [
+        `面对这个问题，我先按同一组标准拆开比较，而不是直接给排名。具体会${configured.intervention}；这样能看清各自的适用条件，阶段结果是${result}。`,
+        `咨询里我没有先报答案，而是带来访者${configured.intervention}。统一口径之后，原来的争论变成了可验证的问题，最后${result}。`,
+        `我的介入点很具体：先${configured.intervention}，再看哪条路经得住反对证据。它没有制造确定性承诺，但让${result}。`,
+        `这类问题需要方法而不是站队。我会用${configured.intervention}建立比较基线，来访者据此拿到的阶段变化是${result}。`,
+      ]);
     }
     const sku = account.persona_specific?.main_offer || configured.role;
     const price = account.persona_specific?.price_band;
@@ -4728,7 +4924,13 @@ function serviceBridgeSentence(
     const commercialTerms = [price ? `价格是${price}` : "", payment ? `付款方式是${payment}` : ""]
       .filter(Boolean)
       .join("，");
-    return `这项服务对应的是${sku}。实际交付先${configured.intervention}，不是先给一个漂亮结论；阶段结果是${configured.stageResult.replace(/[。！？!?]+$/u, "")}${commercialTerms ? `，${commercialTerms}` : ""}。`;
+    const result = configured.stageResult.replace(/[。！？!?]+$/u, "");
+    return pickStableVariant(seed, "conversion", [
+      `这项服务对应的是${sku}。实际交付先${configured.intervention}，不是先给一个漂亮结论；阶段结果是${result}${commercialTerms ? `，${commercialTerms}` : ""}。`,
+      `客户进入${sku}后，团队先做${configured.intervention}。这一步完成后，${result}${commercialTerms ? `；${commercialTerms}` : ""}。`,
+      `${sku}解决的不是所有问题。针对眼前卡点，我们交付的关键动作是${configured.intervention}，随后${result}${commercialTerms ? `，${commercialTerms}` : ""}。`,
+      `这次交付没有从销售承诺开始，而是先${configured.intervention}。客户看到的阶段变化是${result}${commercialTerms ? `；${commercialTerms}` : ""}。`,
+    ]);
   }
   if (businessLine === "overseas_student") {
     if (persona === "buyer") return "我们自己折腾了几轮还是没理顺，后来才找了一位求职老师一起梳理现有材料。她没有先改文案，而是先把岗位和招聘节奏对齐；至少孩子不再拿一份简历乱投，下一步该验证什么也有了顺序。";
@@ -5003,6 +5205,42 @@ function validationFailureCode(draft: ContentDraft): DraftPipelineFailureCode {
   return "structure_repair_failed";
 }
 
+export function composeUniqueDeterministicDraftBody(input: {
+  account: GrowthAccount;
+  topic: TopicCandidate;
+  cta: ContentDraft["cta_type"];
+  spec: PromiseDeliverySpec;
+  blueprint: DraftBlueprintContext;
+  bodyVersion: "short" | "long";
+  businessLine: GrowthBusinessLine;
+  historicalBodies?: BodyUniquenessReference[];
+}) {
+  const attemptedBodies: BodyUniquenessReference[] = [];
+  for (let index = 0; index < 8; index += 1) {
+    const varied = index === 0
+      ? input.blueprint
+      : fallbackDraftBlueprint(input.account, input.topic, input.cta, input.spec, `history-${index}`);
+    // 两个版本共享同一核心判断和标题交付合同；只更换叙事表达、身份证据、
+    // 专业介入段和执行细节。这样去重不会把内容主题改掉。
+    const candidateBlueprint = index === 0 ? varied : {
+      ...varied,
+      core_judgement: input.blueprint.core_judgement,
+      fulfillment_contract: input.blueprint.fulfillment_contract,
+    };
+    const body = composeBlueprintBody(candidateBlueprint, input.spec, undefined, {
+      bodyVersion: input.bodyVersion,
+      businessLine: input.businessLine,
+    });
+    const identityProblem = bodyProfileIdentityProblem(body, input.account);
+    const duplicate = bodyUniquenessProblem(body, input.historicalBodies ?? []);
+    if (!identityProblem && !duplicate) {
+      return { body, blueprint: candidateBlueprint, attemptedBodies, variationIndex: index };
+    }
+    attemptedBodies.push({ body, topic_id: input.topic.id });
+  }
+  return { body: "", blueprint: null, attemptedBodies, variationIndex: -1 };
+}
+
 async function generateSingleDraft(input: {
   tenantId?: string; account: GrowthAccount; run: GrowthRun; topic: TopicCandidate;
   bodyVersion: "short" | "long"; excludeBodies?: string[]; learningBrief?: GrowthLearningBrief;
@@ -5030,25 +5268,30 @@ async function generateSingleDraft(input: {
   // 短版简单拉长。只有身份或历史去重未通过时，才回退到下方模型改写；
   // 这样供应商的尾部延迟不会再让一个本可交付的长版等待数轮后失败。
   if (input.bodyVersion === "short" || input.bodyVersion === "long") {
-    const blueprintBody = composeBlueprintBody(input.blueprint, input.spec, undefined, {
+    const deterministic = composeUniqueDeterministicDraftBody({
+      account: input.account,
+      topic: input.topic,
+      cta,
+      spec: input.spec,
+      blueprint: input.blueprint,
       bodyVersion: input.bodyVersion,
       businessLine,
+      historicalBodies: input.historicalBodies,
     });
-    const identityProblem = bodyProfileIdentityProblem(blueprintBody, input.account);
-    const duplicate = bodyUniquenessProblem(blueprintBody, input.historicalBodies ?? []);
-    if (!identityProblem && !duplicate) {
-      body = blueprintBody;
-      selectedBlueprint = input.blueprint;
+    if (deterministic.body && deterministic.blueprint) {
+      body = deterministic.body;
+      selectedBlueprint = deterministic.blueprint;
       selectedNormalizationActions = [
         input.bodyVersion === "short"
           ? "compose_short_from_certified_blueprint"
           : "compose_long_from_certified_blueprint",
+        `deterministic_variation:${deterministic.variationIndex}`,
       ];
       payload = {};
     } else {
-      lastProblem = identityProblem || duplicate?.reason || lastProblem;
-      lastFailureCode = identityProblem ? "identity_repair_failed" : "history_duplicate";
-      attemptedBodies.unshift({ body: blueprintBody, topic_id: input.topic.id });
+      lastProblem = "八套确定性叙事均未通过身份或历史去重";
+      lastFailureCode = "history_duplicate";
+      attemptedBodies.unshift(...deterministic.attemptedBodies);
     }
   }
 
