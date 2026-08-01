@@ -675,6 +675,12 @@ export function nativeTitleSemanticTopicKeys(methodId: string, value: string) {
       && /(?:不自然|未必.{0,4}自然|机械|像背稿|答得更差|回答更差)/u.test(title),
   );
   add(
+    "conflict:progress_signal_but_role_mismatch",
+    /(?:笔试|面试|工签|内推|录用|offer|流程|进展|机会)/iu.test(title)
+      && /(?:岗位|职位|方向|岗)/u.test(title)
+      && /(?:(?:未必|不一定|可能不|其实不|并不).{0,3}(?:合适|适合|匹配|对口)|(?:不合适|不适合|不匹配|不对口))/u.test(title),
+  );
+  add(
     "nostalgia:parent_club_to_job_evidence",
     /(?:孩子|娃|儿子|女儿)/u.test(title)
       && /社团/u.test(title)
