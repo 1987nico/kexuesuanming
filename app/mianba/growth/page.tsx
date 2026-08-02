@@ -535,7 +535,7 @@ export default function GrowthPage() {
   const [acceptedPersonaSuggestions, setAcceptedPersonaSuggestions] = useState<Record<string, boolean>>({});
   const [businessEditOpen, setBusinessEditOpen] = useState(false);
   const [visibleStep, setVisibleStep] = useState<WorkflowStep>("0");
-  const [methodGroupView, setMethodGroupView] = useState<TitleMethodGroup>("native");
+  const [methodGroupView, setMethodGroupView] = useState<TitleMethodGroup>("benchmark");
   const [bodyVersionView, setBodyVersionView] = useState<"short" | "long">("short");
   const [activeRunIds, setActiveRunIds] = useState<Partial<Record<MethodGenerationMode, string>>>({});
   const [pendingContextSwitch, setPendingContextSwitch] = useState<PendingContextSwitch | null>(null);
@@ -595,7 +595,7 @@ export default function GrowthPage() {
     setNewProfileOpen(false);
     setBusinessEditOpen(false);
     if (transient?.visibleStep) setVisibleStep(transient.visibleStep);
-    setMethodGroupView("native");
+    setMethodGroupView("benchmark");
     setBodyVersionView("short");
     if (next?.businessPosition) setBusinessPositionForm(next.businessPosition);
   }, []);
@@ -2722,7 +2722,7 @@ export default function GrowthPage() {
                 <Section
                   number="3"
                   title="选题"
-                  subtitle="一个方法对应一个标题槽位。默认方法直接显示，探索方法在原生法或对标法内部折叠，禁用方法不出现。"
+                  subtitle="默认先看对标法的近期真实标题；需要原创选题时，再切换到原生法。"
                 >
                   <div className="flex flex-col gap-4 rounded-2xl bg-slate-50 p-4 sm:flex-row sm:items-center sm:justify-between">
                     <div>
@@ -2731,12 +2731,19 @@ export default function GrowthPage() {
                         默认 {defaultMethods.length} 个槽位 · 探索 {exploreMethods.length} 个槽位 · 不做标题评分
                       </div>
                     </div>
-                    <PrimaryButton disabled={Boolean(busy)} onClick={() => generateTopics("default")}>
-                      {busy === "topics-default"
-                        ? "正在生成新一批…"
+                    <PrimaryButton
+                      disabled={Boolean(busy)}
+                      onClick={() => methodGroupView === "benchmark" && runs.default
+                        ? generateTopics("default", "benchmark", "rotate_all_sources")
+                        : generateTopics("default")}
+                    >
+                      {busy === "topics-default" || busy === "rotate-all-default"
+                        ? methodGroupView === "benchmark" ? "正在筛选真实标题…" : "正在生成新一批…"
                         : busy === "load-content"
                           ? "正在准备选题…"
-                          : runs.default ? "换一批标题" : "生成选题"}
+                          : methodGroupView === "benchmark"
+                            ? runs.default ? "换一批真实标题" : "生成真实标题"
+                            : runs.default ? "换一批标题" : "生成选题"}
                     </PrimaryButton>
                   </div>
 
@@ -2785,7 +2792,6 @@ export default function GrowthPage() {
                       savingTitleId={savingTitleId}
                       onExploreOpen={(open) => setExploreOpen((current) => ({ ...current, [methodGroupView]: open }))}
                       onExplore={() => generateTopics("explore", methodGroupView)}
-                      onRotateAll={() => generateTopics("default", "benchmark", "rotate_all_sources")}
                       onRotateSource={(mode, methodId) =>
                         generateTopics(mode, TITLE_METHOD_BY_ID[methodId].group, "rotate_single_source", methodId)
                       }
@@ -2828,7 +2834,21 @@ export default function GrowthPage() {
                         </PrimaryButton>
                       </div>
                     ) : (
-                      <div className="text-sm text-slate-500">请先在上方选择一个标题，再进入正文。</div>
+                      methodGroupView === "benchmark" ? (
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                          <div className="text-sm text-slate-600">尚未选定真实标题</div>
+                          <PrimaryButton
+                            disabled={Boolean(busy)}
+                            onClick={() => runs.default
+                              ? generateTopics("default", "benchmark", "rotate_all_sources")
+                              : generateTopics("default")}
+                          >
+                            {busy === "rotate-all-default" ? "正在筛选…" : "换一批真实标题"}
+                          </PrimaryButton>
+                        </div>
+                      ) : (
+                        <div className="text-sm text-slate-500">请先在上方选择一个标题，再进入正文。</div>
+                      )
                     )}
                   </div>
                 </Section>
@@ -3259,7 +3279,6 @@ function MethodArea({
   savingTitleId,
   onExploreOpen,
   onExplore,
-  onRotateAll,
   onRotateSource,
   onRegenerateTitle,
   onUndoTitle,
@@ -3290,7 +3309,6 @@ function MethodArea({
   savingTitleId: string | null;
   onExploreOpen: (open: boolean) => void;
   onExplore: () => void;
-  onRotateAll: () => void;
   onRotateSource: (mode: MethodGenerationMode, methodId: TitleMethodId) => void;
   onRegenerateTitle: (mode: MethodGenerationMode, methodId: TitleMethodId, topicId: string) => void;
   onUndoTitle: (mode: MethodGenerationMode, run: GrowthRun) => void;
@@ -3317,21 +3335,15 @@ function MethodArea({
               : "按当前业务、视角和账号人设筛选7天内真实标题；找到后直接使用原标题，不再改写。"}
           </p>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          {!isNative && defaultRun && (
-            <SecondaryButton disabled={Boolean(busy)} onClick={onRotateAll}>
-              {busy === "rotate-all-default" ? "正在全部换源…" : "全部换新对标"}
-            </SecondaryButton>
-          )}
-          <Badge>默认 {defaultMethods.length} · 探索 {exploreMethods.length}</Badge>
-        </div>
+        <Badge>默认 {defaultMethods.length} · 探索 {exploreMethods.length}</Badge>
       </div>
 
       <div className="mt-5 grid gap-3">
-        {defaultMethods.map((method) => (
+        {defaultMethods.map((method, index) => (
           <MethodSlot
             key={method.id}
             method={method}
+            recommendationRank={index + 1}
             mode="default"
             run={defaultRun}
             account={account}
@@ -3369,10 +3381,11 @@ function MethodArea({
           <div className="border-t border-amber-100 px-4 pb-4 pt-4">
             <SecondaryButton disabled={Boolean(busy)} onClick={onExplore}>探索生成{isNative ? "原生法" : "对标法"}</SecondaryButton>
             <div className="mt-4 grid gap-3">
-              {exploreMethods.map((method) => (
+              {exploreMethods.map((method, index) => (
                 <MethodSlot
                   key={method.id}
                   method={method}
+                  recommendationRank={defaultMethods.length + index + 1}
                   mode="explore"
                   run={exploreRun}
                   account={account}
@@ -3408,6 +3421,7 @@ function MethodArea({
 
 function MethodSlot({
   method,
+  recommendationRank,
   mode,
   run,
   account,
@@ -3433,6 +3447,7 @@ function MethodSlot({
   onUndoTitle,
 }: {
   method: TitleMethodDefinition;
+  recommendationRank: number;
   mode: MethodGenerationMode;
   run?: GrowthRun;
   account: GrowthAccount;
@@ -3476,6 +3491,162 @@ function MethodSlot({
     run?.title_mutation?.mutation_type === "single_title_regeneration"
     && run.title_mutation.method_id === method.id
   );
+
+  if (method.group === "benchmark") {
+    const matchChips = [
+      account.business_line ? GROWTH_BUSINESS_LINE_LABELS[account.business_line] : null,
+      `${GROWTH_PERSONA_LABELS[account.persona]}视角`,
+      account.profile_name || account.one_liner || account.name,
+    ].filter((item): item is string => Boolean(item));
+    const matchEvidence = topic?.source_match_evidence
+      || topic?.source_snapshot?.migration_note
+      || source?.migration_note
+      || "该真实标题与当前业务、视角和账号人设一致。";
+    const unavailableReason = directBenchmarkUnavailableReason(
+      unavailable?.reason || delivery?.reason,
+      Boolean(topic),
+    );
+
+    return (
+      <article
+        data-method-slot={`${method.id}-${mode}`}
+        className={`rounded-2xl border p-4 sm:p-5 ${active ? "border-slate-900 bg-slate-50 shadow-sm" : "border-slate-200 bg-white"}`}
+      >
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs font-semibold text-[#9a6b24]">推荐 {recommendationRank}</span>
+            <Badge>{method.label}</Badge>
+          </div>
+          <Badge>{mode === "default" ? "默认" : "探索方法"}</Badge>
+        </div>
+
+        {topic && run ? (
+          <>
+            <label className="mt-4 block">
+              <span className="sr-only">真实原标题（可编辑）</span>
+              <input
+                aria-label={`编辑${method.label}真实原标题`}
+                aria-invalid={Boolean(currentTitleError)}
+                aria-describedby={`benchmark-title-help-${topic.id}`}
+                type="text"
+                value={currentTitle}
+                onCompositionStart={() => {
+                  composingTitle.current = true;
+                }}
+                onCompositionEnd={(event) => {
+                  composingTitle.current = false;
+                  onTitleChange(topic, event.currentTarget.value, false);
+                }}
+                onChange={(event) => onTitleChange(
+                  topic,
+                  event.target.value,
+                  composingTitle.current || Boolean((event.nativeEvent as InputEvent).isComposing),
+                )}
+                onBlur={(event) => {
+                  if (!composingTitle.current) onSaveTitle(run, topic, event.currentTarget.value);
+                }}
+                className={`w-full rounded-xl border bg-white px-4 py-3 text-lg font-semibold leading-7 outline-none focus-visible:ring-2 sm:text-xl ${currentTitleError ? "border-red-400 focus:border-red-500 focus-visible:ring-red-300" : "border-slate-200 focus:border-amber-500 focus-visible:ring-amber-400"}`}
+              />
+              <span id={`benchmark-title-help-${topic.id}`} className={`mt-1 block text-xs ${currentTitleError ? "text-red-600" : "text-slate-500"}`}>
+                {currentTitleError || (savingTitle ? "正在保存修改…" : isUneditedDirectBenchmarkTitle ? "真实原标题直接使用；如有需要仍可手工编辑。" : "已手工修改，系统会同步保存。")}
+              </span>
+            </label>
+
+            {source && (
+              <div className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-slate-600">
+                <span className="font-medium text-slate-800">{source.author || source.platform}</span>
+                {source.author && source.platform && <span aria-hidden="true">·</span>}
+                {source.author && source.platform && <span>{source.platform}</span>}
+                <span aria-hidden="true">·</span>
+                <span>{relativeAge(source.published_at)}</span>
+                <span aria-hidden="true">·</span>
+                <span>{sourceHeatSummary(source)}</span>
+                <SourceStatus status={source.link_status} verified={source.verified_by_operator} />
+              </div>
+            )}
+
+            <div className="mt-4 rounded-xl bg-slate-50 p-3">
+              <div className="text-xs font-semibold text-slate-500">为什么推荐</div>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {matchChips.map((chip) => (
+                  <span key={chip} className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-700">{chip}</span>
+                ))}
+              </div>
+              <p className="mt-2 text-sm leading-6 text-slate-700">{matchEvidence}</p>
+            </div>
+
+            {(topic.title_promise_status === "stale" || topic.title_promise_status === "invalid") && (
+              <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+                <div className="font-semibold">承诺未跟随标题</div>
+                <p className="mt-1 text-xs leading-5">{topic.title_promise_validation || "标题已经修改，需要先同步正文承诺。"}</p>
+                <button type="button" disabled={savingTitle || Boolean(busy) || Boolean(currentTitleError)} onClick={() => onSyncPromise(run, topic)} className="mt-2 min-h-11 rounded-xl border border-amber-300 bg-white px-3 text-sm font-semibold disabled:opacity-40">根据标题更新承诺</button>
+              </div>
+            )}
+
+            <div className="mt-4 flex flex-wrap items-center gap-2">
+              {active ? (
+                <div className="inline-flex min-h-11 items-center rounded-xl bg-slate-900 px-5 text-sm font-semibold text-white">已选用</div>
+              ) : (
+                <PrimaryButton disabled={Boolean(busy) || Boolean(currentTitleError)} onClick={() => onSelectTopic(run, topic)}>
+                  选用这个标题
+                </PrimaryButton>
+              )}
+              <SecondaryButton disabled={Boolean(busy)} onClick={() => onRotateSource(mode, method.id)}>
+                {busy === `rotate-${mode}-${method.id}` ? "正在寻找…" : "换一个"}
+              </SecondaryButton>
+            </div>
+
+            <details
+              className="mt-4 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600"
+              onToggle={(event) => {
+                if ((event.currentTarget as HTMLDetailsElement).open) onPreviewTopic(run, topic);
+              }}
+            >
+              <summary className="cursor-pointer py-1 font-medium text-slate-700">来源详情与高级操作</summary>
+              <div className="mt-2 grid gap-2 border-t border-slate-100 pt-3">
+                <p><span className="font-semibold">正文承诺：</span>{topic.title_promise}</p>
+                {source && (
+                  <>
+                    <p><span className="font-semibold">原标题：</span>{source.original_title}</p>
+                    <p><span className="font-semibold">详细数据：</span>{source.source_provider === "redfox_daily" ? `真实热榜API · ${source.rank_date || "当日"}榜${source.rank_position ? `第${source.rank_position}` : ""}` : source.platform} · {source.heat_snapshot}</p>
+                    {sourceNeedsRefresh(source) && <p className="text-amber-700">来源校验已超过24小时，下次找题时系统会自动刷新。</p>}
+                    <div className="flex flex-wrap gap-2 pt-1">
+                      <a className="inline-flex min-h-11 items-center rounded-xl border border-[#ead7b5] bg-white px-3 font-medium text-[#9a6b24]" href={source.original_url} target="_blank" rel="noreferrer">查看原帖</a>
+                      <button className="min-h-11 rounded-xl border border-slate-200 bg-white px-3 font-medium text-slate-700" onClick={() => onRefreshSource(source.id, source.link_status === "restricted")}>{busy === `source-${source.id}` ? "检测中…" : "刷新校验"}</button>
+                      <button className="min-h-11 rounded-xl border border-slate-200 bg-white px-3 font-medium text-slate-700" onClick={() => onOpenSource(method.id)}>手工补充来源</button>
+                    </div>
+                  </>
+                )}
+              </div>
+            </details>
+          </>
+        ) : (
+          <div className="mt-4 rounded-xl border border-dashed border-amber-300 bg-amber-50/50 p-4" role="status" aria-live="polite">
+            <div className="font-semibold text-slate-900">暂未找到匹配标题</div>
+            <p className="mt-1 text-sm leading-6 text-slate-600">{unavailableReason}。</p>
+            <p className="mt-1 text-xs text-slate-500">系统只展示有真实来源的标题，不会虚构标题。</p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <SecondaryButton disabled={Boolean(busy)} onClick={() => onRotateSource(mode, method.id)}>
+                {busy === `rotate-${mode}-${method.id}` ? "正在寻找…" : "再找一次"}
+              </SecondaryButton>
+              <SecondaryButton disabled={Boolean(busy)} onClick={() => onOpenSource(method.id)}>手工添加</SecondaryButton>
+            </div>
+          </div>
+        )}
+
+        {sourceEditorOpen && (
+          <SourceEditor
+            method={method}
+            value={sourceForm}
+            busy={busy}
+            onChange={onSourceChange}
+            onSave={onSaveSource}
+            onClose={onCloseSource}
+          />
+        )}
+      </article>
+    );
+  }
 
   return (
     <div data-method-slot={`${method.id}-${mode}`} className={`rounded-2xl border p-4 ${active ? "border-slate-900 bg-slate-50" : "border-slate-200 bg-white"}`}>
@@ -3558,7 +3729,6 @@ function MethodSlot({
       <MethodDeliveryNotice
         delivery={delivery}
         hasTopic={Boolean(topic)}
-        directBenchmark={method.group === "benchmark"}
       />
 
       <div className="mt-4">
@@ -3612,27 +3782,6 @@ function MethodSlot({
               <summary className="cursor-pointer font-medium">查看正文承诺</summary>
               <p className="mt-2">{topic.title_promise}</p>
             </details>
-            {method.group === "benchmark" && topic.source_snapshot && topic.benchmark_title_mode === "direct_source" && (
-              <details className="mt-2 rounded-xl border border-sky-100 bg-sky-50/60 px-3 py-2 text-sm leading-6 text-slate-700">
-                <summary className="cursor-pointer font-medium">查看对标采用依据</summary>
-                <div className="mt-2 grid gap-2">
-                  <p><span className="font-semibold">采用标题：</span>{topic.source_snapshot.original_title}</p>
-                  <p><span className="font-semibold">匹配依据：</span>{topic.source_match_evidence || topic.source_snapshot.migration_note || "已匹配当前业务、视角和账号人设。"}</p>
-                  <p><span className="font-semibold">使用方式：</span>直接采用真实原标题，系统未拆解、迁移或改写。</p>
-                </div>
-              </details>
-            )}
-            {method.group === "benchmark" && topic.source_snapshot && topic.benchmark_title_mode !== "direct_source" && (
-              <details className="mt-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm leading-6 text-slate-600">
-                <summary className="cursor-pointer font-medium">查看历史对标迁移记录</summary>
-                <div className="mt-2 grid gap-2">
-                  <p><span className="font-semibold">历史原题：</span>{topic.source_snapshot.original_title}</p>
-                  <p><span className="font-semibold">历史说明：</span>{topic.migration_validation_evidence || topic.source_snapshot.migration_note || "该标题来自旧版迁移流程。"}</p>
-                  <p><span className="font-semibold">历史标题：</span>{topic.title}</p>
-                  <p className="text-xs text-slate-500">这是旧流程记录；下一次生成标题后，将改为直接采用符合当前业务、视角和人设的真实原标题。</p>
-                </div>
-              </details>
-            )}
             {method.id === "traffic" && topic.source_snapshot && (
               <details className="mt-2 rounded-xl border border-sky-100 bg-sky-50/60 px-3 py-2 text-sm leading-6 text-slate-700">
                 <summary className="cursor-pointer font-medium">查看热点承接依据</summary>
@@ -3651,22 +3800,20 @@ function MethodSlot({
               </div>
             )}
             <div className="mt-4 flex flex-wrap gap-2">
-              {method.group === "native" && (
-                <SecondaryButton
-                  disabled={Boolean(busy)
-                    || Boolean(currentTitleError)
-                    || topic.title_promise_status === "stale"
-                    || topic.title_promise_status === "invalid"}
-                  onClick={() => onRegenerateTitle(mode, method.id, topic.id)}
-                >
-                  {topic.title_promise_status === "stale" || topic.title_promise_status === "invalid"
-                    ? "先同步正文承诺"
-                    : busy === `title-${mode}-${method.id}`
-                    ? "正在换标题…"
-                    : canUndoTitle ? "再换一个" : "换个标题"}
-                </SecondaryButton>
-              )}
-              {method.group === "native" && canUndoTitle && run && (
+              <SecondaryButton
+                disabled={Boolean(busy)
+                  || Boolean(currentTitleError)
+                  || topic.title_promise_status === "stale"
+                  || topic.title_promise_status === "invalid"}
+                onClick={() => onRegenerateTitle(mode, method.id, topic.id)}
+              >
+                {topic.title_promise_status === "stale" || topic.title_promise_status === "invalid"
+                  ? "先同步正文承诺"
+                  : busy === `title-${mode}-${method.id}`
+                  ? "正在换标题…"
+                  : canUndoTitle ? "再换一个" : "换个标题"}
+              </SecondaryButton>
+              {canUndoTitle && run && (
                 <SecondaryButton disabled={Boolean(busy)} onClick={() => onUndoTitle(mode, run)}>
                   撤回上一版
                 </SecondaryButton>
@@ -3680,9 +3827,7 @@ function MethodSlot({
           </>
         ) : unavailable ? (
           <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
-            暂停生成：{method.group === "benchmark"
-              ? directBenchmarkUnavailableReason(unavailable.reason)
-              : unavailable.reason || "缺少近期有效来源"}。系统不会虚构标题。
+            暂停生成：{unavailable.reason || "缺少近期有效来源"}。系统不会虚构标题。
           </div>
         ) : (
           <div className="rounded-xl border border-dashed border-slate-300 p-3 text-sm text-slate-400">
