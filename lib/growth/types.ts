@@ -875,7 +875,7 @@ export interface GrowthRun {
     topic_id: string;
     cache_key: string;
     profile_version: string;
-    generation_version: "draft-prewarm-v1" | "draft-prewarm-v2" | "draft-prewarm-v3" | "draft-prewarm-v4" | "draft-prewarm-v5" | "draft-prewarm-v6" | "draft-prewarm-v7" | "draft-prewarm-v8" | "draft-prewarm-v9-business-safe-comparison";
+    generation_version: "draft-prewarm-v1" | "draft-prewarm-v2" | "draft-prewarm-v3" | "draft-prewarm-v4" | "draft-prewarm-v5" | "draft-prewarm-v6" | "draft-prewarm-v7" | "draft-prewarm-v8" | "draft-prewarm-v9-business-safe-comparison" | "main-draft-v4-operating-contract";
     status: "ready" | "expired";
     drafts: ContentDraft[];
     generated_at: string;
@@ -932,10 +932,47 @@ export interface BodyGenerationHistoryEntry {
   method_id: TitleMethodId;
   title: string;
   title_promise: string;
-  body_version: "short" | "long";
+  body_version: "short" | "long" | "selected";
   body: string;
   body_fingerprint: string;
   created_at: string;
+}
+
+export type BodyContentIntent =
+  | "buyer_experience"
+  | "buyer_resonance"
+  | "expert_category_comparison"
+  | "expert_brand_comparison"
+  | "expert_judgement"
+  | "merchant_sku_sale"
+  | "merchant_service_mechanism";
+
+/**
+ * v4 正文经营合同：把业务、视角、人设、标题承诺和本篇唯一经营任务编译成
+ * 一份结构化输入。生成、修订、校验和复盘均读取同一份合同，避免规则只散落
+ * 在提示词里而无法审计。
+ */
+export interface BodyOperatingContractV4 {
+  contract_version: "v4_0";
+  business_line: GrowthBusinessLine;
+  persona: GrowthPersona;
+  account_id: string;
+  account_profile: string;
+  speaker_identity: string;
+  content_intent: BodyContentIntent;
+  subject: string;
+  title: string;
+  title_promise: string;
+  required_evidence: string[];
+  prohibited_claims: string[];
+  conversion_rule: string;
+  primary_action: string;
+  active_sku?: string;
+  comparison_scope?: string;
+  comparison_brands?: string;
+  evidence_mode: "real_or_authorized" | "public_sources" | "configured_business_facts" | "internal_training";
+  source_title?: string;
+  compiled_at: string;
 }
 
 export interface ContentDraft {
@@ -962,6 +999,13 @@ export interface ContentDraft {
   validation_report?: DraftValidationReport;
   /** v3.4 正文交付合同：生成、修复和标注共享同一份结构化依据。 */
   delivery_contract?: DraftDeliveryContract;
+  /** v4 单主稿经营合同。历史短/长稿没有该字段时继续按 v3.4 兼容读取。 */
+  operating_contract?: BodyOperatingContractV4;
+  content_intent?: BodyContentIntent;
+  body_generation_mode?: "legacy_variant" | "main_draft";
+  draft_lineage_id?: string;
+  revision_number?: number;
+  revision_action?: "generated" | "compact" | "enrich" | "rewrite";
   /**
    * 短版先行、长版后台补齐时共享的核心判断。仅供生成管线复用，
    * 不展示给操作者，也不会进入复制发布内容。
@@ -973,7 +1017,7 @@ export interface ContentDraft {
   fallback_used?: boolean;
   incident_id?: string;
   /** v3.5 正文生成管线诊断，仅供系统排障，不进入复制或发布内容。 */
-  generation_pipeline_version?: "v3_5";
+  generation_pipeline_version?: "v3_5" | "v4_0";
   generation_diagnostics?: {
     initial_missing_fields: string[];
     normalization_actions: string[];

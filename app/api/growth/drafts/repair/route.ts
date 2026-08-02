@@ -11,7 +11,7 @@ export const dynamic = "force-dynamic";
 
 const bodySchema = z.object({
   draft: z.custom<ContentDraft>(),
-  repairType: z.enum(["opening", "fulfillment", "identity", "conversion", "outcome"]),
+  repairType: z.enum(["opening", "fulfillment", "identity", "conversion", "outcome", "compact", "enrich", "rewrite"]),
 });
 
 export async function POST(req: Request) {

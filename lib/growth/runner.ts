@@ -76,6 +76,7 @@ import {
   resolveProfileIdentity,
 } from "./accountIdentity";
 import { contentUsePolicyFor, perspectivePromptContract } from "./perspectiveStrategy";
+import { compileBodyOperatingContract, formatBodyOperatingContract } from "./bodyOperatingContract";
 import {
   bodyUniquenessProblem,
   type BodyUniquenessReference,
@@ -5205,7 +5206,7 @@ export function composeBlueprintBody(
   spec: PromiseDeliverySpec,
   rawStructure?: unknown,
   options?: {
-    bodyVersion?: "short" | "long";
+    bodyVersion?: "short" | "long" | "selected";
     businessLine?: GrowthBusinessLine;
     compact?: boolean;
     aggressive?: boolean;
@@ -5251,7 +5252,9 @@ export function composeBlueprintBody(
   };
   sections = bodyVersion === "short"
     ? sections.map((section) => options?.compact ? compactSection(section) : firstSentence(section))
-    : sections.map((section, index) => {
+    : bodyVersion === "selected"
+      ? sections.map((section) => options?.compact ? compactSection(section) : section.trim())
+      : sections.map((section, index) => {
       if (options?.compact) {
         const compact = compactSection(section);
         if (options.aggressive || index > 1) return compact;
@@ -5272,7 +5275,9 @@ export function composeBlueprintBody(
   // 转化桥同样来自已标准化的合同，确保卡点、介入动作和阶段结果一次写全。
   const serviceBridge = blueprint.conversion_contract.bridge_paragraph;
   const closing = asText(structure.closing) || blueprint.closing;
-  const versionContext = bodyVersion === "long"
+  const versionContext = bodyVersion === "selected"
+    ? evidenceLine
+    : bodyVersion === "long"
     ? options?.aggressive
       ? ""
       : options?.compact
@@ -5534,7 +5539,7 @@ function rebuildDraftFromBlueprint(
   repair: DraftRepairRecord,
 ) {
   const body = composeBlueprintBody(blueprint, spec, undefined, {
-    bodyVersion: draft.selected_body_version === "long" ? "long" : "short",
+    bodyVersion: draft.selected_body_version,
     businessLine,
   });
   return attachBlueprintContract(enforceDraftCompliance({
@@ -5667,7 +5672,7 @@ async function fitDraftWithinPublishTarget(
 
   // 长度兜底始终使用确定性合同，避免上一轮定向修复后的合同与原始模型骨架错位。
   let fallbackBody = composeBlueprintBody(input.fallbackBlueprint, input.spec, undefined, {
-    bodyVersion: draft.selected_body_version === "long" ? "long" : "short",
+    bodyVersion: draft.selected_body_version,
     businessLine: input.businessLine,
     compact: true,
   });
@@ -5687,7 +5692,7 @@ async function fitDraftWithinPublishTarget(
   if (draftMeetsPublishTarget(fallback)) return fallback;
 
   fallbackBody = composeBlueprintBody(input.fallbackBlueprint, input.spec, undefined, {
-    bodyVersion: draft.selected_body_version === "long" ? "long" : "short",
+    bodyVersion: draft.selected_body_version,
     businessLine: input.businessLine,
     compact: true,
     aggressive: true,
@@ -5744,13 +5749,14 @@ export function composeUniqueDeterministicDraftBody(input: {
   cta: ContentDraft["cta_type"];
   spec: PromiseDeliverySpec;
   blueprint: DraftBlueprintContext;
-  bodyVersion: "short" | "long";
+  bodyVersion: "short" | "long" | "selected";
   businessLine: GrowthBusinessLine;
   historicalBodies?: BodyUniquenessReference[];
   variationStartIndex?: number;
   variationCount?: number;
 }) {
   const attemptedBodies: BodyUniquenessReference[] = [];
+  let softFallback: { body: string; blueprint: DraftBlueprintContext; variationIndex: number } | null = null;
   const variationStartIndex = input.variationStartIndex ?? 0;
   const variationCount = input.variationCount ?? 8;
   for (let offset = 0; offset < variationCount; offset += 1) {
@@ -5780,8 +5786,12 @@ export function composeUniqueDeterministicDraftBody(input: {
     if (!identityProblem && !duplicate) {
       return { body, blueprint: candidateBlueprint, attemptedBodies, variationIndex: index };
     }
+    if (!identityProblem && duplicate?.reference.strength === "soft" && !softFallback) {
+      softFallback = { body, blueprint: candidateBlueprint, variationIndex: index };
+    }
     attemptedBodies.push({ body, topic_id: input.topic.id });
   }
+  if (softFallback) return { ...softFallback, attemptedBodies };
   return { body: "", blueprint: null, attemptedBodies, variationIndex: -1 };
 }
 
@@ -5844,8 +5854,8 @@ async function rewriteCertifiedDraftForHistory(input: {
   historicalBodies: BodyUniquenessReference[];
   attempt: number;
 }) {
-  const bodyVersion = input.draft.selected_body_version === "long" ? "long" : "short";
-  const lengthRule = bodyVersion === "long" ? "600—900字" : "180—320字";
+  const bodyVersion = input.draft.selected_body_version;
+  const lengthRule = bodyVersion === "long" ? "600—900字" : bodyVersion === "selected" ? "400—700字" : "180—320字";
   const recentHistory = input.historicalBodies.slice(0, 4).map((reference, index) =>
     `历史${index + 1}：${reference.body.slice(0, 900)}`
   ).join("\n\n");
@@ -5873,7 +5883,7 @@ ${input.draft.body}
 
 需避开的历史正文：
 ${recentHistory || "无"}`,
-    maxTokens: bodyVersion === "long" ? 3000 : 1600,
+    maxTokens: bodyVersion === "long" ? 3000 : bodyVersion === "selected" ? 2400 : 1600,
     temperature: Math.min(0.9, 0.72 + input.attempt * 0.06),
   });
   return asText(result.data?.body);
@@ -5881,7 +5891,7 @@ ${recentHistory || "无"}`,
 
 async function generateSingleDraft(input: {
   tenantId?: string; account: GrowthAccount; run: GrowthRun; topic: TopicCandidate;
-  bodyVersion: "short" | "long"; excludeBodies?: string[]; learningBrief?: GrowthLearningBrief;
+  bodyVersion: "short" | "long" | "selected"; excludeBodies?: string[]; learningBrief?: GrowthLearningBrief;
   blueprint: DraftBlueprintContext; fallbackBlueprint: DraftBlueprintContext; spec: PromiseDeliverySpec;
   historicalBodies?: BodyUniquenessReference[];
   currentPairBodies?: string[];
@@ -5892,6 +5902,9 @@ async function generateSingleDraft(input: {
   let usage: Record<string, unknown> | undefined;
   const cta = ctaType(input.account.persona);
   const businessLine = input.account.business_line ?? "executive";
+  const operatingContract = input.bodyVersion === "selected"
+    ? compileBodyOperatingContract(input.account, input.topic)
+    : undefined;
   const attemptedBodies: BodyUniquenessReference[] = [];
   let body = "";
   let selectedBlueprint: DraftBlueprintContext | null = null;
@@ -5905,7 +5918,7 @@ async function generateSingleDraft(input: {
   // 认证门禁。长版装配器会额外补充现场、判断依据和执行细节，因此不是把
   // 短版简单拉长。只有身份或历史去重未通过时，才回退到下方模型改写；
   // 这样供应商的尾部延迟不会再让一个本可交付的长版等待数轮后失败。
-  if (input.bodyVersion === "short" || input.bodyVersion === "long") {
+  if (input.bodyVersion === "short" || input.bodyVersion === "long" || input.bodyVersion === "selected") {
     const deterministic = composeUniqueDeterministicDraftBody({
       account: input.account,
       topic: input.topic,
@@ -5922,7 +5935,9 @@ async function generateSingleDraft(input: {
       selectedNormalizationActions = [
         input.bodyVersion === "short"
           ? "compose_short_from_certified_blueprint"
-          : "compose_long_from_certified_blueprint",
+          : input.bodyVersion === "long"
+            ? "compose_long_from_certified_blueprint"
+            : "compose_main_from_operating_contract",
         `deterministic_variation:${deterministic.variationIndex}`,
       ];
       payload = {};
@@ -5952,11 +5967,13 @@ async function generateSingleDraft(input: {
           expectedSignal: input.topic.expected_signal, followReason: input.topic.follow_reason,
           variantHint: input.bodyVersion === "short"
             ? `当前只写短版：150—300字，用更少的段落直接交付结论和必要动作，不展开背景解释。这是第${attempt}次内部尝试、并行候选${input.candidateIndex ?? 1}；${input.candidateIndex === 2 ? "优先从反常结果切入，再快速交付判断。" : "优先从具体动作或冲突切入，再交付必要动作。"}必须更换开头场景、叙事顺序和表达。`
-            : `当前只写长版：600—900字。在同一核心判断下补充现场、判断依据、执行细节和避坑说明；不得复用短版原句或只做同义改写。这是第${attempt}次内部尝试、并行候选${input.candidateIndex ?? 1}；${input.candidateIndex === 2 ? "优先按问题—判断—验证—避坑展开。" : "优先按现场—转折—依据—行动展开。"}必须使用不同的现场和论证顺序。`,
+            : input.bodyVersion === "long"
+              ? `当前只写长版：600—900字。在同一核心判断下补充现场、判断依据、执行细节和避坑说明；不得复用短版原句或只做同义改写。这是第${attempt}次内部尝试、并行候选${input.candidateIndex ?? 1}；${input.candidateIndex === 2 ? "优先按问题—判断—验证—避坑展开。" : "优先按现场—转折—依据—行动展开。"}必须使用不同的现场和论证顺序。`
+              : `当前只写一篇发布主稿：普通标题约400—650字，需要比较、清单或资料交付时可到800字；标题、正文和话题总计不得超过1000字。完整落实当前业务、视角、人设、标题承诺和唯一经营任务，不要输出第二版本。这是第${attempt}次内部尝试，必须自然、具体、有画面且可以直接发布。\n${operatingContract ? formatBodyOperatingContract(operatingContract) : ""}`,
           learningGuidance: input.learningBrief ? formatLearningBrief(input.learningBrief) : undefined,
           excludeBodies: promptExclusions, blueprint: input.blueprint,
           deliveryRule: input.spec.rule, ctaType: cta,
-        }), maxTokens: input.bodyVersion === "long" ? 3500 : 1800, temperature: Math.min(0.82, 0.62 + attempt * 0.06),
+        }), maxTokens: input.bodyVersion === "long" ? 3500 : input.bodyVersion === "selected" ? 2600 : 1800, temperature: Math.min(0.82, 0.62 + attempt * 0.06),
       });
       payload = result.data;
       usage = resultUsage(result);
@@ -6020,6 +6037,12 @@ async function generateSingleDraft(input: {
     source_snapshot: input.topic.source_snapshot, selected_body_version: input.bodyVersion,
     raw_body_tags: [], tagging_status: "pending", canonical_tag_ids: [], cta_type: cta, validation_checks: [],
     delivery_contract: deliveryContractFromBlueprint(selectedBlueprint), certification_status: "generating",
+    operating_contract: operatingContract,
+    content_intent: operatingContract?.content_intent,
+    body_generation_mode: input.bodyVersion === "selected" ? "main_draft" : "legacy_variant",
+    draft_lineage_id: id(),
+    revision_number: 0,
+    revision_action: "generated",
     generation_core_judgement: selectedBlueprint.core_judgement,
     repair_history: [], fallback_used: false,
     generation_pipeline_version: "v3_5",
@@ -6257,7 +6280,7 @@ async function generateSingleDraft(input: {
 export async function generateDraftVariants(input: {
   tenantId?: string; account: GrowthAccount; run: GrowthRun; topic: TopicCandidate;
   count?: number; excludeBodies?: string[]; learningBrief?: GrowthLearningBrief;
-  bodyVersion?: "short" | "long";
+  bodyVersion?: "short" | "long" | "selected";
   historicalBodies?: BodyUniquenessReference[];
   /** 长版后台补齐时复用已认证短版的核心判断与三项合同。 */
   referenceDraft?: ContentDraft;
@@ -6485,6 +6508,45 @@ export async function generateDraftVariants(input: {
   };
 }
 
+/**
+ * v4 默认正文入口：一个标题只交付一篇主稿。底层复用已经稳定的蓝图、字段级
+ * 修复、合规、字数和历史去重能力，但不再生成第二个版本，也不再执行短长版
+ * 成对差异门禁。
+ */
+export async function generateMainDraft(input: {
+  tenantId?: string;
+  account: GrowthAccount;
+  run: GrowthRun;
+  topic: TopicCandidate;
+  excludeBodies?: string[];
+  historicalBodies?: BodyUniquenessReference[];
+  learningBrief?: GrowthLearningBrief;
+}) {
+  const generated = await generateDraftVariants({
+    ...input,
+    bodyVersion: "selected",
+  });
+  const candidate = generated.drafts[0];
+  if (!candidate) throw pipelineFailure("model_unavailable", "单主稿生成没有返回正文");
+  const operatingContract = candidate.operating_contract
+    ?? compileBodyOperatingContract(input.account, input.topic);
+  const timestamp = now();
+  const draft: ContentDraft = {
+    ...candidate,
+    selected_body_version: "selected",
+    operating_contract: operatingContract,
+    content_intent: operatingContract.content_intent,
+    body_generation_mode: "main_draft",
+    draft_lineage_id: candidate.draft_lineage_id || id(),
+    revision_number: 0,
+    revision_action: "generated",
+    generation_pipeline_version: "v4_0",
+    created_at: timestamp,
+    updated_at: timestamp,
+  };
+  return { draft, drafts: [draft], usage: generated.usage };
+}
+
 async function rebuildVariantForLengthOrder(input: {
   draft: ContentDraft;
   account: GrowthAccount;
@@ -6572,7 +6634,59 @@ export function draftBodiesAreTooSimilar(shortBody: string, longBody: string) {
   return overlap / Math.min(shortPairs.size, longPairs.size) >= 0.92;
 }
 
-export type DraftRepairType = "opening" | "fulfillment" | "identity" | "conversion" | "outcome";
+export type DraftRepairType = "opening" | "fulfillment" | "identity" | "conversion" | "outcome"
+  | "compact" | "enrich" | "rewrite";
+
+export function deterministicMainDraftRevision(
+  draft: ContentDraft,
+  repairType: Extract<DraftRepairType, "compact" | "enrich" | "rewrite">,
+) {
+  const paragraphs = draft.body
+    .split(/\n\s*\n/gu)
+    .map((item) => item.trim())
+    .filter(Boolean);
+  if (paragraphs.length < 4) return draft.body;
+
+  const protectedEvidence = new Set([
+    draft.delivery_contract?.identity_contract.evidence,
+    draft.delivery_contract?.conversion_contract.bridge_paragraph,
+  ].filter((item): item is string => Boolean(item?.trim())));
+  const isProtected = (paragraph: string) => [...protectedEvidence]
+    .some((evidence) => paragraph.includes(evidence));
+
+  if (repairType === "enrich") {
+    const detail = draft.content_intent === "expert_brand_comparison"
+      || draft.content_intent === "expert_category_comparison"
+      ? "我把两种选择放进同一张表，只比较适用条件、交付边界和可验证证据，不用一句笼统的好坏替代判断。"
+      : draft.content_intent === "merchant_sku_sale"
+        ? "为了不让承诺停在口号上，我又把适合对象、实际交付和不适用情况逐项写清，先让人判断是否真的匹配。"
+        : "我还把当时的时间点、做过的动作和收到的反馈逐项记下，避免事后只凭情绪回忆这段经历。";
+    return [...paragraphs.slice(0, -1), detail, paragraphs.at(-1)!].join("\n\n");
+  }
+
+  if (repairType === "rewrite") {
+    const reordered = [...paragraphs];
+    const flexibleIndexes = reordered
+      .map((paragraph, index) => ({ paragraph, index }))
+      .filter(({ paragraph, index }) => index > 0 && index < reordered.length - 1 && !isProtected(paragraph))
+      .map(({ index }) => index);
+    if (flexibleIndexes.length > 1) {
+      const [first, second] = flexibleIndexes;
+      [reordered[first], reordered[second]] = [reordered[second], reordered[first]];
+    }
+    return reordered.join("\n\n");
+  }
+
+  const targetLength = Math.max(4, Math.ceil(paragraphs.length * 0.8));
+  const compacted = [...paragraphs];
+  while (compacted.length > targetLength) {
+    const removableIndex = compacted.findIndex((paragraph, index) =>
+      index > 0 && index < compacted.length - 1 && !isProtected(paragraph));
+    if (removableIndex < 0) break;
+    compacted.splice(removableIndex, 1);
+  }
+  return compacted.join("\n\n");
+}
 
 export async function repairDraftPart(input: {
   draft: ContentDraft;
@@ -6586,14 +6700,28 @@ export async function repairDraftPart(input: {
     identity: "只把当前商家/买家/专家身份自然写清楚，使用经历、动作和语气体现身份，不要用“作为××”硬贴标签。",
     conversion: "重写专业服务出现的因果转折：先写具体卡点或自己试过什么，再自然带出老师、机构或顾问具体做了什么，避免广告口吻。",
     outcome: "紧接专业服务动作补充一个克制、可验证的阶段变化，例如岗位收窄、简历对齐、排除方向、明确下一步或反馈可复盘；不得虚构Offer、薪资或保证成功。",
+    compact: "在不删除标题承诺、身份证据、关键判断、必要证据和唯一承接动作的前提下精简约20%；删除重复背景与同义解释，不得改标题。",
+    enrich: "保持标题、核心判断和段落主线不变，补充一个具体现场、一组判断依据或一段执行细节；总发布字数仍不得超过1000字。",
+    rewrite: "保持标题承诺、事实边界、经营任务和唯一承接动作不变，彻底更换开头、段落顺序和表达路径；不能只做同义词替换。",
   };
-  const result = await llmJSON<any>({
+  let usage: ReturnType<typeof resultUsage> | undefined;
+  let body = "";
+  try {
+    const result = await llmJSON<any>({
     system: GROWTH_SYSTEM_PROMPT,
-    user: `请局部修正下面的小红书正文，只输出 JSON：{"body":"修正后的完整正文"}。\n\n标题：${input.draft.title}\n标题承诺：${input.draft.title_promise}\n当前身份：${input.account.persona}\n人设：${input.account.one_liner}\n\n本次唯一修复任务：${instruction[input.repairType]}\n\n共同约束：口吻像同一个真人；保持事实边界；只保留一个主要承接动作；不要互动诱导或站外导流。\n\n原正文：\n${input.draft.body}`,
-    maxTokens: input.draft.selected_body_version === "long" ? 3500 : 1800,
-    temperature: 0.3,
-  });
-  const body = asText(result.data?.body);
+    user: `请修订下面的小红书正文，只输出 JSON：{"body":"修正后的完整正文"}。\n\n标题：${input.draft.title}\n标题承诺：${input.draft.title_promise}\n当前身份：${input.account.persona}\n人设：${input.account.one_liner}\n${input.draft.operating_contract ? `\n${formatBodyOperatingContract(input.draft.operating_contract)}\n` : ""}\n本次唯一修复任务：${instruction[input.repairType]}\n\n共同约束：口吻像同一个真人；保持事实边界；完整兑现标题；只保留一个主要承接动作；不要互动诱导或站外导流；标题、正文和话题总计不得超过1000字。\n\n原正文：\n${input.draft.body}`,
+      maxTokens: input.repairType === "enrich" ? 2600 : 1800,
+      temperature: 0.3,
+    });
+    body = asText(result.data?.body);
+    usage = resultUsage(result);
+  } catch (error) {
+    if (input.repairType !== "compact" && input.repairType !== "enrich" && input.repairType !== "rewrite") {
+      throw error;
+    }
+    console.warn("[growth] main draft revision model unavailable; using certified deterministic fallback:", (error as Error).message);
+    body = deterministicMainDraftRevision(input.draft, input.repairType);
+  }
   if (!body) throw new Error("draft_repair_empty");
   let repaired = withDraftValidation(enforceDraftCompliance({
     ...input.draft,
@@ -6614,7 +6742,21 @@ export async function repairDraftPart(input: {
       console.warn("[growth] repaired draft length rewrite skipped:", (error as Error).message);
     }
   }
-  return { draft: repaired, usage: resultUsage(result) };
+  if (repaired.validation_report?.status !== "passed" || !repaired.word_count.within_limit) {
+    throw pipelineFailure(validationFailureCode(repaired), "主稿修订后未通过正文合同，原稿已保留");
+  }
+  repaired = certifyDraftForOperator({
+    ...repaired,
+    selected_body_version: "selected",
+    body_generation_mode: "main_draft",
+    draft_lineage_id: input.draft.draft_lineage_id || input.draft.id,
+    revision_number: (input.draft.revision_number ?? 0) + 1,
+    revision_action: input.repairType === "compact" || input.repairType === "enrich" || input.repairType === "rewrite"
+      ? input.repairType
+      : input.draft.revision_action,
+    generation_pipeline_version: "v4_0",
+  });
+  return { draft: repaired, usage };
 }
 
 export async function generateDraft(input: {

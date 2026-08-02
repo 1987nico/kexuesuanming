@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   appendBodyGenerationHistory,
   bodyFingerprint,
+  bodyHistoryReferences,
   historyExcludingCurrentPair,
   bodySimilarityScore,
   bodyUniquenessProblem,
@@ -130,5 +131,22 @@ describe("body history uniqueness", () => {
       topic_id: "topic",
       body_fingerprint: bodyFingerprint(draft.body),
     });
+  });
+
+  it("marks selected drafts hard and merely shown run history soft", () => {
+    const now = new Date().toISOString();
+    const selected = {
+      id: "selected", body: "已经正式选定的正文。", created_at: now,
+    } as ContentDraft;
+    const run = {
+      id: "run", selected_topic: { id: "topic" }, body_generation_history: [{
+        draft_id: "shown", method_id: "human_pain", title: "标题", title_promise: "承诺",
+        body_version: "selected", body: "只展示但没有选定的正文。", body_fingerprint: "fp", created_at: now,
+      }],
+    } as GrowthRun;
+
+    const references = bodyHistoryReferences({ drafts: [selected], runs: [run] });
+    expect(references.find((item) => item.draft_id === "selected")?.strength).toBe("hard");
+    expect(references.find((item) => item.draft_id === "shown")?.strength).toBe("soft");
   });
 });

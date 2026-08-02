@@ -10,6 +10,7 @@ import {
   draftBodiesAreTooSimilar,
   draftMeetsPublishTarget,
   draftVariantOrderIsValid,
+  deterministicMainDraftRevision,
   fallbackDraftBlueprint,
   normalizeDraftSpecificBlueprint,
   repairDraftRepeatedOpening,
@@ -63,6 +64,51 @@ const spec = {
 };
 
 describe("draft variants", () => {
+  it("keeps contract evidence intact when deterministic main-draft revisions are needed", () => {
+    const body = composeBlueprintBody(blueprint, spec, undefined, {
+      bodyVersion: "selected", businessLine: "overseas_student",
+    });
+    const draft = {
+      body,
+      content_intent: "buyer_experience",
+      delivery_contract: {
+        contract_version: "v3_4",
+        identity_contract: blueprint.identity_contract,
+        fulfillment_contract: blueprint.fulfillment_contract,
+        conversion_contract: blueprint.conversion_contract,
+      },
+    } as unknown as ContentDraft;
+
+    const compact = deterministicMainDraftRevision(draft, "compact");
+    const enrich = deterministicMainDraftRevision(draft, "enrich");
+    const rewrite = deterministicMainDraftRevision(draft, "rewrite");
+
+    for (const revised of [compact, enrich, rewrite]) {
+      expect(revised).toContain(blueprint.identity_contract.evidence);
+      expect(revised).toContain(blueprint.conversion_contract.bridge_paragraph);
+    }
+    expect(compact.length).toBeLessThan(body.length);
+    expect(enrich.length).toBeGreaterThan(body.length);
+    expect(rewrite).not.toBe(body);
+  });
+
+  it("builds one adaptive main draft between the legacy short and long variants", () => {
+    const shortBody = composeBlueprintBody(blueprint, spec, undefined, {
+      bodyVersion: "short", businessLine: "overseas_student",
+    });
+    const mainBody = composeBlueprintBody(blueprint, spec, undefined, {
+      bodyVersion: "selected", businessLine: "overseas_student",
+    });
+    const longBody = composeBlueprintBody(blueprint, spec, undefined, {
+      bodyVersion: "long", businessLine: "overseas_student",
+    });
+
+    expect(mainBody.length).toBeGreaterThan(shortBody.length);
+    expect(mainBody.length).toBeLessThan(longBody.length);
+    expect(mainBody).toContain(blueprint.core_judgement);
+    expect(mainBody).toContain(blueprint.conversion_contract.bridge_paragraph);
+  });
+
   it("keeps overseas tug-of-war copy on both job paths and out of merchant economics", () => {
     const account = {
       id: "overseas-self", tenant_id: "tenant", business_line: "overseas_student", persona: "buyer",

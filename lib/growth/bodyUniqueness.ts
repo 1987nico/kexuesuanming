@@ -10,6 +10,8 @@ export interface BodyUniquenessReference {
   topic_id?: string;
   draft_id?: string;
   created_at?: string;
+  /** 已正式选定/发布为 hard；仅展示未选用为 soft。soft 只用于优先改写，不得阻断交付。 */
+  strength?: "hard" | "soft";
 }
 
 function normalizedText(value: string) {
@@ -110,6 +112,7 @@ export function bodyHistoryReferences(input: {
       topic_id: input.runs.find((run) => run.id === draft.run_id)?.selected_topic?.id,
       draft_id: draft.id,
       created_at: draft.created_at,
+      strength: "hard" as const,
     }));
   const fromRuns: BodyUniquenessReference[] = input.runs.flatMap((run) =>
     (run.body_generation_history ?? [])
@@ -120,10 +123,11 @@ export function bodyHistoryReferences(input: {
         topic_id: entry.topic_id,
         draft_id: entry.draft_id,
         created_at: entry.created_at,
+        strength: "soft" as const,
       }))
   );
   const seen = new Set<string>();
-  return [...fromRuns, ...fromDrafts]
+  return [...fromDrafts, ...fromRuns]
     .sort((a, b) => String(b.created_at ?? "").localeCompare(String(a.created_at ?? "")))
     .filter((reference) => {
       const key = bodyFingerprint(reference.body);
@@ -169,7 +173,7 @@ export function appendBodyGenerationHistory(
     method_id: draft.method_id,
     title: draft.title,
     title_promise: draft.title_promise,
-    body_version: draft.selected_body_version === "long" ? "long" : "short",
+    body_version: draft.selected_body_version,
     body: draft.body,
     body_fingerprint: bodyFingerprint(draft.body),
     created_at: draft.created_at,

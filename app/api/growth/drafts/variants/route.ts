@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireMianbaApiAuth } from "@/lib/auth/mianba";
-import { generateDraftVariants } from "@/lib/growth/runner";
+import { generateMainDraft } from "@/lib/growth/runner";
 import { growthStore } from "@/lib/growth/store";
 import {
   accountForBusinessGeneration,
@@ -39,7 +39,7 @@ const bodySchema = z.object({
   businessLine: z.enum(["executive", "overseas_student"]),
   persona: z.enum(["merchant", "buyer", "expert"]),
   count: z.number().int().min(1).max(3).optional(),
-  bodyVersion: z.enum(["short", "long"]).optional(),
+  bodyVersion: z.enum(["short", "long", "selected"]).optional(),
   excludeBodies: z.array(z.string()).max(6).optional(),
   requestMode: z.enum(["interactive", "prewarm"]).optional(),
 });
@@ -83,12 +83,10 @@ export async function POST(req: Request) {
   const generationAccount = accountForBusinessGeneration(account);
   const requestMode = parsed.data.requestMode ?? "interactive";
   const cached = bodyPrewarmEnabled()
-    ? freshDraftCache(run, account, topic, Date.now(), parsed.data.bodyVersion)
+    ? freshDraftCache(run, account, topic, Date.now(), "selected")
     : undefined;
   if (cached) {
-    const cachedDrafts = parsed.data.bodyVersion
-      ? cached.drafts.filter((draft) => draft.selected_body_version === parsed.data.bodyVersion)
-      : cached.drafts;
+    const cachedDrafts = cached.drafts.filter((draft) => draft.selected_body_version === "selected");
     await store.saveUsage({
       tenant_id: DEFAULT_TENANT_ID,
       user_id: guard.auth.user.id,
@@ -120,23 +118,11 @@ export async function POST(req: Request) {
     store.listRuns(account.id),
   ]);
   const historyDurationMs = Date.now() - historyStartedAt;
-  const referenceDraft = parsed.data.bodyVersion === "long"
-    ? freshDraftCache(run, account, topic, Date.now(), "short")
-      ?.drafts.find((draft) => draft.selected_body_version === "short")
-    : undefined;
   const allHistoricalBodies = [
     ...bodyHistoryReferences({ drafts: notes, runs }),
     ...(parsed.data.excludeBodies ?? []).map((body) => ({ body })),
   ];
-  const historicalBodies = historyExcludingCurrentPair(
-    allHistoricalBodies,
-    referenceDraft ? [referenceDraft.body] : [],
-    referenceDraft ? {
-      titles: [topic.title],
-      topicIds: [topic.id],
-      draftIds: [referenceDraft.id],
-    } : undefined,
-  );
+  const historicalBodies = historyExcludingCurrentPair(allHistoricalBodies, []);
   // 渐进式单版本正文使用的是已经锁定的标题合同，不需要先重新计算周复盘
   // 学习摘要。原先这里会额外读取全部复盘并可能写回账号，既不参与确定性
   // 组装，也把数据库尾部延迟带进用户等待路径。旧版“双版本一次生成”入口
@@ -166,17 +152,14 @@ export async function POST(req: Request) {
     learningDurationMs = Date.now() - learningStartedAt;
   }
 
-  let generated: Awaited<ReturnType<typeof generateDraftVariants>>;
+  let generated: Awaited<ReturnType<typeof generateMainDraft>>;
   const generationStartedAt = Date.now();
   try {
-    generated = await generateDraftVariants({
+    generated = await generateMainDraft({
       tenantId: DEFAULT_TENANT_ID,
       account: generationAccount,
       run,
       topic,
-      count: parsed.data.count ?? 2,
-      bodyVersion: parsed.data.bodyVersion,
-      referenceDraft,
       excludeBodies: parsed.data.excludeBodies,
       historicalBodies,
       learningBrief,
@@ -257,8 +240,8 @@ export async function POST(req: Request) {
     businessLine: resolveAccountBusinessLine(account),
     persona: account.persona,
     methodId: topic.method_id,
-    requestedVersion: parsed.data.bodyVersion ?? "both",
-    parallelRaceEnabled: process.env.GROWTH_PARALLEL_DRAFT_RACE !== "false",
+    requestedVersion: "selected",
+    parallelRaceEnabled: false,
     totalDurationMs: Date.now() - requestStartedAt,
     historyDurationMs,
     learningDurationMs,
@@ -282,7 +265,7 @@ export async function POST(req: Request) {
       user_id: guard.auth.user.id,
       feature: "growth_text",
       ...usage,
-      metadata: { action: "draft_variants", runId: run.id, topicId: topic.id },
+      metadata: { action: "main_draft_generated", runId: run.id, topicId: topic.id },
     });
   }
 

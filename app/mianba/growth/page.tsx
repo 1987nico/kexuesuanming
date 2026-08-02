@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import MianbaLogoutButton from "@/app/mianba/MianbaLogoutButton";
 import type {
+  BodyContentIntent,
   ContentDraft,
   GrowthAccount,
   GrowthPendingAccountProfileSummary,
@@ -220,6 +221,16 @@ const STATUS_LABEL: Record<string, string> = {
   reviewed: "已复盘",
 };
 
+const BODY_INTENT_LABELS: Record<BodyContentIntent, string> = {
+  buyer_experience: "亲历复盘",
+  buyer_resonance: "处境共鸣",
+  expert_category_comparison: "品类比较",
+  expert_brand_comparison: "品牌比较",
+  expert_judgement: "专业判断",
+  merchant_sku_sale: "单品销售",
+  merchant_service_mechanism: "服务机制",
+};
+
 const TOPIC_GENERATION_STAGES = [
   "正在准备当前可用对标标题…",
   "正在生成这一批新标题…",
@@ -227,10 +238,10 @@ const TOPIC_GENERATION_STAGES = [
   "正在保存这一批可交付标题…",
 ];
 const BODY_GENERATION_STAGES = [
-  "正在锁定标题承诺和同一核心判断…",
-  "正在并行生成短版和长版候选…",
-  "正在检查身份、兑现、自然转化与历史重复…",
-  "正在选择差异足够、可以直接使用的最佳组合…",
+  "正在编译业务、视角、人设和标题承诺…",
+  "正在生成一篇可以直接发布的主稿…",
+  "正在检查身份、兑现、经营任务与历史重复…",
+  "正在完成字段级修复和最终认证…",
 ];
 
 async function requestJSON<T>(url: string, options?: RequestInit): Promise<T> {
@@ -536,7 +547,6 @@ export default function GrowthPage() {
   const [businessEditOpen, setBusinessEditOpen] = useState(false);
   const [visibleStep, setVisibleStep] = useState<WorkflowStep>("0");
   const [methodGroupView, setMethodGroupView] = useState<TitleMethodGroup>("benchmark");
-  const [bodyVersionView, setBodyVersionView] = useState<"short" | "long">("short");
   const [activeRunIds, setActiveRunIds] = useState<Partial<Record<MethodGenerationMode, string>>>({});
   const [pendingContextSwitch, setPendingContextSwitch] = useState<PendingContextSwitch | null>(null);
   const [pendingStepSwitch, setPendingStepSwitch] = useState<WorkflowStep | null>(null);
@@ -596,7 +606,6 @@ export default function GrowthPage() {
     setBusinessEditOpen(false);
     if (transient?.visibleStep) setVisibleStep(transient.visibleStep);
     setMethodGroupView("benchmark");
-    setBodyVersionView("short");
     if (next?.businessPosition) setBusinessPositionForm(next.businessPosition);
   }, []);
 
@@ -782,14 +791,6 @@ export default function GrowthPage() {
 
   useEffect(() => {
     const account = data?.account;
-    if (!account || !runs.default || (visibleStep !== "2" && visibleStep !== "3")) return;
-    void ensureTopicPrefetch(account, TOPIC_PREFETCH_TARGET);
-  // runs.default.id is intentional: a consumed batch should trigger replenishment once.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data?.account?.id, runs.default?.id, visibleStep]);
-
-  useEffect(() => {
-    const account = data?.account;
     const run = runs.default;
     if (!account || !run || shownTopicRuns.current.has(run.id) || visibleStep !== "3") return;
     shownTopicRuns.current.add(run.id);
@@ -800,19 +801,6 @@ export default function GrowthPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data?.account?.id, runs.default?.id, visibleStep]);
 
-  useEffect(() => {
-    const account = data?.account;
-    const run = runs.default;
-    const firstTopic = run?.topic_pool[0];
-    if (!account || !run || !firstTopic || visibleStep !== "3") return;
-    // 标题出现后，先为首个推荐槽位预热正文。延迟一小段时间，把页面读取和
-    // 标题交互放在第一优先级；用户直接选择推荐标题时通常可以命中预热结果。
-    const timer = window.setTimeout(() => {
-      void prewarmBodies(account, run, firstTopic).catch(() => undefined);
-    }, 1_200);
-    return () => window.clearTimeout(timer);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data?.account?.id, runs.default?.id, visibleStep]);
   const defaultMethods = useMemo(
     () => methodsForPersona(persona, "default", data?.account?.method_overrides),
     [data?.account?.method_overrides, persona],
@@ -847,9 +835,8 @@ export default function GrowthPage() {
   }, [reviewItems]);
   const visibleBodyDraft = useMemo(() => {
     if (chosen) return chosen;
-    return variants.find((draft) => (draft.selected_body_version === "long" ? "long" : "short") === bodyVersionView)
-      ?? variants[0];
-  }, [bodyVersionView, chosen, variants]);
+    return variants.find((draft) => draft.selected_body_version === "selected") ?? variants[0];
+  }, [chosen, variants]);
   const workflowSteps = [
     ["0", "业务定位"], ["1", "三家视角"], ["2", "账号人设"], ["3", "选题"],
     ["4", "正文"], ["5", "三日复盘"],
@@ -908,6 +895,18 @@ export default function GrowthPage() {
     }
     setMessage("");
     goToStep(step);
+  }
+
+  async function advanceMobileStep() {
+    if (visibleStep === "3" && selectedTopic) {
+      if (selectedTopic.topic.title_promise_status === "stale" || selectedTopic.topic.title_promise_status === "invalid") {
+        setMessage("请先同步正文承诺，再生成正文。");
+        return;
+      }
+      if (!busy) await generateBodies(selectedTopic.run, selectedTopic.topic);
+      return;
+    }
+    requestStep(String(Number(visibleStep) + 1) as WorkflowStep);
   }
 
   function completePendingStepSwitch(preserve: boolean) {
@@ -1450,7 +1449,6 @@ export default function GrowthPage() {
     run: GrowthRun,
     topic: TopicCandidate,
     requestMode: "interactive" | "prewarm",
-    bodyVersion?: "short" | "long",
   ) {
     return requestJSON<DraftVariantResponse>("/api/growth/drafts/variants", {
       method: "POST",
@@ -1461,7 +1459,7 @@ export default function GrowthPage() {
         businessLine,
         persona,
         requestMode,
-        bodyVersion,
+        bodyVersion: "selected",
       }),
     });
   }
@@ -1473,9 +1471,8 @@ export default function GrowthPage() {
     const cached = bodyPrewarmResults.current.get(key);
     if (cached) return Promise.resolve(cached);
     trackGrowthEvent("body_preheat_started", account, { runId: run.id, topicId: topic.id });
-    // 预热只生成短版：优先把用户点击后第一屏的等待压到最低；
-    // 长版在短版可见后继续后台补齐，不再拖住短版交付。
-    const promise = requestBodyVariants(account, run, topic, "prewarm", "short")
+    // v4 只预热一篇主稿，不再在用户看不到的地方追加长版请求。
+    const promise = requestBodyVariants(account, run, topic, "prewarm")
       .then((result) => {
         bodyPrewarmResults.current.set(key, result);
         return result;
@@ -1899,7 +1896,6 @@ export default function GrowthPage() {
       stageIndex = Math.min(stageIndex + 1, BODY_GENERATION_STAGES.length - 1);
       setBodyProgressMessage(BODY_GENERATION_STAGES[stageIndex]);
     }, 7_000);
-    let longVersionPending = false;
     try {
       const requestStartedAt = performance.now();
       const editedTitle = titleEdits[topic.id] ?? topic.title;
@@ -1920,51 +1916,23 @@ export default function GrowthPage() {
         const pending = bodyPrewarmInFlight.current.get(prewarmKey);
         if (pending) result = await pending.catch(() => undefined);
       }
-      if (!result) result = await requestBodyVariants(account, saved.run, saved.topic, "interactive", "short");
-      const shortDrafts = result.drafts.filter((draft) => draft.selected_body_version !== "long");
-      if (!shortDrafts.length) throw new Error("短版正文暂未完成，系统已保留标题，请稍后重试。");
-      setVariants(result.drafts);
+      if (!result) result = await requestBodyVariants(account, saved.run, saved.topic, "interactive");
+      const mainDraft = result.drafts.find((draft) => draft.selected_body_version === "selected") ?? result.drafts[0];
+      if (!mainDraft) throw new Error("正文主稿暂未完成，系统已保留标题，请稍后重试。");
+      setVariants([mainDraft]);
       trackGrowthEvent("body_shown", account, {
         runId: saved.run.id,
         topicId: saved.topic.id,
         cacheHit: result.cacheHit ?? bodyPrewarmResults.current.has(prewarmKey),
         durationMs: Math.round(performance.now() - requestStartedAt),
       });
-      setMessage(result.drafts.some((draft) => draft.selected_body_version === "long")
-        ? "短版和长版已完成系统认证，可以直接选择使用。"
-        : "短版已完成，可以先查看或使用；长版正在后台补齐。"
-      );
-      setBodyVersionView(result.drafts.some((draft) => draft.selected_body_version !== "long") ? "short" : "long");
+      setMessage("正文主稿已完成系统认证，可以直接选定使用。");
       goToStep("4");
-      if (!result.drafts.some((draft) => draft.selected_body_version === "long")) {
-        longVersionPending = true;
-        const requestWorkspace = workspaceKey(businessLine, persona, account.id);
-        setBodyProgressMessage("短版已可使用，长版正在后台生成并完成认证…");
-        void requestBodyVariants(account, saved.run, saved.topic, "interactive", "long")
-          .then((longResult) => {
-            if (activeWorkspace.current !== requestWorkspace) return;
-            setVariants((current) => {
-              const merged = [...current, ...longResult.drafts];
-              return merged.filter((draft, index, drafts) => drafts.findIndex((candidate) =>
-                candidate.selected_body_version === draft.selected_body_version,
-              ) === index);
-            });
-            setMessage("长版也已完成系统认证；短版和长版现在都可以使用。");
-          })
-          .catch((error) => {
-            if (activeWorkspace.current === requestWorkspace) {
-              setMessage(`短版可以正常使用；长版暂未完成：${(error as Error).message}`);
-            }
-          })
-          .finally(() => {
-            if (activeWorkspace.current === requestWorkspace) setBodyProgressMessage("");
-          });
-      }
     } catch (error) {
       setMessage((error as Error).message);
     } finally {
       window.clearInterval(stageTimer);
-      if (!longVersionPending) setBodyProgressMessage("");
+      setBodyProgressMessage("");
       setBusy(null);
     }
   }
@@ -1975,7 +1943,7 @@ export default function GrowthPage() {
     setBusy(`choose-${draft.id}`);
     setVariants([draft]);
     setChosen(draft);
-    setMessage("已选定这个版本；未选版本已收起，复制按钮已显示。");
+    setMessage("已选定正文主稿，复制按钮已显示。");
     window.setTimeout(() => {
       document.getElementById("selected-final-draft")?.scrollIntoView({ behavior: "smooth", block: "start" });
     }, 0);
@@ -2002,11 +1970,41 @@ export default function GrowthPage() {
           ? { ...item, status: "ready", draft: result.draft }
           : item),
       } : current);
-      setMessage("已选定这个版本；现在可以复制标题和复制正文＋话题。");
+      setMessage("正文主稿已选定；现在可以复制标题和复制正文＋话题。");
     } catch (error) {
       setVariants(previousVariants);
       setChosen(previousChosen);
       setMessage((error as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function refineDraft(draft: ContentDraft, action: "compact" | "enrich" | "rewrite") {
+    const wasChosen = chosen?.id === draft.id;
+    setBusy(`refine-${action}-${draft.id}`);
+    try {
+      const repaired = await requestJSON<{ draft: ContentDraft }>("/api/growth/drafts/repair", {
+        method: "POST",
+        body: JSON.stringify({ draft, repairType: action }),
+      });
+      let nextDraft = repaired.draft;
+      if (wasChosen) {
+        const persisted = await requestJSON<{ draft: ContentDraft }>("/api/growth/drafts/choose", {
+          method: "POST",
+          body: JSON.stringify({ draft: nextDraft }),
+        });
+        nextDraft = persisted.draft;
+      }
+      setVariants([nextDraft]);
+      setChosen(wasChosen ? nextDraft : null);
+      setMessage(action === "compact"
+        ? "主稿已精简并重新通过认证。"
+        : action === "enrich"
+          ? "主稿已补充细节并重新通过认证。"
+          : "主稿已更换表达路径并重新通过认证。");
+    } catch (error) {
+      setMessage(`${(error as Error).message}；原稿没有被替换。`);
     } finally {
       setBusy(null);
     }
@@ -2258,7 +2256,7 @@ export default function GrowthPage() {
           <div className="flex items-center justify-between gap-2 sm:hidden">
             <button type="button" disabled={visibleStep === "0"} onClick={() => requestStep(String(Number(visibleStep) - 1) as WorkflowStep)} className="min-h-11 rounded-xl px-3 text-sm font-medium text-slate-600 disabled:opacity-30">‹ 上一步</button>
             <div className="text-sm font-semibold">{Number(visibleStep) + 1}/6 · {workflowSteps.find(([number]) => number === visibleStep)?.[1]}</div>
-            <button type="button" disabled={visibleStep === "5"} onClick={() => requestStep(String(Number(visibleStep) + 1) as WorkflowStep)} className="min-h-11 rounded-xl px-3 text-sm font-medium text-slate-600 disabled:opacity-30">下一步 ›</button>
+            <button type="button" disabled={visibleStep === "5" || Boolean(busy)} onClick={() => void advanceMobileStep()} className="min-h-11 rounded-xl px-3 text-sm font-medium text-slate-600 disabled:opacity-30">下一步 ›</button>
           </div>
         </nav>
 
@@ -2803,9 +2801,7 @@ export default function GrowthPage() {
                         if (parent) restoreTopicBatch(mode, parent);
                       }}
                       onSelectTopic={selectTopic}
-                      onPreviewTopic={(run, topic) => {
-                        if (data.account) void prewarmBodies(data.account, run, topic).catch(() => undefined);
-                      }}
+                      onPreviewTopic={() => undefined}
                       onTitleChange={changeTopicTitle}
                       onSaveTitle={saveTopicTitle}
                       onSyncPromise={syncTopicPromise}
@@ -2871,49 +2867,19 @@ export default function GrowthPage() {
                           {bodyProgressMessage}
                         </div>
                       )}
-                      {!chosen && variants.length > 1 && (
-                        <div className="mb-5 inline-flex rounded-xl bg-slate-100 p-1" role="tablist" aria-label="正文版本">
-                          {(["short", "long"] as const).map((version) => {
-                            const draft = variants.find((item) => (item.selected_body_version === "long" ? "long" : "short") === version);
-                            if (!draft) return null;
-                            const passed = draftReadyForOperator(draft);
-                            return (
-                              <button
-                                key={version}
-                                type="button"
-                                role="tab"
-                                aria-selected={bodyVersionView === version}
-                                onClick={() => setBodyVersionView(version)}
-                                className={`min-h-11 rounded-lg px-4 text-sm font-semibold ${bodyVersionView === version ? "bg-white text-slate-900 shadow-sm" : "text-slate-600"}`}
-                              >
-                                {version === "short" ? "短版" : "长版"} · {passed ? "已认证" : "处理中"}
-                              </button>
-                            );
-                          })}
-                        </div>
-                      )}
                       <DraftCard
                         key={visibleBodyDraft.id}
                         draft={visibleBodyDraft}
                         busy={busy}
                         selected={chosen?.id === visibleBodyDraft.id}
                         onChoose={chooseDraft}
+                        onRefine={refineDraft}
                         onPublish={markPublished}
                         onCopied={(draft) => data?.account && trackGrowthEvent("content_copied", data.account, {
                           runId: draft.run_id,
                           draftId: draft.id,
                         })}
                       />
-                      {chosen && variants.length === 1 && (
-                        <button type="button" className="mt-4 min-h-11 text-sm font-medium text-slate-600 underline" onClick={() => {
-                          const candidates = data.currentDrafts.filter((draft) => draft.run_id === chosen.run_id && draft.id !== chosen.id);
-                          if (candidates.length) {
-                            setVariants([chosen, ...candidates]);
-                            setChosen(null);
-                            setBodyVersionView(candidates[0].selected_body_version === "long" ? "long" : "short");
-                          } else setMessage("另一版本已归档；如需新版本，请返回选题后重新生成正文。");
-                        }}>更换正文版本</button>
-                      )}
                     </div>
                   ) : chosen ? (
                     <DraftCard
@@ -2921,6 +2887,7 @@ export default function GrowthPage() {
                       busy={busy}
                       selected
                       onChoose={chooseDraft}
+                      onRefine={refineDraft}
                       onPublish={markPublished}
                       onCopied={(draft) => data?.account && trackGrowthEvent("content_copied", data.account, {
                         runId: draft.run_id,
@@ -2931,12 +2898,12 @@ export default function GrowthPage() {
                     busy === `body-${selectedTopic.topic.id}` ? (
                       <div className="rounded-2xl border border-sky-200 bg-sky-50 p-5 text-sm text-slate-600">
                         <div className="font-semibold text-slate-900">正在生成可交付正文</div>
-                        <p className="mt-2 leading-6">{bodyProgressMessage || "系统正在内部完成正文合同、短长版生成、定点修复和最终认证；无需重复点击。"}</p>
+                        <p className="mt-2 leading-6">{bodyProgressMessage || "系统正在内部完成正文经营合同、主稿生成、字段级修复和最终认证；无需重复点击。"}</p>
                       </div>
                     ) : (
                       <div className="rounded-2xl border border-dashed border-slate-300 p-5 text-sm text-slate-500">
                         <div className="font-medium text-slate-800">标题已选定，等待生成正文</div>
-                        <p className="mt-2 leading-6">短版和长版将使用同一核心判断；正文不选择内容方向或正文阶段。</p>
+                        <p className="mt-2 leading-6">系统将根据当前业务、视角、人设和标题承诺生成一篇可直接发布的主稿。</p>
                         <button type="button" className="mt-3 inline-flex min-h-11 items-center rounded-xl border border-slate-200 px-3 font-medium text-slate-700" onClick={() => goToStep("3")}>返回选题</button>
                       </div>
                     )
@@ -4090,6 +4057,7 @@ function DraftCard({
   busy,
   selected = false,
   onChoose,
+  onRefine,
   onPublish,
   onCopied,
 }: {
@@ -4097,6 +4065,7 @@ function DraftCard({
   busy: string | null;
   selected?: boolean;
   onChoose: (draft: ContentDraft) => void;
+  onRefine: (draft: ContentDraft, action: "compact" | "enrich" | "rewrite") => void;
   onPublish?: (draft: ContentDraft, publishedAt: string) => void;
   onCopied?: (draft: ContentDraft) => void;
 }) {
@@ -4112,7 +4081,7 @@ function DraftCard({
   if (selected && onPublish) {
     return (
       <div id="selected-final-draft" className="scroll-mt-24">
-        <FinalDraft draft={draft} busy={busy} onPublish={onPublish} onCopied={onCopied} />
+        <FinalDraft draft={draft} busy={busy} onPublish={onPublish} onCopied={onCopied} onRefine={onRefine} />
       </div>
     );
   }
@@ -4120,14 +4089,35 @@ function DraftCard({
   return (
     <div className="rounded-2xl border border-slate-200 p-5">
       <div className="flex gap-2">
-        <Badge>{draft.selected_body_version === "long" ? "长版" : "短版"}</Badge>
-        <Badge>同一核心判断</Badge>
+        <Badge>{draft.selected_body_version === "selected" ? "正文主稿" : draft.selected_body_version === "long" ? "历史长版" : "历史短版"}</Badge>
+        {draft.content_intent && <Badge>{BODY_INTENT_LABELS[draft.content_intent]}</Badge>}
       </div>
+      <MainDraftTask draft={draft} />
       <h3 className="mt-3 text-lg font-semibold">{draft.title}</h3>
       <PublishLengthBadge draft={draft} />
       <OperatorAnnotatedBody draft={draft} />
-      <div className="mt-4">
-        <PrimaryButton disabled={Boolean(busy)} onClick={() => onChoose(draft)}>选定这个版本</PrimaryButton>
+      <div className="mt-4 flex flex-wrap gap-2">
+        <PrimaryButton disabled={Boolean(busy)} onClick={() => onChoose(draft)}>选定这篇主稿</PrimaryButton>
+        <SecondaryButton disabled={Boolean(busy)} onClick={() => onRefine(draft, "compact")}>再精简一些</SecondaryButton>
+        <SecondaryButton disabled={Boolean(busy)} onClick={() => onRefine(draft, "enrich")}>补充细节</SecondaryButton>
+        <SecondaryButton disabled={Boolean(busy)} onClick={() => onRefine(draft, "rewrite")}>换一种写法</SecondaryButton>
+      </div>
+    </div>
+  );
+}
+
+function MainDraftTask({ draft }: { draft: ContentDraft }) {
+  const contract = draft.operating_contract;
+  if (!contract) return null;
+  return (
+    <div className="mt-3 grid gap-2 rounded-xl bg-slate-50 p-3 text-xs leading-5 text-slate-600 sm:grid-cols-2">
+      <div>
+        <span className="font-semibold text-slate-900">本篇任务：</span>
+        {draft.content_intent ? BODY_INTENT_LABELS[draft.content_intent] : "正文主稿"}
+      </div>
+      <div>
+        <span className="font-semibold text-slate-900">唯一承接：</span>
+        {contract.primary_action}
       </div>
     </div>
   );
@@ -4138,11 +4128,13 @@ function FinalDraft({
   busy,
   onPublish,
   onCopied,
+  onRefine,
 }: {
   draft: ContentDraft;
   busy: string | null;
   onPublish: (draft: ContentDraft, publishedAt: string) => void;
   onCopied?: (draft: ContentDraft) => void;
+  onRefine: (draft: ContentDraft, action: "compact" | "enrich" | "rewrite") => void;
 }) {
   const [publishedAt, setPublishedAt] = useState(asLocalDateTime(draft.published_at));
   const hashtagsText = draft.hashtags.join(" ");
@@ -4159,10 +4151,12 @@ function FinalDraft({
       <div className="flex flex-wrap gap-2">
         <Badge>{draft.method_group === "native" ? "原生法" : "对标法"}</Badge>
         <Badge>{draft.method_label}</Badge>
-        <Badge>{draft.selected_body_version === "long" ? "长版" : "短版"}</Badge>
+        <Badge>{draft.selected_body_version === "selected" ? "正文主稿" : draft.selected_body_version === "long" ? "历史长版" : "历史短版"}</Badge>
+        {draft.content_intent && <Badge>{BODY_INTENT_LABELS[draft.content_intent]}</Badge>}
         {trainingOnly && <Badge>仅限内部培训</Badge>}
         {draft.certification_status === undefined && <Badge>升级前已选正文</Badge>}
       </div>
+      <MainDraftTask draft={draft} />
       <div className="mt-5 grid gap-4 lg:grid-cols-[220px_1fr]">
         <div className="rounded-2xl bg-slate-900 p-5 text-white">
           <div className="text-xs text-slate-300">封面句</div>
@@ -4176,6 +4170,13 @@ function FinalDraft({
         </div>
       </div>
       <PublishLengthBadge draft={draft} />
+      {draft.selected_body_version === "selected" && (
+        <div className="mt-4 flex flex-wrap gap-2">
+          <SecondaryButton disabled={Boolean(busy)} onClick={() => onRefine(draft, "compact")}>再精简一些</SecondaryButton>
+          <SecondaryButton disabled={Boolean(busy)} onClick={() => onRefine(draft, "enrich")}>补充细节</SecondaryButton>
+          <SecondaryButton disabled={Boolean(busy)} onClick={() => onRefine(draft, "rewrite")}>换一种写法</SecondaryButton>
+        </div>
+      )}
       {trainingOnly && (
         <div className="mt-5 rounded-2xl border border-amber-300 bg-amber-50 p-4 text-sm leading-6 text-amber-900">
           <div className="font-semibold">内部培训模拟内容</div>
@@ -4226,7 +4227,7 @@ function FinalDraft({
           <PrimaryButton
             disabled={Boolean(busy) || draft.status !== "ready" || !publishable || !publishedAt}
             onClick={() => {
-              const confirmed = window.confirm(`确认标记为已发布？\n\n标题：${draft.title}\n正文版本：${draft.selected_body_version === "long" ? "长版" : "短版"}\n发布时间：${new Date(publishedAt).toLocaleString("zh-CN")}`);
+              const confirmed = window.confirm(`确认标记为已发布？\n\n标题：${draft.title}\n正文：${draft.selected_body_version === "selected" ? "主稿" : draft.selected_body_version === "long" ? "历史长版" : "历史短版"}\n发布时间：${new Date(publishedAt).toLocaleString("zh-CN")}`);
               if (confirmed) onPublish(draft, publishedAt);
             }}
           >
