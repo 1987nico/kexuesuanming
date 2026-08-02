@@ -3493,19 +3493,24 @@ function MethodSlot({
   );
 
   if (method.group === "benchmark") {
+    const directTopicReady = Boolean(
+      topic
+      && run
+      && topic.benchmark_title_mode === "direct_source"
+      && topic.source_snapshot?.original_title === topic.title,
+    );
     const matchChips = [
       account.business_line ? GROWTH_BUSINESS_LINE_LABELS[account.business_line] : null,
       `${GROWTH_PERSONA_LABELS[account.persona]}视角`,
       account.profile_name || account.one_liner || account.name,
     ].filter((item): item is string => Boolean(item));
-    const matchEvidence = topic?.source_match_evidence
-      || topic?.source_snapshot?.migration_note
-      || source?.migration_note
-      || "该真实标题与当前业务、视角和账号人设一致。";
-    const unavailableReason = directBenchmarkUnavailableReason(
-      unavailable?.reason || delivery?.reason,
-      Boolean(topic),
-    );
+    const matchEvidence = `该真实标题与“${account.profile_name || account.one_liner || account.name}”及当前${GROWTH_PERSONA_LABELS[account.persona]}视角相符，直接采用原标题。`;
+    const unavailableReason = topic && !directTopicReady
+      ? "旧版迁移标题已隔离，请按新规则重新寻找可直接使用的真实原标题"
+      : directBenchmarkUnavailableReason(
+        unavailable?.reason || delivery?.reason,
+        Boolean(topic),
+      );
 
     return (
       <article
@@ -3520,7 +3525,7 @@ function MethodSlot({
           <Badge>{mode === "default" ? "默认" : "探索方法"}</Badge>
         </div>
 
-        {topic && run ? (
+        {topic && run && directTopicReady ? (
           <>
             <label className="mt-4 block">
               <span className="sr-only">真实原标题（可编辑）</span>
@@ -3627,7 +3632,7 @@ function MethodSlot({
             <p className="mt-1 text-xs text-slate-500">系统只展示有真实来源的标题，不会虚构标题。</p>
             <div className="mt-3 flex flex-wrap gap-2">
               <SecondaryButton disabled={Boolean(busy)} onClick={() => onRotateSource(mode, method.id)}>
-                {busy === `rotate-${mode}-${method.id}` ? "正在寻找…" : "再找一次"}
+                {busy === `rotate-${mode}-${method.id}` ? "正在寻找…" : topic && !directTopicReady ? "按新规则找题" : "再找一次"}
               </SecondaryButton>
               <SecondaryButton disabled={Boolean(busy)} onClick={() => onOpenSource(method.id)}>手工添加</SecondaryButton>
             </div>
