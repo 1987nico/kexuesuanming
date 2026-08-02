@@ -13,6 +13,8 @@ import { GROWTH_BUSINESS_DEFINITIONS, GROWTH_BUSINESS_LINE_VALUES } from "./type
 import { computeDerivedMetrics, evaluateReviewSample } from "./reviewLearning";
 import { methodsForPersona, type TitleMethodDefinition } from "./methods";
 import { resolveProfileIdentity } from "./accountIdentity";
+import { sourceIsUsable } from "./validation";
+import { sourceSnapshotFitsAccount } from "./sourceDiscovery";
 
 export const GROWTH_PREVIEW_TENANT = "mianbajun";
 const GROWTH_PREVIEW_OWNER = "growth-preview-local-admin";
@@ -361,10 +363,7 @@ function previewTopic(account: GrowthAccount, method: TitleMethodDefinition, mod
   const latestSource = [...(account.topic_sources ?? [])]
     .filter((item) => item.method_id === method.id)
     .sort((a, b) => b.collected_at.localeCompare(a.collected_at))[0];
-  const sourceUsable = latestSource
-    && latestSource.link_status === "accessible"
-    && latestSource.verified_by_operator === true
-    && Date.now() - Date.parse(latestSource.published_at) <= 7 * 24 * 60 * 60 * 1000;
+  const sourceUsable = sourceIsUsable(latestSource) && Boolean(latestSource && sourceSnapshotFitsAccount(latestSource, account));
   if (method.sourceRequired && !sourceUsable) return null;
   const title = method.group === "benchmark" && latestSource
     ? latestSource.original_title

@@ -5,7 +5,7 @@ import { TITLE_METHOD_BY_ID } from "@/lib/growth/methods";
 import { growthStore } from "@/lib/growth/store";
 import type { TitleMethodId, TopicSourceSnapshot } from "@/lib/growth/types";
 import { validateSourceLink } from "@/lib/growth/sourceValidation";
-import { sourceIsUsable } from "@/lib/growth/validation";
+import { benchmarkSourcePolicy, sourceIsUsable } from "@/lib/growth/validation";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -35,7 +35,7 @@ export async function POST(req: Request) {
   const account = await store.getAccount(parsed.data.accountId);
   if (!account) return NextResponse.json({ error: "account_not_found" }, { status: 404 });
   const validation = await validateSourceLink(parsed.data.original_url);
-  const source: TopicSourceSnapshot = {
+  const sourceBase: TopicSourceSnapshot = {
     id: crypto.randomUUID(), method_id: parsed.data.method_id as TitleMethodId,
     platform: parsed.data.platform, author: parsed.data.author, original_title: parsed.data.original_title,
     original_url: parsed.data.original_url, published_at: parsed.data.published_at,
@@ -44,6 +44,12 @@ export async function POST(req: Request) {
     source_provider: "manual",
     verified_by_operator: validation.link_status === "accessible" ? true : parsed.data.verified_by_operator,
     link_status: validation.link_status, freshness: freshness(parsed.data.published_at),
+  };
+  const policy = benchmarkSourcePolicy(sourceBase);
+  const source: TopicSourceSnapshot = {
+    ...sourceBase,
+    benchmark_pool: TITLE_METHOD_BY_ID[sourceBase.method_id].group === "benchmark" ? policy.pool : undefined,
+    source_validity_days: policy.validityDays,
   };
   await store.saveAccount({ ...account, topic_sources: [source, ...(account.topic_sources ?? [])], updated_at: new Date().toISOString() });
   return NextResponse.json({ source, validation, usable: sourceIsUsable(source) });

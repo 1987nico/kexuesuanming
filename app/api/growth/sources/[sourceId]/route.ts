@@ -3,7 +3,7 @@ import { z } from "zod";
 import { requireMianbaApiAuth } from "@/lib/auth/mianba";
 import { growthStore } from "@/lib/growth/store";
 import { validateSourceLink } from "@/lib/growth/sourceValidation";
-import { sourceIsUsable } from "@/lib/growth/validation";
+import { benchmarkSourcePolicy, sourceIsUsable } from "@/lib/growth/validation";
 import type { TopicSourceSnapshot } from "@/lib/growth/types";
 
 export const runtime = "nodejs";
@@ -36,7 +36,7 @@ export async function PATCH(req: Request, { params }: { params: { sourceId: stri
   const url = parsed.data.original_url ?? current.original_url;
   const validation = await validateSourceLink(url);
   const publishedAt = parsed.data.published_at ?? current.published_at;
-  const refreshed: TopicSourceSnapshot = {
+  const refreshedBase: TopicSourceSnapshot = {
     ...current,
     original_url: url,
     heat_snapshot: parsed.data.heat_snapshot ?? current.heat_snapshot,
@@ -50,6 +50,16 @@ export async function PATCH(req: Request, { params }: { params: { sourceId: stri
         : validation.link_status === "restricted"
           ? parsed.data.verified_by_operator === true
           : false,
+  };
+  const policy = benchmarkSourcePolicy({
+    ...refreshedBase,
+    benchmark_pool: undefined,
+    source_validity_days: undefined,
+  });
+  const refreshed: TopicSourceSnapshot = {
+    ...refreshedBase,
+    benchmark_pool: policy.pool,
+    source_validity_days: policy.validityDays,
   };
   await store.saveAccount({
     ...account,

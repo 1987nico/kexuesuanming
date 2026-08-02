@@ -6,7 +6,7 @@ import type {
   TitleMethodId,
   TopicSourceSnapshot,
 } from "./types";
-import { sourceAgeDays, sourceIsUsable } from "./validation";
+import { benchmarkSourcePolicy, sourceIsUsable } from "./validation";
 import {
   SOURCE_MIGRATION_VERSION,
   sourceMethodFit,
@@ -212,6 +212,9 @@ export function directSourceAccountFit(note: Pick<RedFoxNote, "title" | "descrip
   if (account.profile_identity === "overseas_student_self" && /家长|父母|孩子|陪娃|儿子|女儿/u.test(note.title)) {
     return { passed: false, score: 0, evidence: "留学生本人账号不能直接使用家长叙事标题" };
   }
+  if (account.profile_identity === "overseas_student_parent" && !/家长|父母|孩子|陪娃|陪孩子|儿子|女儿/u.test(note.title)) {
+    return { passed: false, score: 0, evidence: "留学生家长账号只直接采用明确体现家长身份的标题" };
+  }
   if (businessLine === "executive" && /留学生|留学|海归|秋招|校招/u.test(note.title)) {
     return { passed: false, score: 0, evidence: "中高管业务不能直接使用留学生标题" };
   }
@@ -248,8 +251,23 @@ export function sourceSnapshotFitsAccount(source: TopicSourceSnapshot, account: 
 }
 
 function candidatePool(notes: RedFoxNote[], account: GrowthAccount) {
-  const recent = notes.filter((note) => sourceAgeDays({ published_at: note.published_at } as TopicSourceSnapshot) <= 7);
-  const relevant = recent.filter((note) => directSourceAccountFit(note, account).passed);
+  const relevant = notes
+    .map((note) => ({
+      note,
+      fit: directSourceAccountFit(note, account),
+      policy: benchmarkSourcePolicy({
+        method_id: "similar_audience",
+        original_title: note.title,
+        published_at: note.published_at,
+      }),
+    }))
+    .filter((candidate) => candidate.fit.passed && candidate.policy.eligible)
+    .sort((a, b) => {
+      if (a.fit.score !== b.fit.score) return b.fit.score - a.fit.score;
+      if (a.policy.pool !== b.policy.pool) return a.policy.pool === "recent_opportunity" ? -1 : 1;
+      return a.policy.ageDays - b.policy.ageDays;
+    })
+    .map((candidate) => candidate.note);
   return [...new Map(relevant.map((note) => [note.original_url, note])).values()].slice(0, 35);
 }
 
@@ -265,7 +283,13 @@ export function selectDeterministicSources(
   occupied = new Set<string>(),
 ) {
   const businessLine = account.business_line ?? "executive";
-  const selections = new Map<TitleMethodId, { note: RedFoxNote; migrationNote: string }>();
+  const selections = new Map<TitleMethodId, {
+    note: RedFoxNote;
+    pool: "recent_opportunity" | "evergreen_benchmark";
+    validityDays: 7 | 90;
+    matchScore: number;
+    migrationNote: string;
+  }>();
   const occupiedTitles = new Set<string>();
   for (const methodId of methodIds) {
     const pattern = METHOD_PATTERNS[methodId];
@@ -278,20 +302,33 @@ export function selectDeterministicSources(
         title: note.title,
         description: note.description,
       }).passed)
-      .map((note) => ({
-        note,
-        score: directSourceAccountFit(note, account).score
-          + (pattern?.test(`${note.title} ${note.description}`) ? 12 : 0)
-          + Math.max(0, 12 - note.rank / 4),
-      }))
+      .map((note) => {
+        const policy = benchmarkSourcePolicy({
+          method_id: methodId,
+          original_title: note.title,
+          published_at: note.published_at,
+        });
+        return {
+          note,
+          policy,
+          score: directSourceAccountFit(note, account).score
+            + (pattern?.test(`${note.title} ${note.description}`) ? 12 : 0)
+            + Math.max(0, 12 - note.rank / 4)
+            + (policy.pool === "recent_opportunity" ? 6 : 0),
+        };
+      })
+      .filter((candidate) => candidate.policy.eligible)
       .sort((a, b) => b.score - a.score);
-    const winner = ranked[0]?.note;
+    const winner = ranked[0];
     if (!winner) continue;
-    occupied.add(winner.original_url);
-    occupiedTitles.add(winner.title.trim().toLowerCase());
+    occupied.add(winner.note.original_url);
+    occupiedTitles.add(winner.note.title.trim().toLowerCase());
     selections.set(methodId, {
-      note: winner,
-      migrationNote: `自动从职业发展每日榜中选择，已匹配当前业务、视角与账号人设，并通过“${TITLE_METHOD_BY_ID[methodId].label}”方法适配；系统直接采用真实原标题，不做改写。`,
+      note: winner.note,
+      pool: winner.policy.pool,
+      validityDays: winner.policy.validityDays,
+      matchScore: winner.score,
+      migrationNote: `自动从职业发展每日榜中选择，已匹配当前业务、视角与账号人设；${winner.policy.pool === "recent_opportunity" ? "属于7天内近期机会" : "属于90天内常青对标"}，系统直接采用真实原标题，不做改写。`,
     });
   }
   return selections;
@@ -364,7 +401,7 @@ export async function ensureRecentTopicSources(
         fetched_count: 0,
         selected_count: usableCount,
         usable_count: usableCount,
-        message: "已有未使用且在24小时内核验过的近期对标标题，不重复请求热榜。",
+        message: "已有未使用且在24小时内核验过的近期或常青真实标题，不重复请求热榜。",
       },
     };
   }
@@ -395,7 +432,7 @@ export async function ensureRecentTopicSources(
     const pool = candidatePool(notes, account)
       .filter((note) => !excluded.has(note.original_url))
       .filter((note) => !excludedTitles.has(note.title.trim().toLowerCase()));
-    if (!pool.length) throw new Error("职业榜没有7天内且可识别标题的候选笔记");
+    if (!pool.length) throw new Error("职业榜没有与当前账号高度匹配的近期或常青真实标题");
     const selections = selectDeterministicSources(pool, account, methodIds);
     const checked = await Promise.all([...selections.entries()].map(async ([methodId, selection]) => {
       const validation = await validateSourceLink(selection.note.original_url, SOURCE_LINK_TIMEOUT_MS);
@@ -420,6 +457,9 @@ export async function ensureRecentTopicSources(
         source_method_fit_status: "passed",
         source_method_fit_version: SOURCE_MIGRATION_VERSION,
         source_method_fit_evidence: selection.migrationNote,
+        benchmark_pool: selection.pool,
+        source_validity_days: selection.validityDays,
+        source_match_score: selection.matchScore,
       };
       return source;
     }));
@@ -453,7 +493,7 @@ export async function ensureRecentTopicSources(
         fetched_count: notes.length,
         selected_count: checked.length,
         usable_count: usableCount,
-        message: `已从${rankDate}职业发展每日榜获取${notes.length}条笔记，筛选${checked.length}条可直接采用的真实标题，${usableCount}条通过链接及时效校验。`,
+        message: `已从${rankDate}职业发展每日榜获取${notes.length}条笔记，按账号匹配度筛选${checked.length}条真实标题（7天内优先，常青标题最长90天），${usableCount}条通过链接与内容时效校验。`,
       },
     };
   } catch (error) {
@@ -466,7 +506,7 @@ export async function ensureRecentTopicSources(
         fetched_count: 0,
         selected_count: 0,
         usable_count: 0,
-        message: `自动获取近期对标标题失败：${(error as Error).message}`,
+        message: `自动获取近期或常青对标标题失败：${(error as Error).message}`,
       },
     };
   }

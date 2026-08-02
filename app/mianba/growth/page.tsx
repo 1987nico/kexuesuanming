@@ -68,6 +68,7 @@ import {
   TOPIC_PREFETCH_TARGET,
   visibleTopicRuns,
 } from "@/lib/growth/performanceCache";
+import { benchmarkSourcePolicy, sourceIsUsable } from "@/lib/growth/validation";
 
 interface BootstrapData {
   loadedScopes: WorkspaceScope[];
@@ -336,10 +337,10 @@ function relativeAge(iso: string, now = Date.now()) {
 }
 
 function sourceAge(source: TopicSourceSnapshot) {
-  const elapsed = Date.now() - Date.parse(source.published_at);
-  if (elapsed <= 72 * 3_600_000) return "近期优先";
-  if (elapsed <= 7 * 24 * 3_600_000) return "近期可用";
-  return "历史框架";
+  const policy = benchmarkSourcePolicy(source);
+  if (policy.pool === "recent_opportunity") return "7天内近期机会";
+  if (policy.eligible) return "常青对标";
+  return "已过期";
 }
 
 function sourceNeedsRefresh(source: TopicSourceSnapshot) {
@@ -360,9 +361,7 @@ function topicTitleValidationError(topic: TopicCandidate, value: string) {
 }
 
 function sourceCanGenerate(source?: TopicSourceSnapshot) {
-  if (!source || Date.now() - Date.parse(source.published_at) > 7 * 24 * 3_600_000 || source.link_status === "invalid") return false;
-  if (sourceNeedsRefresh(source)) return false;
-  return source.link_status === "accessible" || Boolean(source.verified_by_operator);
+  return sourceIsUsable(source);
 }
 
 function latestSourceForMethod(sources: TopicSourceSnapshot[], methodId: TitleMethodId) {
@@ -1537,7 +1536,7 @@ export default function GrowthPage() {
         ? TOPIC_GENERATION_STAGES[stageIndex]
         : action === "regenerate_single_title"
           ? "正在保留当前选题方向，只生成新的标题表达…"
-          : "正在寻找新的近期对标标题…",
+          : "正在寻找新的近期或常青真实标题…",
     );
     const stageTimer = window.setInterval(() => {
       if (!requestWorkspaceIsActive()) return;
@@ -2810,6 +2809,7 @@ export default function GrowthPage() {
                       onSourceChange={setSource}
                       onSaveSource={saveSource}
                       onRefreshSource={refreshSource}
+                      onSwitchToNative={() => setMethodGroupView("native")}
                     />
                   </div>
 
@@ -3259,6 +3259,7 @@ function MethodArea({
   onSourceChange,
   onSaveSource,
   onRefreshSource,
+  onSwitchToNative,
 }: {
   group: TitleMethodGroup;
   defaultMethods: TitleMethodDefinition[];
@@ -3289,8 +3290,43 @@ function MethodArea({
   onSourceChange: (source: SourceForm) => void;
   onSaveSource: () => void;
   onRefreshSource: (sourceId: string, restricted: boolean) => void;
+  onSwitchToNative: () => void;
 }) {
   const isNative = group === "native";
+  const readyBenchmarkMethods = isNative ? [] : defaultMethods
+    .filter((method) => {
+      const topic = defaultRun?.topic_pool.find((item) => item.method_id === method.id);
+      return Boolean(
+        topic
+        && topic.benchmark_title_mode === "direct_source"
+        && topic.source_snapshot?.original_title === topic.title
+        && sourceCanGenerate(topic.source_snapshot),
+      );
+    })
+    .sort((a, b) => {
+      const aSource = sourceForRunMethod(defaultRun, sources, a.id);
+      const bSource = sourceForRunMethod(defaultRun, sources, b.id);
+      return (bSource?.source_match_score ?? 0) - (aSource?.source_match_score ?? 0);
+    });
+  const missingBenchmarkMethods = isNative
+    ? []
+    : defaultMethods.filter((method) => !readyBenchmarkMethods.some((ready) => ready.id === method.id));
+  const readyExploreMethods = isNative ? exploreMethods : exploreMethods
+    .filter((method) => {
+      const topic = exploreRun?.topic_pool.find((item) => item.method_id === method.id);
+      return Boolean(
+        topic
+        && topic.benchmark_title_mode === "direct_source"
+        && topic.source_snapshot?.original_title === topic.title
+        && sourceCanGenerate(topic.source_snapshot),
+      );
+    })
+    .sort((a, b) => {
+      const aSource = sourceForRunMethod(exploreRun, sources, a.id);
+      const bSource = sourceForRunMethod(exploreRun, sources, b.id);
+      return (bSource?.source_match_score ?? 0) - (aSource?.source_match_score ?? 0);
+    });
+  const visibleDefaultMethods = isNative ? defaultMethods : readyBenchmarkMethods;
   return (
     <div data-method-group={group} className="rounded-2xl border border-slate-200 bg-white p-4 sm:p-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -3299,14 +3335,14 @@ function MethodArea({
           <p className="mt-1 text-sm text-slate-500">
             {isNative
               ? "从业务、人群和内部洞察出发；蹭流量必须绑定近期热点。"
-              : "按当前业务、视角和账号人设筛选7天内真实标题；找到后直接使用原标题，不再改写。"}
+              : "先找7天内近期机会；数量不足时补充90天内无时效风险的常青标题。只展示与当前账号高度匹配的真实原标题。"}
           </p>
         </div>
-        <Badge>默认 {defaultMethods.length} · 探索 {exploreMethods.length}</Badge>
+        <Badge>{isNative ? `默认 ${defaultMethods.length} · 探索 ${exploreMethods.length}` : `本次找到 ${readyBenchmarkMethods.length} 个`}</Badge>
       </div>
 
       <div className="mt-5 grid gap-3">
-        {defaultMethods.map((method, index) => (
+        {visibleDefaultMethods.map((method, index) => (
           <MethodSlot
             key={method.id}
             method={method}
@@ -3336,7 +3372,24 @@ function MethodArea({
             onUndoTitle={onUndoTitle}
           />
         ))}
+        {!isNative && readyBenchmarkMethods.length === 0 && (
+          <div className="rounded-2xl border border-dashed border-amber-300 bg-amber-50/50 p-5" role="status">
+            <div className="font-semibold text-slate-900">暂未找到可以直接使用的真实标题</div>
+            <p className="mt-2 text-sm leading-6 text-slate-600">系统已经优先检查近期机会，并自动补查常青对标；没有高度匹配时宁可留空，也不会跨业务、跨视角或跨人设凑数。</p>
+            <div className="mt-4 flex flex-wrap gap-2">
+              <SecondaryButton disabled={Boolean(busy)} onClick={onSwitchToNative}>切换到原生法</SecondaryButton>
+            </div>
+          </div>
+        )}
       </div>
+
+      {!isNative && missingBenchmarkMethods.length > 0 && readyBenchmarkMethods.length > 0 && (
+        <details className="mt-4 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+          <summary className="cursor-pointer font-medium text-slate-700">其他方法暂未找到合适标题（{missingBenchmarkMethods.length}）</summary>
+          <p className="mt-2 leading-6">{missingBenchmarkMethods.map((method) => method.label).join("、")}没有达到账号匹配门槛，本轮不占推荐位。需要更多原创角度时可切换原生法。</p>
+          <SecondaryButton disabled={Boolean(busy)} onClick={onSwitchToNative}>切换到原生法</SecondaryButton>
+        </details>
+      )}
 
       {exploreMethods.length > 0 && (
         <details
@@ -3344,11 +3397,15 @@ function MethodArea({
           open={exploreOpen}
           onToggle={(event) => onExploreOpen((event.currentTarget as HTMLDetailsElement).open)}
         >
-          <summary className="cursor-pointer px-4 py-4 font-semibold">探索方法（{exploreMethods.length}个，默认收起）</summary>
+          <summary className="cursor-pointer px-4 py-4 font-semibold">
+            {isNative
+              ? `探索方法（${exploreMethods.length}个，默认收起）`
+              : `更多真实标题（${readyExploreMethods.length}个，默认收起）`}
+          </summary>
           <div className="border-t border-amber-100 px-4 pb-4 pt-4">
-            <SecondaryButton disabled={Boolean(busy)} onClick={onExplore}>探索生成{isNative ? "原生法" : "对标法"}</SecondaryButton>
+            <SecondaryButton disabled={Boolean(busy)} onClick={onExplore}>{isNative ? "探索生成原生法" : "继续寻找真实标题"}</SecondaryButton>
             <div className="mt-4 grid gap-3">
-              {exploreMethods.map((method, index) => (
+              {readyExploreMethods.map((method, index) => (
                 <MethodSlot
                   key={method.id}
                   method={method}
@@ -3378,6 +3435,11 @@ function MethodArea({
                   onUndoTitle={onUndoTitle}
                 />
               ))}
+              {!isNative && exploreRun && readyExploreMethods.length === 0 && (
+                <div className="rounded-xl border border-dashed border-amber-300 bg-white p-4 text-sm leading-6 text-slate-600">
+                  本轮没有找到更多高度匹配的真实标题，不会用低相关标题填充。
+                </div>
+              )}
             </div>
           </div>
         </details>
@@ -3531,6 +3593,7 @@ function MethodSlot({
                 {source.author && source.platform && <span>{source.platform}</span>}
                 <span aria-hidden="true">·</span>
                 <span>{relativeAge(source.published_at)}</span>
+                <Badge>{sourceAge(source)}</Badge>
                 <span aria-hidden="true">·</span>
                 <span>{sourceHeatSummary(source)}</span>
                 <SourceStatus status={source.link_status} verified={source.verified_by_operator} />
@@ -3669,7 +3732,7 @@ function MethodSlot({
                     : method.id === "traffic" ? "换一个热点" : "换一个对标标题"}
                 </button>
               </div>
-              {!usableSource && <div className="mt-2 text-xs text-amber-700">该来源当前不能直接使用；下次生成或更换时，系统会自动寻找7天内可用的真实标题。</div>}
+              {!usableSource && <div className="mt-2 text-xs text-amber-700">该来源当前不能直接使用；下次生成或更换时，系统会自动寻找与账号匹配的近期或常青真实标题。</div>}
               {sourceNeedsRefresh(source) && <div className="mt-2 text-xs font-medium text-amber-700">数据或链接校验已超过24小时；下次生成或更换对标标题时系统会自动刷新，无需手动处理。</div>}
             </>
           ) : (
@@ -3803,7 +3866,7 @@ function MethodSlot({
           </div>
         ) : (
           <div className="rounded-xl border border-dashed border-slate-300 p-3 text-sm text-slate-400">
-            {method.sourceRequired && !usableSource ? "补充近期来源后再生成" : mode === "default" ? "等待生成默认选题" : "展开后点击探索生成"}
+            {method.sourceRequired && !usableSource ? "补充匹配的真实来源后再生成" : mode === "default" ? "等待生成默认选题" : "展开后点击探索生成"}
           </div>
         )}
       </div>
@@ -3860,15 +3923,15 @@ function directBenchmarkUnavailableReason(reason?: string, hasTopic = false) {
   if (!normalized) {
     return hasTopic
       ? "当前真实原标题仍可继续使用；本轮暂未找到新的合格标题"
-      : "暂未找到同时符合当前业务、视角和账号人设的7天内真实标题";
+      : "暂未找到同时符合当前业务、视角和账号人设的近期或常青真实标题";
   }
   if (/母题|迁移|结构卡|原创迁移|语义关系/u.test(normalized)) {
     return hasTopic
       ? "当前真实原标题仍可继续使用；本轮暂未找到新的合格标题"
-      : "暂未找到同时符合当前业务、视角和账号人设的7天内真实标题";
+      : "暂未找到同时符合当前业务、视角和账号人设的近期或常青真实标题";
   }
   if (/暂无7天内合格|热度快照|链接核验/u.test(normalized)) {
-    return "暂未找到符合当前业务、视角和账号人设且来源校验有效的7天内真实标题";
+    return "暂未找到符合当前业务、视角和账号人设且来源校验有效的近期或常青真实标题";
   }
   return normalized.replace(/[。；;]+$/u, "");
 }

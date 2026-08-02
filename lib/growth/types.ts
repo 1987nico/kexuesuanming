@@ -126,6 +126,12 @@ export interface TopicSourceSnapshot {
   source_method_fit_status?: "passed" | "failed" | "uncertain";
   source_method_fit_version?: "v3_6" | "v3_7" | "v3_8";
   source_method_fit_evidence?: string;
+  /** 对标法自适应来源池：优先近期机会，数量不足时才使用无时效风险的常青标题。 */
+  benchmark_pool?: "recent_opportunity" | "evergreen_benchmark";
+  /** 本次来源允许的最长发布时间窗口；由来源内容而不是固定方法决定。 */
+  source_validity_days?: 7 | 90;
+  /** 仅用于后台排序，不作为标题评分展示给运营。 */
+  source_match_score?: number;
 }
 
 export interface BenchmarkStructureCard {

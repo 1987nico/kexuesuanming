@@ -7,6 +7,7 @@ import {
   extractPromisedCount,
   isPublishTextWithinLimit,
   normalizeTags,
+  benchmarkSourcePolicy,
   scanDraftCompliance,
   sourceIsUsable,
   hardChecksAllowPublishing,
@@ -301,7 +302,7 @@ describe("growth publish validation", () => {
     expect(draft.validation_report?.attempts).toBe(2);
     expect(draft.validation_report?.annotations.some((item) => item.key === "conversion")).toBe(false);
   });
-  it("对标来源同时要求7天内母题和24小时内快照", () => {
+  it("对标来源允许7天内近期标题和90天内无时效风险的常青标题", () => {
     const at = new Date("2026-07-19T12:00:00.000Z");
     const source = {
       id: "source", method_id: "viral_framework" as const, platform: "小红书", author: "作者",
@@ -312,7 +313,32 @@ describe("growth publish validation", () => {
     };
     expect(sourceIsUsable(source, at)).toBe(true);
     expect(sourceIsUsable({ ...source, collected_at: "2026-07-18T08:00:00.000Z" }, at)).toBe(false);
-    expect(sourceIsUsable({ ...source, published_at: "2026-07-10T12:00:00.000Z" }, at)).toBe(false);
+    expect(sourceIsUsable({
+      ...source,
+      original_title: "中高管转型前先把这三笔账算清",
+      published_at: "2026-06-19T12:00:00.000Z",
+    }, at)).toBe(true);
+    expect(sourceIsUsable({
+      ...source,
+      original_title: "2026年最新离职新规",
+      published_at: "2026-06-19T12:00:00.000Z",
+    }, at)).toBe(false);
+    expect(sourceIsUsable({
+      ...source,
+      original_title: "中高管转型前先把这三笔账算清",
+      published_at: "2026-04-01T12:00:00.000Z",
+    }, at)).toBe(false);
+    expect(benchmarkSourcePolicy({
+      method_id: "same_outcome",
+      original_title: "中高管转型前先把这三笔账算清",
+      published_at: "2026-06-19T12:00:00.000Z",
+    }, at)).toMatchObject({ eligible: true, pool: "evergreen_benchmark", validityDays: 90 });
+    expect(sourceIsUsable({
+      ...source,
+      method_id: "traffic" as const,
+      original_title: "AI正在重写管理岗位",
+      published_at: "2026-06-19T12:00:00.000Z",
+    }, at)).toBe(false);
   });
 
   it("normalizes hashtags and keeps at most five", () => {

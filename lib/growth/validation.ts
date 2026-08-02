@@ -212,15 +212,48 @@ export function sourceAgeDays(source: TopicSourceSnapshot, at = new Date()) {
   return Math.max(0, (at.getTime() - published) / DAY_MS);
 }
 
+const TIME_SENSITIVE_BENCHMARK_PATTERN = /(?:今天|今日|昨天|昨晚|本周|这周|刚刚|最新|官宣|突发|热搜|新规|新政策|倒计时|截至|今年|明年|20\d{2}年|20\d{2}届|双11|618)/iu;
+
+export function benchmarkSourcePolicy(
+  source: Pick<TopicSourceSnapshot, "method_id" | "original_title" | "published_at" | "benchmark_pool" | "source_validity_days">,
+  at = new Date(),
+) {
+  const method = TITLE_METHOD_BY_ID[source.method_id];
+  const ageDays = sourceAgeDays(source as TopicSourceSnapshot, at);
+  if (method?.group !== "benchmark") {
+    return { eligible: ageDays <= 7, pool: "recent_opportunity" as const, validityDays: 7 as const, ageDays };
+  }
+  if (source.source_validity_days && source.benchmark_pool) {
+    return {
+      eligible: ageDays <= source.source_validity_days,
+      pool: source.benchmark_pool,
+      validityDays: source.source_validity_days,
+      ageDays,
+    };
+  }
+  if (ageDays <= 7) {
+    return { eligible: true, pool: "recent_opportunity" as const, validityDays: 7 as const, ageDays };
+  }
+  const title = source.original_title.trim();
+  const evergreen = title.length >= 6 && !TIME_SENSITIVE_BENCHMARK_PATTERN.test(title);
+  return {
+    eligible: evergreen && ageDays <= 90,
+    pool: "evergreen_benchmark" as const,
+    validityDays: 90 as const,
+    ageDays,
+  };
+}
+
 export function sourceIsUsable(source: TopicSourceSnapshot | undefined, at = new Date()) {
   if (!source) return false;
   const collected = Date.parse(source.collected_at);
   const snapshotAgeMs = at.getTime() - collected;
+  const policy = benchmarkSourcePolicy(source, at);
   return (
     /^https?:\/\//i.test(source.original_url) &&
     (source.link_status === "accessible" || (source.link_status === "restricted" && source.verified_by_operator === true)) &&
     source.verified_by_operator === true &&
-    sourceAgeDays(source, at) <= 7 &&
+    policy.eligible &&
     Number.isFinite(collected) &&
     snapshotAgeMs >= 0 &&
     snapshotAgeMs <= DAY_MS
@@ -246,9 +279,9 @@ export function validateTopicCandidate(topic: TopicCandidate, persona: GrowthPer
       status: sourcePassed ? "passed" : "blocked",
       message: sourcePassed
         ? sourceRequired
-          ? "近期母题、原链接和人工核验完整"
+          ? "真实原标题、原链接和来源校验完整"
           : "该原生方法不要求外部母题"
-        : "缺少7天内母题，或热度快照/链接核验已超过24小时",
+        : "缺少与账号匹配的近期或常青真实标题，或链接核验已超过24小时",
     },
     {
       key: "identity",

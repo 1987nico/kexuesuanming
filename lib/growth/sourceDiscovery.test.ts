@@ -9,6 +9,7 @@ import {
   selectDeterministicSources,
   SOURCE_LINK_TIMEOUT_MS,
 } from "./sourceDiscovery";
+import type { RedFoxNote } from "./sourceDiscovery";
 import type { TopicSourceSnapshot } from "./types";
 
 function freshSource(methodId: TopicSourceSnapshot["method_id"]): TopicSourceSnapshot {
@@ -128,6 +129,38 @@ describe("RedFox Xiaohongshu source discovery", () => {
     expect(new Set([...first.values()].map((selection) => selection.note.original_url)).size).toBe(3);
   });
 
+  it("prioritizes account fit over freshness while keeping evergreen titles within 90 days", () => {
+    const fixture = createGrowthPreviewFixture();
+    const account = fixture.accounts.find((item) => item.business_line === "executive" && item.persona === "buyer");
+    expect(account).toBeTruthy();
+    const ago = (days: number) => new Date(Date.now() - days * 86_400_000).toISOString();
+    const notes: RedFoxNote[] = [
+      {
+        rank: 1,
+        title: "职场人换工作前要想清楚",
+        description: "一条普通职场经历",
+        author: "近期作者",
+        original_url: "https://www.xiaohongshu.com/explore/recent-generic",
+        published_at: ago(2),
+        heat_snapshot: "互动3000",
+      },
+      {
+        rank: 20,
+        title: "35岁中层转型前，先把失败成本算清",
+        description: "中层管理者离职转型时如何判断方向",
+        author: "常青作者",
+        original_url: "https://www.xiaohongshu.com/explore/evergreen-specific",
+        published_at: ago(35),
+        heat_snapshot: "互动1200",
+      },
+    ];
+
+    const selection = selectDeterministicSources(notes, account!, ["similar_audience"]).get("similar_audience");
+
+    expect(selection?.note.original_url).toContain("evergreen-specific");
+    expect(selection).toMatchObject({ pool: "evergreen_benchmark", validityDays: 90 });
+  });
+
   it("rejects a parent title for a student-self account before direct use", () => {
     const fixture = createGrowthPreviewFixture();
     const base = fixture.accounts.find((item) => item.business_line === "overseas_student" && item.persona === "buyer");
@@ -142,6 +175,24 @@ describe("RedFox Xiaohongshu source discovery", () => {
       title: "留学生秋招投了30份简历，终于有回音",
       description: "本人求职记录",
     }, account)).toMatchObject({ passed: true });
+  });
+
+  it("requires a direct source title to state the parent identity for a parent account", () => {
+    const fixture = createGrowthPreviewFixture();
+    const account = fixture.accounts.find((item) =>
+      item.business_line === "overseas_student"
+      && item.persona === "buyer"
+      && item.profile_identity === "overseas_student_parent");
+    expect(account).toBeTruthy();
+
+    expect(directSourceAccountFit({
+      title: "回国还是留当地，到底选哪条",
+      description: "留学生求职选择",
+    }, account!)).toMatchObject({ passed: false });
+    expect(directSourceAccountFit({
+      title: "陪孩子找工作，像熬一场渡劫",
+      description: "留学生家长真实记录",
+    }, account!)).toMatchObject({ passed: true });
   });
 
   it("rejects cross-business and wrong-perspective titles before direct use", () => {

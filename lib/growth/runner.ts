@@ -2682,7 +2682,7 @@ export async function generateTopicBatch(input: {
       return [{
         method_id: method.id,
         method_label: method.label,
-        reason: "暂无7天内合格母题，或热度快照/链接核验已超过24小时",
+        reason: "暂无与账号匹配的近期或常青真实标题，或链接核验已超过24小时",
       }];
     }
     if (method.group !== "benchmark" && !structureCards.has(method.id)) {
