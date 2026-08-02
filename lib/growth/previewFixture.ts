@@ -65,6 +65,45 @@ function account(
 ): GrowthAccount {
   const business = GROWTH_BUSINESS_DEFINITIONS[businessLine];
   const overseas = businessLine === "overseas_student";
+  const benchmarkTitles = persona === "merchant"
+    ? overseas
+      ? {
+          similar: "留学生求职辅导，适合哪类学生",
+          product: "留学生求职服务，先问清这3件事",
+          viral: "留学生求职服务，交付的不是改简历",
+          outcome: "留学生求职陪跑，先把岗位方向定清",
+          effect: "留学生求职辅导和自己投递，怎么选",
+        }
+      : {
+          similar: "中高管职业咨询，适合哪类管理者",
+          product: "中高管职业咨询，先问清这3件事",
+          viral: "职业决策服务，交付的不是一个答案",
+          outcome: "中高管职业咨询，先建立个人定价权",
+          effect: "职业咨询和自己摸索，到底怎么选",
+        }
+    : persona === "expert"
+      ? overseas
+        ? {
+            similar: "留学生求职老师：如何判断岗位匹配",
+            product: "求职辅导和简历修改，有什么区别",
+            viral: "留学生秋招，如何判断投递方向",
+            outcome: "留学生求职，为什么先争职业起点",
+            effect: "回国还是留下，应该如何判断",
+          }
+        : {
+            similar: "职业顾问：如何判断中高管转型",
+            product: "职业咨询和生涯规划，有什么区别",
+            viral: "中高管转型，如何判断真实机会",
+            outcome: "中高管为什么要争职业定价权",
+            effect: "留任还是转型，应该如何判断",
+          }
+      : {
+          similar: overseas ? "找工作是一场渡劫" : "能拿高薪的人，提涨薪都很清晰",
+          product: overseas ? "让下一份工作主动找上你" : "中高管职业军师",
+          viral: overseas ? "你缺的不是投递，是求职定位" : "你缺的不是机会，是判断机会的能力",
+          outcome: overseas ? "争名企，不如争职业起点" : "争夺资源，不如争夺分配权",
+          effect: overseas ? "回国和留当地，到底选哪条？" : "这两条路，到底该选哪条？",
+        };
   return {
     id,
     tenant_id: GROWTH_PREVIEW_TENANT,
@@ -103,11 +142,11 @@ function account(
     persona_specific: personaSpecific,
     topic_sources: [
       source(`${id}-source-accessible`, "traffic", overseas ? "AI筛选简历，留学生求职先改什么？" : "AI重构管理岗位，谁先被重新定价？", "accessible", 1),
-      source(`${id}-source-similar`, "similar_audience", overseas ? "找工作是一场渡劫" : "能拿高薪的人，提涨薪都很清晰", "accessible", 2),
-      source(`${id}-source-product`, "same_product", overseas ? "让下一份工作主动找上你" : "中高管职业军师", "accessible", 3),
-      source(`${id}-source-restricted`, "viral_framework", overseas ? "你缺的不是投递，是求职定位" : "你缺的不是机会，是判断机会的能力", "restricted", 2, false),
-      source(`${id}-source-invalid`, "same_outcome", overseas ? "争名企，不如争职业起点" : "争夺资源，不如争夺分配权", "invalid", 2, false),
-      source(`${id}-source-expired`, "same_effect", overseas ? "回国和留当地，到底选哪条？" : "这两条路，到底该选哪条？", "accessible", 12),
+      source(`${id}-source-similar`, "similar_audience", benchmarkTitles.similar, "accessible", 2),
+      source(`${id}-source-product`, "same_product", benchmarkTitles.product, "accessible", 3),
+      source(`${id}-source-restricted`, "viral_framework", benchmarkTitles.viral, "restricted", 2, false),
+      source(`${id}-source-invalid`, "same_outcome", benchmarkTitles.outcome, "invalid", 2, false),
+      source(`${id}-source-expired`, "same_effect", benchmarkTitles.effect, "accessible", 12),
     ],
     canonical_body_tags: [],
     tag_merge_suggestions: [],
@@ -327,7 +366,9 @@ function previewTopic(account: GrowthAccount, method: TitleMethodDefinition, mod
     && latestSource.verified_by_operator === true
     && Date.now() - Date.parse(latestSource.published_at) <= 7 * 24 * 60 * 60 * 1000;
   if (method.sourceRequired && !sourceUsable) return null;
-  const title = previewTopicTitle(account, method, batch);
+  const title = method.group === "benchmark" && latestSource
+    ? latestSource.original_title
+    : previewTopicTitle(account, method, batch);
   return {
     id: `${account.id}-${mode}-${method.id}-batch-${batch}`,
     method_group: method.group,
@@ -341,7 +382,11 @@ function previewTopic(account: GrowthAccount, method: TitleMethodDefinition, mod
     pain: account.core_problem,
     hook: title,
     source_snapshot: method.sourceRequired ? latestSource : undefined,
-    migration_validation_evidence: method.sourceRequired
+    benchmark_title_mode: method.group === "benchmark" ? "direct_source" : undefined,
+    source_match_evidence: method.group === "benchmark"
+      ? `该真实标题与“${account.one_liner}”及当前${account.persona === "merchant" ? "商家" : account.persona === "expert" ? "专家" : "买家"}视角相符，直接采用原标题。`
+      : undefined,
+    migration_validation_evidence: method.sourceRequired && method.group !== "benchmark"
       ? `保留原题“${latestSource!.original_title}”的${method.label}关系，删除原作者的人物与场景，再用“${account.one_liner}”的身份和当前业务冲突生成新标题。`
       : undefined,
     internal_insight_source: method.sourceRequired ? undefined : account.trust_source,
@@ -509,6 +554,12 @@ export function createGrowthPreviewFixture(): GrowthPreviewFixture {
   });
   overseasBuyer.profile_name = "留学生家长号";
   overseasBuyer.profile_identity = "overseas_student_parent";
+  overseasBuyer.topic_sources = overseasBuyer.topic_sources?.map((item) => ({
+    ...item,
+    original_title: item.method_id === "similar_audience"
+      ? "陪孩子找工作，像熬一场渡劫"
+      : item.original_title,
+  }));
   const overseasStudentBuyer = account(
     "overseas_student",
     "buyer",
@@ -528,6 +579,20 @@ export function createGrowthPreviewFixture(): GrowthPreviewFixture {
   overseasStudentBuyer.one_liner = "一个留学生亲自跑秋招的真实记录";
   overseasStudentBuyer.target_user = "正在准备海外秋招或回国求职的留学生本人";
   overseasStudentBuyer.account_value = "以留学生本人视角记录岗位选择、投递反馈和面试复盘";
+  overseasStudentBuyer.topic_sources = overseasStudentBuyer.topic_sources?.map((item) => ({
+    ...item,
+    original_title: item.method_id === "similar_audience"
+      ? "我找工作，像熬一场渡劫"
+      : item.method_id === "same_product"
+        ? "让我的下一份工作主动找上门"
+        : item.method_id === "viral_framework"
+          ? "我缺的不是投递，是求职定位"
+          : item.method_id === "same_outcome"
+            ? "我不再只争名企，先争职业起点"
+            : item.method_id === "same_effect"
+              ? "我回国还是留下，到底选哪条"
+              : item.original_title,
+  }));
   overseasStudentBuyer.is_default_profile = false;
   overseasStudentBuyer.display_order = 1;
   const overseasExpert = account("overseas_student", "expert", "preview-overseas-expert", "面霸君·留学生·专家视角", {

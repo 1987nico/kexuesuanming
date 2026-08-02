@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { createGrowthPreviewFixture } from "./previewFixture";
 import {
   ensureRecentTopicSources,
+  directSourceAccountFit,
   normalizeRedFoxNotes,
   redFoxRankDate,
   REDFOX_FETCH_TIMEOUT_MS,
@@ -17,7 +18,9 @@ function freshSource(methodId: TopicSourceSnapshot["method_id"]): TopicSourceSna
     method_id: methodId,
     platform: "小红书",
     author: "测试作者",
-    original_title: "别急着辞职，先把这三笔账算清",
+    original_title: methodId === "viral_framework"
+      ? "中高管缺的不是机会，是判断机会的能力"
+      : "职业转型前，先把这三笔账算清",
     original_url: `https://www.xiaohongshu.com/explore/fresh-${methodId}`,
     published_at: now,
     heat_snapshot: "互动1000",
@@ -111,8 +114,11 @@ describe("RedFox Xiaohongshu source discovery", () => {
       ],
     });
     const methods = ["same_product", "same_effect", "similar_audience"] as const;
-    const first = selectDeterministicSources(notes, "executive", [...methods]);
-    const second = selectDeterministicSources(notes, "executive", [...methods]);
+    const fixture = createGrowthPreviewFixture();
+    const account = fixture.accounts.find((item) => item.business_line === "executive" && item.persona === "buyer");
+    expect(account).toBeTruthy();
+    const first = selectDeterministicSources(notes, account!, [...methods]);
+    const second = selectDeterministicSources(notes, account!, [...methods]);
 
     expect([...first.entries()].map(([methodId, selection]) => [methodId, selection.note.original_url]))
       .toEqual([...second.entries()].map(([methodId, selection]) => [methodId, selection.note.original_url]));
@@ -120,6 +126,43 @@ describe("RedFox Xiaohongshu source discovery", () => {
     expect(first.get("same_effect")?.note.original_url).toContain("effect-fit");
     expect(first.get("similar_audience")?.note.original_url).toContain("audience-fit");
     expect(new Set([...first.values()].map((selection) => selection.note.original_url)).size).toBe(3);
+  });
+
+  it("rejects a parent title for a student-self account before direct use", () => {
+    const fixture = createGrowthPreviewFixture();
+    const base = fixture.accounts.find((item) => item.business_line === "overseas_student" && item.persona === "buyer");
+    expect(base).toBeTruthy();
+    const account = { ...base!, profile_identity: "overseas_student_self" as const };
+
+    expect(directSourceAccountFit({
+      title: "陪孩子熬秋招，家长先别催投递",
+      description: "留学生求职记录",
+    }, account)).toMatchObject({ passed: false });
+    expect(directSourceAccountFit({
+      title: "留学生秋招投了30份简历，终于有回音",
+      description: "本人求职记录",
+    }, account)).toMatchObject({ passed: true });
+  });
+
+  it("rejects cross-business and wrong-perspective titles before direct use", () => {
+    const fixture = createGrowthPreviewFixture();
+    const executiveBuyer = fixture.accounts.find((item) => item.business_line === "executive" && item.persona === "buyer");
+    const overseasExpert = fixture.accounts.find((item) => item.business_line === "overseas_student" && item.persona === "expert");
+    expect(executiveBuyer).toBeTruthy();
+    expect(overseasExpert).toBeTruthy();
+
+    expect(directSourceAccountFit({
+      title: "留学生秋招投了30份简历，终于有回音",
+      description: "本人求职记录",
+    }, executiveBuyer!)).toMatchObject({ passed: false });
+    expect(directSourceAccountFit({
+      title: "留学生秋招，我终于拿到第一个面试",
+      description: "本人求职记录",
+    }, overseasExpert!)).toMatchObject({ passed: false });
+    expect(directSourceAccountFit({
+      title: "留学生秋招，如何判断岗位是否匹配",
+      description: "岗位判断方法",
+    }, overseasExpert!)).toMatchObject({ passed: true });
   });
 
   it("does not fetch any source unless the caller explicitly names source methods", async () => {

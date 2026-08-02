@@ -88,6 +88,7 @@ import {
   validateSourceMigrations,
   type SourceMigrationCandidate,
 } from "./sourceMigration";
+import { sourceSnapshotFitsAccount } from "./sourceDiscovery";
 import {
   buildTitleSemanticSignature,
   canonicalizeGrowthTitle,
@@ -369,6 +370,7 @@ function freshestSources(account: GrowthAccount) {
       !result.has(source.method_id)
       && sourceIsUsable(source)
       && sourceSnapshotFitsMethod(source, account.business_line ?? "executive").passed
+      && sourceSnapshotFitsAccount(source, account)
     ) result.set(source.method_id, source);
   }
   return result;
@@ -1996,6 +1998,44 @@ function fallbackTopic(
   return topic;
 }
 
+function directBenchmarkTopic(
+  account: GrowthAccount,
+  method: TitleMethodDefinition,
+  mode: MethodGenerationMode,
+  source: TopicSourceSnapshot,
+): TopicCandidate {
+  const base = fallbackTopic(account, method, mode, source, source.original_title);
+  const methodPromise: Partial<Record<TitleMethodId, string>> = {
+    same_product: "结合当前账号人设，说明原标题涉及的同类产品或服务适合谁、解决什么问题，以及选择时要核对什么。",
+    same_effect: "结合当前账号人设，说明原标题涉及的方法或判断如何作用于当前问题，并给出可执行的判断依据。",
+    similar_audience: "以当前账号人设自然承接原标题中的相似人群处境，写清具体经历、判断变化和下一步行动。",
+    same_outcome: "围绕原标题指向的结果，结合当前业务说明实现条件、现实约束和可验证的阶段变化。",
+    viral_framework: "围绕真实原标题自然展开，结合当前账号人设给出具体处境、核心判断和行动建议。",
+  };
+  const personaLabel = account.persona === "merchant" ? "商家" : account.persona === "expert" ? "专家" : "买家";
+  const evidence = `真实原标题已匹配当前${account.business_line === "overseas_student" ? "留学生" : "中高管"}业务、${personaLabel}视角和“${account.profile_name || account.one_liner || account.name}”账号人设。`;
+  const topic: TopicCandidate = {
+    ...base,
+    // 对标法的交付物就是来源原标题。这里故意不执行20字截断，也不调用标题模型。
+    title: source.original_title,
+    hook: source.original_title,
+    title_promise: methodPromise[method.id]
+      || `围绕真实原标题“${source.original_title}”自然展开，并由当前账号人设完成正文承接。`,
+    title_promise_status: "synced",
+    benchmark_title_mode: "direct_source",
+    source_match_evidence: evidence,
+    source_usage_status: "passed",
+    source_usage_version: SOURCE_MIGRATION_VERSION,
+    migration_validation_status: "passed",
+    migration_validation_version: SOURCE_MIGRATION_VERSION,
+    migration_validation_evidence: "直接采用真实原标题，未进行标题迁移或改写。",
+    structure_card_id: undefined,
+    structure_version: undefined,
+  };
+  topic.validation_checks = validateTopicCandidate(topic, account.persona);
+  return topic;
+}
+
 function normalizeTopics(
   raw: unknown,
   account: GrowthAccount,
@@ -2596,28 +2636,31 @@ export async function generateTopicBatch(input: {
     input.account.method_overrides,
   ).filter((method) => !requestedMethods || requestedMethods.has(method.id));
   const sources = freshestSources(input.account);
-  const expectedSourceMethodIds = new Set(
-    expected.filter((method) => method.sourceRequired).map((method) => method.id),
+  const directBenchmarkMethods = expected.filter((method) => method.group === "benchmark");
+  // 蹭流量仍需把热点接到当前业务；五种对标法则直接采用匹配后的真实原标题，
+  // 不再创建结构卡，也不再进入标题生成与迁移审核模型。
+  const structureSourceMethodIds = new Set(
+    expected.filter((method) => method.sourceRequired && method.group !== "benchmark").map((method) => method.id),
   );
   let prepared: Awaited<ReturnType<typeof ensureBenchmarkStructureCards>>;
   try {
     prepared = await ensureBenchmarkStructureCards({
       account: input.account,
       sources: [...sources.values()].filter((source) =>
-        expectedSourceMethodIds.has(source.method_id)
+        structureSourceMethodIds.has(source.method_id)
       ),
     });
   } catch (error) {
     if (input.allowSourcePause) {
       prepared = {
         cards: [],
-        rejected: [...expectedSourceMethodIds].map((method_id) => ({
+        rejected: [...structureSourceMethodIds].map((method_id) => ({
           method_id,
           reason: "母题结构拆解暂未完成，本轮先暂停该槽位。",
         })),
       };
     } else {
-    throw new Error(`topic_batch_generation_failed:${[...expectedSourceMethodIds]
+    throw new Error(`topic_batch_generation_failed:${[...structureSourceMethodIds]
       .map((methodId) => `${methodId}:结构卡生成失败`)
       .join(" | ")}:${(error as Error).message}`);
     }
@@ -2629,7 +2672,8 @@ export async function generateTopicBatch(input: {
   }
   const structureCards = new Map(prepared.cards.map((card) => [card.method_id, card]));
   const methods = expected.filter((method) =>
-    !method.sourceRequired || (sources.has(method.id) && structureCards.has(method.id))
+    !method.sourceRequired
+    || (method.group === "benchmark" ? sources.has(method.id) : sources.has(method.id) && structureCards.has(method.id))
   );
   const unavailableMethods = expected.flatMap((method) => {
     if (!method.sourceRequired) return [];
@@ -2640,7 +2684,7 @@ export async function generateTopicBatch(input: {
         reason: "暂无7天内合格母题，或热度快照/链接核验已超过24小时",
       }];
     }
-    if (!structureCards.has(method.id)) {
+    if (method.group !== "benchmark" && !structureCards.has(method.id)) {
       return [{
         method_id: method.id,
         method_label: method.label,
@@ -2691,6 +2735,10 @@ export async function generateTopicBatch(input: {
   let lastProblems: string[] = [];
   let usage: Record<string, unknown> | undefined;
   const accepted = new Map<TitleMethodId, TopicCandidate>();
+  for (const method of directBenchmarkMethods) {
+    const source = sources.get(method.id);
+    if (source) accepted.set(method.id, directBenchmarkTopic(input.account, method, generationMode, source));
+  }
   // 原生标题先在一批内收集，再做一次“候选 vs 全历史”的语义审核。此前在
   // 这里逐条即时接收，确定性关键词没覆盖到的同义改写会直接进入页面。
   const nativeCandidatesByMethod = new Map<TitleMethodId, NativeTitleCandidateOption[]>();
@@ -2708,10 +2756,14 @@ export async function generateTopicBatch(input: {
     if (unavailable) return unavailable.reason;
     const message = raw ?? "";
     if (/母题|来源|结构卡/u.test(message)) {
-      return "没有形成可验证的新母题，本轮先保留当前标题。";
+      return method.group === "benchmark"
+        ? "没有找到适合当前业务、视角和人设的近期真实标题，本轮不展示对标标题。"
+        : "没有形成可验证的新热点，本轮先保留当前标题。";
     }
     if (/迁移/u.test(message)) {
-      return "新标题没有通过对标迁移审核，本轮先保留当前标题。";
+      return method.group === "benchmark"
+        ? "真实标题与当前业务、视角或人设不匹配，本轮不展示。"
+        : "新标题没有通过热点承接审核，本轮先保留当前标题。";
     }
     if (/重复|近似|句式|素材/u.test(message)) {
       return "新候选与近期标题过于相似，本轮先保留当前标题。";
@@ -2720,7 +2772,9 @@ export async function generateTopicBatch(input: {
       return "本次没有形成新的合格标题，请稍后再试。";
     }
     return method.sourceRequired
-      ? "该母题本轮未形成合格迁移标题，当前标题已保留。"
+      ? method.group === "benchmark"
+        ? "本轮没有找到可直接采用的合格真实标题。"
+        : "该热点本轮未形成合格承接标题，当前标题已保留。"
       : "本次没有形成新的合格标题，当前标题已保留。";
   };
   const buildDeliveries = (attempts: number): TopicMethodDelivery[] => expected.map((method) => {

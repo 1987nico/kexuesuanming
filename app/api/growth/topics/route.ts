@@ -20,7 +20,10 @@ import {
   buildWeeklyReviewResult,
   isWeeklyReviewStale,
 } from "@/lib/growth/reviewLearning";
-import { ensureRecentTopicSources } from "@/lib/growth/sourceDiscovery";
+import {
+  ensureRecentTopicSources,
+  sourceSnapshotFitsAccount,
+} from "@/lib/growth/sourceDiscovery";
 import {
   freshBenchmarkSourcePlan,
   historicalSourceUrlsByMethod,
@@ -181,7 +184,8 @@ function sourceForMethod(account: GrowthAccount, methodId: TitleMethodId) {
   return [...(account.topic_sources ?? [])]
     .filter((source) => source.method_id === methodId
       && sourceIsUsable(source)
-      && sourceSnapshotFitsMethod(source, account.business_line ?? "executive").passed)
+      && sourceSnapshotFitsMethod(source, account.business_line ?? "executive").passed
+      && sourceSnapshotFitsAccount(source, account))
     .sort((a, b) => b.collected_at.localeCompare(a.collected_at))[0];
 }
 
@@ -247,6 +251,9 @@ function mergeDeliveredTopicPool(input: {
  */
 function retainableTopicUnderCurrentSourceMigration(topic: TopicCandidate) {
   const method = TITLE_METHOD_BY_ID[topic.method_id];
+  if (method?.group === "benchmark") {
+    return topic.benchmark_title_mode === "direct_source";
+  }
   return !method?.sourceRequired || topic.structure_version === SOURCE_MIGRATION_VERSION;
 }
 
@@ -278,6 +285,7 @@ function accountWithFreshBenchmarkSources(input: {
       .filter((item) => item.method_id === methodId)
       .filter((item) => sourceIsUsable(item))
       .filter((item) => sourceSnapshotFitsMethod(item, input.before.business_line ?? "executive").passed)
+      .filter((item) => sourceSnapshotFitsAccount(item, input.before))
       .filter((item) => !usedForMethod.has(item.original_url))
       .filter((item) => !occupiedUrls.has(item.original_url))
       .sort((a, b) => b.collected_at.localeCompare(a.collected_at))[0];
@@ -601,10 +609,14 @@ export async function POST(req: Request) {
       methodIds: rotationMethodIds,
     });
     const excluded = [...new Set([...historical.values()].flat())];
+    const excludedTitles = runs.flatMap((run) => run.topic_pool)
+      .filter((topic) => rotationMethodIds.includes(topic.method_id))
+      .map((topic) => topic.title);
     const discovered = await ensureRecentTopicSources(account, {
       force: true,
       methodIds: rotationMethodIds,
       excludeUrls: excluded,
+      excludeTitles: excludedTitles,
     });
     sourceRefreshSummary = discovered.summary;
     changedMethodIds = changedSources(account, discovered.account, rotationMethodIds);
@@ -614,7 +626,7 @@ export async function POST(req: Request) {
     ) {
       return NextResponse.json({
         error: "no_new_benchmark_source",
-        message: "近30天来源已排除后，暂时没有找到新的合格母题；当前批次保持不变。",
+        message: "排除历史来源和历史标题后，暂时没有找到新的合格对标标题；当前批次保持不变。",
         sourceRefresh: sourceRefreshSummary,
       }, { status: 422 });
     }
@@ -634,23 +646,32 @@ export async function POST(req: Request) {
       runs,
       methodIds: sourceMethodIds,
     });
+    const historicalBenchmarkTitles = new Set(runs.flatMap((run) => run.topic_pool)
+      .filter((topic) => sourceMethodIds.includes(topic.method_id))
+      .map((topic) => topic.title.trim().toLowerCase()));
     const hasUnusedCurrentSource = new Set(sourceMethodIds.filter((methodId) => {
       const used = new Set(allHistoricalSourceUrls.get(methodId) ?? []);
       return (account!.topic_sources ?? []).some((source) =>
         source.method_id === methodId
         && sourceIsUsable(source)
         && sourceSnapshotFitsMethod(source, account!.business_line ?? "executive").passed
+        && sourceSnapshotFitsAccount(source, account!)
         && !used.has(source.original_url)
+        && !historicalBenchmarkTitles.has(source.original_title.trim().toLowerCase())
       );
     }));
     const methodsNeedingDiscovery = sourceMethodIds.filter((methodId) => !hasUnusedCurrentSource.has(methodId));
     // 新发现的母题不能与任何历史对标槽位共用，避免“换了方法却仍是旧母题”。
     const excluded = [...new Set([...allHistoricalSourceUrls.values()].flat())];
+    const excludedTitles = runs.flatMap((run) => run.topic_pool)
+      .filter((topic) => sourceMethodIds.includes(topic.method_id))
+      .map((topic) => topic.title);
     const discovered = methodsNeedingDiscovery.length
       ? await ensureRecentTopicSources(account, {
         force: true,
         methodIds: methodsNeedingDiscovery,
         excludeUrls: excluded,
+        excludeTitles: excludedTitles,
       })
       : {
         account,

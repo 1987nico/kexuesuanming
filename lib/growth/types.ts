@@ -801,6 +801,10 @@ export interface TopicCandidate {
   pain: string;
   hook: string;
   source_snapshot?: TopicSourceSnapshot;
+  /** 对标法新流程：系统直接采用真实来源原标题，不经过拆解、迁移或改写。 */
+  benchmark_title_mode?: "direct_source";
+  /** 只保存可审计的匹配结论，不保存模型推理。 */
+  source_match_evidence?: string;
   /** 来源型标题已通过“确实使用母题逻辑”的内部二元门禁；不保存具体迁移推理。 */
   source_usage_status?: "passed" | "failed";
   source_usage_version?: "v3_5" | "v3_6" | "v3_7" | "v3_8";
@@ -859,7 +863,7 @@ export interface GrowthRun {
     status: "queued" | "consumed" | "expired";
     cache_key: string;
     profile_version: string;
-    generation_version: "topic-prefetch-v1" | "topic-prefetch-v2-fast" | "topic-prefetch-v3-consumption-audit" | "topic-prefetch-v4-human-novelty-audit" | "topic-prefetch-v5-concept-novelty-audit" | "topic-prefetch-v6-concept-outcome-audit" | "topic-prefetch-v7-quality-audit";
+    generation_version: "topic-prefetch-v1" | "topic-prefetch-v2-fast" | "topic-prefetch-v3-consumption-audit" | "topic-prefetch-v4-human-novelty-audit" | "topic-prefetch-v5-concept-novelty-audit" | "topic-prefetch-v6-concept-outcome-audit" | "topic-prefetch-v7-quality-audit" | "topic-prefetch-v8-direct-benchmark-title";
     batch_number: number;
     queued_at: string;
     expires_at: string;

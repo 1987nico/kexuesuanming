@@ -221,7 +221,7 @@ const STATUS_LABEL: Record<string, string> = {
 };
 
 const TOPIC_GENERATION_STAGES = [
-  "正在准备当前可用母题…",
+  "正在准备当前可用对标标题…",
   "正在生成这一批新标题…",
   "正在检查标题质量与历史重复…",
   "正在保存这一批可交付标题…",
@@ -338,6 +338,14 @@ function sourceNeedsRefresh(source: TopicSourceSnapshot) {
 function sourceHeatSummary(source: TopicSourceSnapshot) {
   const items = source.heat_snapshot.split("·").map((item) => item.trim()).filter(Boolean);
   return items.slice(0, 2).join(" · ") || source.heat_snapshot;
+}
+
+function topicTitleValidationError(topic: TopicCandidate, value: string) {
+  if (
+    topic.benchmark_title_mode === "direct_source"
+    && topic.source_snapshot?.original_title === value.trim()
+  ) return null;
+  return manualTitleValidationError(value);
 }
 
 function sourceCanGenerate(source?: TopicSourceSnapshot) {
@@ -1511,7 +1519,7 @@ export default function GrowthPage() {
               ? "更换标题会取消当前标题选择，并清空它对应的未发布正文草稿；已发布内容不会受影响。确认继续吗？"
               : "当前手工修改尚未保存。继续后将保留选题方向重新生成，并放弃这个槽位的手工修改。确认继续吗？"
           : selectedIsAffected
-            ? "更换母题会取消当前对标标题选择，并清空它对应的未发布正文草稿；已发布内容不会受影响。确认继续吗？"
+            ? "更换对标标题会取消当前选择，并清空它对应的未发布正文草稿；已发布内容不会受影响。确认继续吗？"
             : "当前有未保存的标题修改。换源成功后会进入新批次，旧批次仍可恢复。确认继续吗？",
       )
     ) return;
@@ -1532,7 +1540,7 @@ export default function GrowthPage() {
         ? TOPIC_GENERATION_STAGES[stageIndex]
         : action === "regenerate_single_title"
           ? "正在保留当前选题方向，只生成新的标题表达…"
-          : "正在寻找新的近期母题…",
+          : "正在寻找新的近期对标标题…",
     );
     const stageTimer = window.setInterval(() => {
       if (!requestWorkspaceIsActive()) return;
@@ -1745,7 +1753,7 @@ export default function GrowthPage() {
 
   async function selectTopic(run: GrowthRun, topic: TopicCandidate) {
     const editedTitle = titleEdits[topic.id] ?? topic.title;
-    const validationError = manualTitleValidationError(editedTitle);
+    const validationError = topicTitleValidationError(topic, editedTitle);
     if (validationError) {
       setMessage(validationError);
       return;
@@ -1776,7 +1784,7 @@ export default function GrowthPage() {
 
   async function persistTopicTitle(run: GrowthRun, topic: TopicCandidate, title: string) {
     const nextTitle = title.trim();
-    const validationError = manualTitleValidationError(nextTitle);
+    const validationError = topicTitleValidationError(topic, nextTitle);
     if (validationError) throw new Error(validationError);
     if (nextTitle === topic.title) return { run, topic };
     const pending = titleSaveRequests.current.get(topic.id);
@@ -1820,7 +1828,7 @@ export default function GrowthPage() {
   }
 
   async function saveTopicTitle(run: GrowthRun, topic: TopicCandidate, title: string) {
-    const validationError = manualTitleValidationError(title);
+    const validationError = topicTitleValidationError(topic, title);
     if (validationError) {
       setMessage(validationError);
       return;
@@ -3155,15 +3163,15 @@ function topicBatchActionLabel(run: GrowthRun) {
   const rotation = run.source_rotation;
   if (!rotation) return "历史生成";
   if (rotation.mode === "rotate_single_source") {
-    return `换一个母题 · ${rotation.changed_method_ids.length}个槽位`;
+    return `换一个对标标题 · ${rotation.changed_method_ids.length}个槽位`;
   }
   if (rotation.mode === "rotate_all_sources") {
-    return `全部换新对标 · 更新${rotation.changed_method_ids.length}个母题`;
+    return `全部换新对标 · 更新${rotation.changed_method_ids.length}个真实标题`;
   }
   if (rotation.mode === "automatic_rotation") {
-    return `换一批标题 · 自动更新${rotation.changed_method_ids.length}个母题`;
+    return `换一批标题 · 自动更新${rotation.changed_method_ids.length}个对标标题`;
   }
-  return "换一批标题 · 对标槽位换新母题";
+  return "换一批标题 · 对标槽位换新真实标题";
 }
 
 function formatTopicDeliverySummary({
@@ -3191,9 +3199,9 @@ function formatTopicDeliverySummary({
   const prefix = action === "regenerate_single_title"
     ? `${methodLabel || "该槽位"}本轮`
     : action === "rotate_single_source"
-      ? `${methodLabel || "该方法"}已尝试换新母题；本轮`
+      ? `${methodLabel || "该方法"}已尝试换新对标标题；本轮`
       : action === "rotate_all_sources"
-        ? `已尝试更换${changedMethods ?? 0}个对标母题；本轮`
+        ? `已尝试更换${changedMethods ?? 0}个对标标题；本轮`
         : "本轮";
   const parts = [`已更新${updated}个标题`];
   if (retained) parts.push(`${retained}个槽位保留上一版`);
@@ -3304,7 +3312,9 @@ function MethodArea({
         <div>
           <h3 className="text-xl font-semibold">{isNative ? "原生法" : "对标法"}</h3>
           <p className="mt-1 text-sm text-slate-500">
-            {isNative ? "从业务、人群和内部洞察出发；蹭流量必须绑定近期热点。" : "先找到7天内真实母题，再迁移标题逻辑。"}
+            {isNative
+              ? "从业务、人群和内部洞察出发；蹭流量必须绑定近期热点。"
+              : "按当前业务、视角和账号人设筛选7天内真实标题；找到后直接使用原标题，不再改写。"}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -3454,7 +3464,12 @@ function MethodSlot({
   const active = topic?.id === activeTopicId;
   const currentTitle = topic ? editedTitle ?? topic.title : "";
   const currentTitleLength = manualTitleLength(currentTitle);
-  const currentTitleError = topic ? manualTitleValidationError(currentTitle) : null;
+  const isUneditedDirectBenchmarkTitle = Boolean(
+    method.group === "benchmark"
+    && topic?.benchmark_title_mode === "direct_source"
+    && topic.source_snapshot?.original_title === currentTitle
+  );
+  const currentTitleError = topic ? topicTitleValidationError(topic, currentTitle) : null;
   const composingTitle = useRef(false);
   const sourceBatchCount = sourceUsageCount(account, source);
   const canUndoTitle = Boolean(
@@ -3483,8 +3498,8 @@ function MethodSlot({
               <div className="mt-1 text-xs leading-5 text-slate-500">{sourceHeatSummary(source)}</div>
               <div className="mt-1 text-xs font-medium text-slate-500">
                 {sourceBatchCount > 0
-                  ? `该母题已用于${sourceBatchCount}批；下次“换一批标题”会自动换新母题`
-                  : "本母题尚未用于生成标题"}
+                  ? `该对标标题已用于${sourceBatchCount}批；下次“换一批标题”会自动寻找新的真实标题`
+                  : "本对标标题尚未使用"}
               </div>
               <details className="mt-2 text-xs text-slate-500">
                 <summary className="cursor-pointer py-1 font-medium text-slate-600">查看完整来源数据</summary>
@@ -3507,12 +3522,12 @@ function MethodSlot({
                   onClick={() => onRotateSource(mode, method.id)}
                 >
                   {busy === `rotate-${mode}-${method.id}`
-                    ? method.id === "traffic" ? "正在换热点…" : "正在换新母题…"
-                    : method.id === "traffic" ? "换一个热点" : "换一个母题"}
+                    ? method.id === "traffic" ? "正在换热点…" : "正在换对标标题…"
+                    : method.id === "traffic" ? "换一个热点" : "换一个对标标题"}
                 </button>
               </div>
-              {!usableSource && <div className="mt-2 text-xs text-amber-700">该来源当前不能生成新标题；下次生成或换母题时，系统会自动寻找7天内可用来源。</div>}
-              {sourceNeedsRefresh(source) && <div className="mt-2 text-xs font-medium text-amber-700">数据或链接校验已超过24小时；下次生成或换母题时系统会自动刷新，无需手动处理。</div>}
+              {!usableSource && <div className="mt-2 text-xs text-amber-700">该来源当前不能直接使用；下次生成或更换时，系统会自动寻找7天内可用的真实标题。</div>}
+              {sourceNeedsRefresh(source) && <div className="mt-2 text-xs font-medium text-amber-700">数据或链接校验已超过24小时；下次生成或更换对标标题时系统会自动刷新，无需手动处理。</div>}
             </>
           ) : (
             <div className="flex flex-wrap gap-2">
@@ -3521,7 +3536,7 @@ function MethodSlot({
                 className="min-h-11 rounded-xl border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-800 disabled:opacity-40"
                 onClick={() => onRotateSource(mode, method.id)}
               >
-                {busy === `rotate-${mode}-${method.id}` ? "正在寻找…" : "自动找新母题"}
+                {busy === `rotate-${mode}-${method.id}` ? "正在寻找…" : method.id === "traffic" ? "自动找新热点" : "自动找对标标题"}
               </button>
               <button className="min-h-11 rounded-xl border border-[#ead7b5] bg-white px-3 text-sm font-medium text-[#9a6b24]" onClick={() => onOpenSource(method.id)}>手工补充来源</button>
             </div>
@@ -3549,7 +3564,9 @@ function MethodSlot({
               <span className="flex items-center justify-between gap-3 text-xs font-medium text-slate-500">
                 <span>标题（可编辑）</span>
                 <span className={currentTitleError ? "text-red-600" : ""}>
-                  {currentTitleLength}/{MANUAL_TITLE_MAX_LENGTH}字
+                  {isUneditedDirectBenchmarkTitle
+                    ? `${currentTitleLength}字 · 真实原标题直用`
+                    : `${currentTitleLength}/${MANUAL_TITLE_MAX_LENGTH}字`}
                   {currentTitleError ? ` · ${currentTitleError}` : savingTitle ? " · 保存中…" : currentTitle !== topic.title ? " · 已修改" : ""}
                 </span>
               </span>
@@ -3577,7 +3594,9 @@ function MethodSlot({
                 className={`mt-2 min-h-11 w-full rounded-xl border bg-white px-3 py-2.5 text-base font-semibold leading-6 outline-none focus-visible:ring-2 ${currentTitleError ? "border-red-400 focus:border-red-500 focus-visible:ring-red-300" : "border-slate-200 focus:border-amber-500 focus-visible:ring-amber-400"}`}
               />
               <span id={`title-help-${topic.id}`} className={`mt-1 block text-xs ${currentTitleError ? "text-red-600" : "text-slate-400"}`}>
-                {currentTitleError || "最多20字；中文输入完成后再校验，不会自动删字。"}
+                {currentTitleError || (isUneditedDirectBenchmarkTitle
+                  ? "系统原样采用真实来源标题，不做自动缩写；你仍可手工编辑。"
+                  : "最多20字；中文输入完成后再校验，不会自动删字。")}
               </span>
             </label>
             <details
@@ -3589,13 +3608,34 @@ function MethodSlot({
               <summary className="cursor-pointer font-medium">查看正文承诺</summary>
               <p className="mt-2">{topic.title_promise}</p>
             </details>
-            {method.sourceRequired && topic.source_snapshot && (
+            {method.group === "benchmark" && topic.source_snapshot && topic.benchmark_title_mode === "direct_source" && (
               <details className="mt-2 rounded-xl border border-sky-100 bg-sky-50/60 px-3 py-2 text-sm leading-6 text-slate-700">
-                <summary className="cursor-pointer font-medium">查看对标迁移链路</summary>
+                <summary className="cursor-pointer font-medium">查看对标采用依据</summary>
                 <div className="mt-2 grid gap-2">
-                  <p><span className="font-semibold">原题：</span>{topic.source_snapshot.original_title}</p>
-                  <p><span className="font-semibold">迁移逻辑：</span>{topic.migration_validation_evidence || topic.source_snapshot.migration_note || "保留母题的结构关系，替换为当前业务与视角。"}</p>
-                  <p><span className="font-semibold">新标题：</span>{topic.title}</p>
+                  <p><span className="font-semibold">采用标题：</span>{topic.source_snapshot.original_title}</p>
+                  <p><span className="font-semibold">匹配依据：</span>{topic.source_match_evidence || topic.source_snapshot.migration_note || "已匹配当前业务、视角和账号人设。"}</p>
+                  <p><span className="font-semibold">使用方式：</span>直接采用真实原标题，系统未拆解、迁移或改写。</p>
+                </div>
+              </details>
+            )}
+            {method.group === "benchmark" && topic.source_snapshot && topic.benchmark_title_mode !== "direct_source" && (
+              <details className="mt-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm leading-6 text-slate-600">
+                <summary className="cursor-pointer font-medium">查看历史对标迁移记录</summary>
+                <div className="mt-2 grid gap-2">
+                  <p><span className="font-semibold">历史原题：</span>{topic.source_snapshot.original_title}</p>
+                  <p><span className="font-semibold">历史说明：</span>{topic.migration_validation_evidence || topic.source_snapshot.migration_note || "该标题来自旧版迁移流程。"}</p>
+                  <p><span className="font-semibold">历史标题：</span>{topic.title}</p>
+                  <p className="text-xs text-slate-500">这是旧流程记录；下一次生成标题后，将改为直接采用符合当前业务、视角和人设的真实原标题。</p>
+                </div>
+              </details>
+            )}
+            {method.id === "traffic" && topic.source_snapshot && (
+              <details className="mt-2 rounded-xl border border-sky-100 bg-sky-50/60 px-3 py-2 text-sm leading-6 text-slate-700">
+                <summary className="cursor-pointer font-medium">查看热点承接依据</summary>
+                <div className="mt-2 grid gap-2">
+                  <p><span className="font-semibold">热点原题：</span>{topic.source_snapshot.original_title}</p>
+                  <p><span className="font-semibold">承接说明：</span>{topic.migration_validation_evidence || topic.source_snapshot.migration_note || "把近期热点连接到当前业务与视角。"}</p>
+                  <p><span className="font-semibold">生成标题：</span>{topic.title}</p>
                 </div>
               </details>
             )}
@@ -3707,7 +3747,7 @@ function SourceEditor({
   return (
     <div className="mt-3 rounded-xl border border-[#ead7b5] bg-[#fffaf0] p-3">
       <div className="mb-3 flex items-center justify-between gap-2">
-        <b className="text-sm">为“{method.label}”补充{method.id === "traffic" ? "热点" : "对标母题"}</b>
+        <b className="text-sm">为“{method.label}”补充{method.id === "traffic" ? "热点" : "对标标题"}</b>
         <button className="text-sm text-slate-500" onClick={onClose}>关闭</button>
       </div>
       <div className="grid gap-3 sm:grid-cols-2">
@@ -3719,7 +3759,7 @@ function SourceEditor({
         <TextInput label="热度快照" value={value.heat_snapshot} onChange={(heat_snapshot) => onChange({ ...value, heat_snapshot })} />
       </div>
       <div className="mt-3">
-        <TextArea label="迁移说明" value={value.migration_note} onChange={(migration_note) => onChange({ ...value, migration_note })} />
+        <TextArea label={method.id === "traffic" ? "热点承接说明" : "业务/视角/人设匹配说明"} value={value.migration_note} onChange={(migration_note) => onChange({ ...value, migration_note })} />
       </div>
       <div className="mt-3">
         <PrimaryButton disabled={Boolean(busy) || !ready} onClick={onSave}>检测链接并保存</PrimaryButton>

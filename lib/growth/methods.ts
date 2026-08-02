@@ -24,11 +24,11 @@ export const TITLE_METHODS: TitleMethodDefinition[] = [
   { id: "contrarian", order: 6, label: "反认知", group: "native", instruction: "先写常见判断，再给出有条件、有依据的反转。", sourceRequired: false },
   { id: "nostalgia", order: 7, label: "怀旧", group: "native", instruction: "用过去与现在的求职、职业经验或身份价值变化形成共鸣。", sourceRequired: false },
   { id: "inventory", order: 8, label: "盘点", group: "native", instruction: "用明确数字盘点当前业务中的资产、风险、信号或动作，正文必须逐项兑现。", sourceRequired: false },
-  { id: "same_product", order: 9, label: "相同产品", group: "benchmark", instruction: "迁移近期同类职业诊断、咨询或求职服务的产品表达，不照搬措辞。", sourceRequired: true },
-  { id: "same_effect", order: 10, label: "相同功效", group: "benchmark", instruction: "迁移帮助用户比较、判断、选择或降低风险的功效表达。", sourceRequired: true },
-  { id: "similar_audience", order: 11, label: "相似人群", group: "benchmark", instruction: "迁移与当前业务目标用户高度相似的人群处境。", sourceRequired: true },
-  { id: "same_outcome", order: 12, label: "终极结果相同", group: "benchmark", instruction: "迁移选择权、匹配度、安全感或职业起点等终极结果。", sourceRequired: true },
-  { id: "viral_framework", order: 13, label: "爆款框架", group: "benchmark", instruction: "只迁移近期爆款的句式与冲突结构，替换全部业务内容。", sourceRequired: true },
+  { id: "same_product", order: 9, label: "相同产品", group: "benchmark", instruction: "筛选与当前业务、视角和账号人设相符的近期同类产品真实标题，原标题直接使用。", sourceRequired: true },
+  { id: "same_effect", order: 10, label: "相同功效", group: "benchmark", instruction: "筛选与当前业务、视角和账号人设相符、功效相近的近期真实标题，原标题直接使用。", sourceRequired: true },
+  { id: "similar_audience", order: 11, label: "相似人群", group: "benchmark", instruction: "筛选人群与当前账号人设大致一致的近期真实标题，原标题直接使用。", sourceRequired: true },
+  { id: "same_outcome", order: 12, label: "终极结果相同", group: "benchmark", instruction: "筛选结果诉求与当前业务一致的近期真实标题，原标题直接使用。", sourceRequired: true },
+  { id: "viral_framework", order: 13, label: "爆款标题", group: "benchmark", instruction: "筛选可由当前业务、视角和账号人设直接承接的近期真实爆款标题，原标题直接使用。", sourceRequired: true },
 ];
 
 export const TITLE_METHOD_BY_ID = Object.fromEntries(

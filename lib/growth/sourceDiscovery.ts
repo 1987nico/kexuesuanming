@@ -177,11 +177,80 @@ function relevanceScore(note: RedFoxNote, businessLine: GrowthBusinessLine) {
   return RELEVANCE_TOKENS[businessLine].reduce((score, token) => score + (text.includes(token.toLowerCase()) ? 1 : 0), 0);
 }
 
-function candidatePool(notes: RedFoxNote[], businessLine: GrowthBusinessLine) {
+const PROFILE_IDENTITY_TOKENS: Partial<Record<NonNullable<GrowthAccount["profile_identity"]>, string[]>> = {
+  overseas_student_self: ["留学生", "海归", "应届生", "毕业生", "秋招", "校招", "求职", "面试", "简历", "offer"],
+  overseas_student_parent: ["家长", "父母", "孩子", "娃", "儿子", "女儿", "留学生", "秋招", "求职"],
+  executive_self: ["中层", "高管", "总监", "管理者", "职场人", "35岁", "离职", "转型", "创业"],
+  service_operator: ["服务", "咨询", "辅导", "陪跑", "课程", "产品", "价格", "报告", "方案"],
+  professional_expert: ["方法", "判断", "比较", "区别", "测评", "建议", "避坑", "为什么", "如何"],
+};
+
+const PERSONA_TOKENS: Record<GrowthAccount["persona"], string[]> = {
+  buyer: ["我", "亲历", "经历", "踩坑", "上岸", "离职", "裸辞", "转型", "孩子", "家长", "留学生"],
+  expert: ["如何", "为什么", "方法", "判断", "比较", "区别", "测评", "建议", "避坑", "真相"],
+  merchant: ["服务", "咨询", "辅导", "陪跑", "课程", "产品", "价格", "后付款", "报告", "方案", "适合"],
+};
+
+function matchedTokenCount(value: string, tokens: string[]) {
+  const normalized = value.toLowerCase();
+  return tokens.reduce((count, token) => count + (normalized.includes(token.toLowerCase()) ? 1 : 0), 0);
+}
+
+/**
+ * 对标法不再“先找一个泛题再改写”，所以来源标题本身必须能被当前账号直接使用。
+ * 这里将业务线作为硬门槛，将视角和具体账号人设作为排序信号；留学生本人号额外
+ * 排除家长叙事，防止最危险的身份串线。
+ */
+export function directSourceAccountFit(note: Pick<RedFoxNote, "title" | "description">, account: GrowthAccount) {
+  const businessLine = account.business_line ?? "executive";
+  const text = `${note.title} ${note.description}`;
+  const titleBusinessScore = matchedTokenCount(note.title, RELEVANCE_TOKENS[businessLine]);
+  const businessScore = relevanceScore({ ...note, rank: 0, author: "", original_url: "", published_at: "", heat_snapshot: "" }, businessLine);
+  if (titleBusinessScore === 0 || businessScore === 0) {
+    return { passed: false, score: 0, evidence: "原标题与当前业务定位不匹配" };
+  }
+  if (account.profile_identity === "overseas_student_self" && /家长|父母|孩子|陪娃|儿子|女儿/u.test(note.title)) {
+    return { passed: false, score: 0, evidence: "留学生本人账号不能直接使用家长叙事标题" };
+  }
+  if (businessLine === "executive" && /留学生|留学|海归|秋招|校招/u.test(note.title)) {
+    return { passed: false, score: 0, evidence: "中高管业务不能直接使用留学生标题" };
+  }
+  const identityScore = matchedTokenCount(text, PROFILE_IDENTITY_TOKENS[account.profile_identity ?? "executive_self"] ?? []);
+  const personaScore = matchedTokenCount(text, PERSONA_TOKENS[account.persona]);
+  if ((account.persona === "merchant" || account.persona === "expert") && personaScore === 0) {
+    return {
+      passed: false,
+      score: 0,
+      evidence: `原标题没有体现${account.persona === "merchant" ? "商家" : "专家"}视角，不能直接采用`,
+    };
+  }
+  const accountText = [
+    account.profile_name,
+    account.one_liner,
+    account.target_user,
+    account.core_problem,
+    account.account_value,
+    ...Object.values(account.persona_specific ?? {}),
+  ].filter(Boolean).join(" ");
+  const accountKeywords = [...new Set((accountText.match(/[\u4e00-\u9fff]{2,6}|[a-zA-Z]{3,}/g) ?? [])
+    .filter((token) => token.length <= 6))].slice(0, 40);
+  const accountScore = matchedTokenCount(text, accountKeywords);
+  return {
+    passed: true,
+    score: titleBusinessScore * 14 + businessScore * 5 + identityScore * 8 + personaScore * 4 + Math.min(accountScore, 5) * 3,
+    evidence: `原标题已匹配${businessLine === "executive" ? "中高管" : "留学生"}业务、${account.persona === "merchant" ? "商家" : account.persona === "expert" ? "专家" : "买家"}视角和当前账号人设`,
+  };
+}
+
+export function sourceSnapshotFitsAccount(source: TopicSourceSnapshot, account: GrowthAccount) {
+  if (TITLE_METHOD_BY_ID[source.method_id]?.group !== "benchmark") return true;
+  return directSourceAccountFit({ title: source.original_title, description: "" }, account).passed;
+}
+
+function candidatePool(notes: RedFoxNote[], account: GrowthAccount) {
   const recent = notes.filter((note) => sourceAgeDays({ published_at: note.published_at } as TopicSourceSnapshot) <= 7);
-  const relevant = recent.filter((note) => relevanceScore(note, businessLine) > 0);
-  const combined = [...relevant, ...recent.slice(0, 15)];
-  return [...new Map(combined.map((note) => [note.original_url, note])).values()].slice(0, 35);
+  const relevant = recent.filter((note) => directSourceAccountFit(note, account).passed);
+  return [...new Map(relevant.map((note) => [note.original_url, note])).values()].slice(0, 35);
 }
 
 /**
@@ -191,31 +260,38 @@ function candidatePool(notes: RedFoxNote[], businessLine: GrowthBusinessLine) {
  */
 export function selectDeterministicSources(
   notes: RedFoxNote[],
-  businessLine: GrowthBusinessLine,
+  account: GrowthAccount,
   methodIds: TitleMethodId[],
   occupied = new Set<string>(),
 ) {
+  const businessLine = account.business_line ?? "executive";
   const selections = new Map<TitleMethodId, { note: RedFoxNote; migrationNote: string }>();
+  const occupiedTitles = new Set<string>();
   for (const methodId of methodIds) {
     const pattern = METHOD_PATTERNS[methodId];
     const ranked = [...notes]
       .filter((note) => !occupied.has(note.original_url))
+      .filter((note) => !occupiedTitles.has(note.title.trim().toLowerCase()))
       .filter((note) => sourceMethodFit({
         methodId,
         businessLine,
         title: note.title,
+        description: note.description,
       }).passed)
       .map((note) => ({
         note,
-        score: relevanceScore(note, businessLine) * 8 + (pattern?.test(`${note.title} ${note.description}`) ? 12 : 0) + Math.max(0, 12 - note.rank / 4),
+        score: directSourceAccountFit(note, account).score
+          + (pattern?.test(`${note.title} ${note.description}`) ? 12 : 0)
+          + Math.max(0, 12 - note.rank / 4),
       }))
       .sort((a, b) => b.score - a.score);
     const winner = ranked[0]?.note;
     if (!winner) continue;
     occupied.add(winner.original_url);
+    occupiedTitles.add(winner.title.trim().toLowerCase());
     selections.set(methodId, {
       note: winner,
-      migrationNote: `自动从职业发展每日榜中选择，已通过“${TITLE_METHOD_BY_ID[methodId].label}”方法适配；只迁移标题结构和关系，不复制原文表达或来源事实。`,
+      migrationNote: `自动从职业发展每日榜中选择，已匹配当前业务、视角与账号人设，并通过“${TITLE_METHOD_BY_ID[methodId].label}”方法适配；系统直接采用真实原标题，不做改写。`,
     });
   }
   return selections;
@@ -231,6 +307,7 @@ export async function ensureRecentTopicSources(
   options: {
     force?: boolean;
     excludeUrls?: string[];
+    excludeTitles?: string[];
     methodIds?: TitleMethodId[];
     dropExcluded?: boolean;
   } = {},
@@ -260,10 +337,13 @@ export async function ensureRecentTopicSources(
   }
 
   const excluded = new Set(options.excludeUrls ?? []);
+  const excludedTitles = new Set((options.excludeTitles ?? []).map((title) => title.trim().toLowerCase()));
   const complete = !options.force && methodIds.every((methodId) => sources.some((source) =>
     source.method_id === methodId &&
     sourceIsUsable(source) &&
     sourceSnapshotFitsMethod(source, account.business_line ?? "executive").passed &&
+    sourceSnapshotFitsAccount(source, account) &&
+    !excludedTitles.has(source.original_title.trim().toLowerCase()) &&
     !excluded.has(source.original_url)
   ));
   if (complete) {
@@ -271,6 +351,8 @@ export async function ensureRecentTopicSources(
       source.method_id === methodId
       && sourceIsUsable(source)
       && sourceSnapshotFitsMethod(source, account.business_line ?? "executive").passed
+      && sourceSnapshotFitsAccount(source, account)
+      && !excludedTitles.has(source.original_title.trim().toLowerCase())
       && !excluded.has(source.original_url)
     )).length;
     return {
@@ -282,7 +364,7 @@ export async function ensureRecentTopicSources(
         fetched_count: 0,
         selected_count: usableCount,
         usable_count: usableCount,
-        message: "已有未使用且在24小时内核验过的近期母题，不重复请求热榜。",
+        message: "已有未使用且在24小时内核验过的近期对标标题，不重复请求热榜。",
       },
     };
   }
@@ -310,10 +392,11 @@ export async function ensureRecentTopicSources(
       rankDate = previousDate(rankDate);
       notes = await fetchDailyRank(apiKey, rankDate);
     }
-    const pool = candidatePool(notes, account.business_line ?? "executive")
-      .filter((note) => !excluded.has(note.original_url));
+    const pool = candidatePool(notes, account)
+      .filter((note) => !excluded.has(note.original_url))
+      .filter((note) => !excludedTitles.has(note.title.trim().toLowerCase()));
     if (!pool.length) throw new Error("职业榜没有7天内且可识别标题的候选笔记");
-    const selections = selectDeterministicSources(pool, account.business_line ?? "executive", methodIds);
+    const selections = selectDeterministicSources(pool, account, methodIds);
     const checked = await Promise.all([...selections.entries()].map(async ([methodId, selection]) => {
       const validation = await validateSourceLink(selection.note.original_url, SOURCE_LINK_TIMEOUT_MS);
       const existing = sources.find((source) => source.method_id === methodId && source.original_url === selection.note.original_url);
@@ -349,7 +432,10 @@ export async function ensureRecentTopicSources(
           if (checkedMethods.has(source.method_id)) return false;
           if (
             methodIds.includes(source.method_id)
-            && !sourceSnapshotFitsMethod(source, account.business_line ?? "executive").passed
+            && (
+              !sourceSnapshotFitsMethod(source, account.business_line ?? "executive").passed
+              || !sourceSnapshotFitsAccount(source, account)
+            )
           ) return false;
           if (options.dropExcluded && excluded.has(source.original_url)) return false;
           return true;
@@ -367,7 +453,7 @@ export async function ensureRecentTopicSources(
         fetched_count: notes.length,
         selected_count: checked.length,
         usable_count: usableCount,
-        message: `已从${rankDate}职业发展每日榜获取${notes.length}条笔记，筛选${checked.length}条母题，${usableCount}条通过链接及时效校验。`,
+        message: `已从${rankDate}职业发展每日榜获取${notes.length}条笔记，筛选${checked.length}条可直接采用的真实标题，${usableCount}条通过链接及时效校验。`,
       },
     };
   } catch (error) {
@@ -380,7 +466,7 @@ export async function ensureRecentTopicSources(
         fetched_count: 0,
         selected_count: 0,
         usable_count: 0,
-        message: `自动获取近期母题失败：${(error as Error).message}`,
+        message: `自动获取近期对标标题失败：${(error as Error).message}`,
       },
     };
   }
