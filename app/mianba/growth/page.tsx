@@ -3555,7 +3555,11 @@ function MethodSlot({
         />
       )}
 
-      <MethodDeliveryNotice delivery={delivery} hasTopic={Boolean(topic)} />
+      <MethodDeliveryNotice
+        delivery={delivery}
+        hasTopic={Boolean(topic)}
+        directBenchmark={method.group === "benchmark"}
+      />
 
       <div className="mt-4">
         {topic && run ? (
@@ -3676,7 +3680,9 @@ function MethodSlot({
           </>
         ) : unavailable ? (
           <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
-            暂停生成：{unavailable.reason || "缺少近期有效来源"}。系统不会虚构标题。
+            暂停生成：{method.group === "benchmark"
+              ? directBenchmarkUnavailableReason(unavailable.reason)
+              : unavailable.reason || "缺少近期有效来源"}。系统不会虚构标题。
           </div>
         ) : (
           <div className="rounded-xl border border-dashed border-slate-300 p-3 text-sm text-slate-400">
@@ -3691,9 +3697,11 @@ function MethodSlot({
 function MethodDeliveryNotice({
   delivery,
   hasTopic,
+  directBenchmark,
 }: {
   delivery?: TopicMethodDelivery;
   hasTopic: boolean;
+  directBenchmark?: boolean;
 }) {
   if (!delivery) return null;
   const retained = delivery.title_origin === "retained";
@@ -3710,17 +3718,42 @@ function MethodDeliveryNotice({
       : delivery.status === "paused"
         ? "本轮暂停"
         : "本轮暂未完成";
-  const explanation = retained
+  const rawExplanation = retained
     ? delivery.reason || "这个槽位没有形成新的合格标题，原标题仍可继续选择和生成正文。"
     : delivery.reason || (hasTopic
       ? "当前标题可以继续使用。"
       : "本轮没有可展示的新标题。");
+  const explanation = directBenchmark
+    ? directBenchmarkUnavailableReason(rawExplanation, hasTopic)
+    : rawExplanation;
   return (
     <div className={`mt-4 rounded-xl border px-3 py-2 text-xs leading-5 ${tone}`} role="status">
       <span className="font-semibold">{headline}</span>
       <span> · {explanation}</span>
     </div>
   );
+}
+
+/**
+ * 历史批次可能保存了旧版“拆结构再迁移”的失败原因。对标法切换为原标题
+ * 直用后，这些旧文案只能作为兼容数据存在，不能继续误导操作者。
+ */
+function directBenchmarkUnavailableReason(reason?: string, hasTopic = false) {
+  const normalized = reason?.trim();
+  if (!normalized) {
+    return hasTopic
+      ? "当前真实原标题仍可继续使用；本轮暂未找到新的合格标题"
+      : "暂未找到同时符合当前业务、视角和账号人设的7天内真实标题";
+  }
+  if (/母题|迁移|结构卡|原创迁移|语义关系/u.test(normalized)) {
+    return hasTopic
+      ? "当前真实原标题仍可继续使用；本轮暂未找到新的合格标题"
+      : "暂未找到同时符合当前业务、视角和账号人设的7天内真实标题";
+  }
+  if (/暂无7天内合格|热度快照|链接核验/u.test(normalized)) {
+    return "暂未找到符合当前业务、视角和账号人设且来源校验有效的7天内真实标题";
+  }
+  return normalized.replace(/[。；;]+$/u, "");
 }
 
 function topicTitle(run: GrowthRun | undefined, methodId: TitleMethodId, edits: Record<string, string>) {
