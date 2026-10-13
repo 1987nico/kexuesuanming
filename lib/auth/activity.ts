@@ -84,7 +84,7 @@ export async function listActivity(tenantId: string, limit = 200): Promise<Activ
   }
 }
 
-export async function logActivity(input: ActivityInput): Promise<void> {
+export async function logActivity(input: ActivityInput, signal?: AbortSignal): Promise<void> {
   const entry = {
     tenant_id: input.tenantId,
     user_id: input.userId ?? null,
@@ -95,8 +95,10 @@ export async function logActivity(input: ActivityInput): Promise<void> {
   };
 
   try {
+    signal?.throwIfAborted();
     if (isDBConfigured()) {
-      const { error } = await supabaseServer().from("activity_log").insert(entry);
+      const query = supabaseServer().from("activity_log").insert(entry);
+      const { error } = await (signal ? query.abortSignal(signal) : query);
       if (error) throw error;
     } else {
       appendToFile({ ...entry, created_at: new Date().toISOString() });

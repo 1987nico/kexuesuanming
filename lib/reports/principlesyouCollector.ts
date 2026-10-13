@@ -1,4 +1,5 @@
 const BASE_URL = "https://principlesyou.com";
+export const supportsAbortSignal = true;
 
 function decodeHtmlAttr(value: string) {
   return value
@@ -60,9 +61,9 @@ export interface PrinciplesYouAnswer {
   answer_number: number;
 }
 
-export async function createSession(): Promise<PrinciplesYouSession> {
+export async function createSession(signal?: AbortSignal): Promise<PrinciplesYouSession> {
   const jar = new CookieJar();
-  const home = await request(jar, `${BASE_URL}/home`, { headers: { Accept: "text/html" } });
+  const home = await request(jar, `${BASE_URL}/home`, { headers: { Accept: "text/html" }, signal });
   if (!home.ok) throw new Error(`GET home failed: ${home.status}`);
   const html = await home.text();
   const { csrf, props } = parseHome(html);
@@ -75,13 +76,13 @@ export async function createSession(): Promise<PrinciplesYouSession> {
   };
 }
 
-export async function getQuestions(session: PrinciplesYouSession) {
-  const response = await request(session.jar, `${BASE_URL}${session.questionsPath}`);
+export async function getQuestions(session: PrinciplesYouSession, signal?: AbortSignal) {
+  const response = await request(session.jar, `${BASE_URL}${session.questionsPath}`, { signal });
   if (!response.ok) throw new Error(`GET questions failed: ${response.status}`);
   return response.json();
 }
 
-export async function postAnswers(session: PrinciplesYouSession, answers: PrinciplesYouAnswer[]) {
+export async function postAnswers(session: PrinciplesYouSession, answers: PrinciplesYouAnswer[], signal?: AbortSignal) {
   const response = await request(session.jar, `${BASE_URL}${session.questionsPath}`, {
     method: "POST",
     headers: {
@@ -89,17 +90,39 @@ export async function postAnswers(session: PrinciplesYouSession, answers: Princi
       "X-CSRF-Token": session.csrf,
     },
     body: JSON.stringify({ answers, page_time: 1000 }),
+    signal,
   });
   if (!response.ok) throw new Error(`POST questions failed: ${response.status} ${await response.text()}`);
   return response.json();
 }
 
-export async function score(session: PrinciplesYouSession) {
-  await request(session.jar, `${BASE_URL}/score_user`);
+function pollDelay(signal?: AbortSignal) {
+  signal?.throwIfAborted();
+  return new Promise<void>((resolve, reject) => {
+    const onAbort = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+      reject(signal?.reason);
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, 2000);
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+export async function score(session: PrinciplesYouSession, signal?: AbortSignal) {
+  signal?.throwIfAborted();
+  const scored = await request(session.jar, `${BASE_URL}/score_user`, { signal });
+  await scored.body?.cancel();
+  if (!scored.ok) throw new Error(`GET score failed: ${scored.status}`);
   for (let attempt = 0; attempt < 60; attempt++) {
-    const response = await request(session.jar, `${BASE_URL}/full_results_json`);
+    signal?.throwIfAborted();
+    const response = await request(session.jar, `${BASE_URL}/full_results_json`, { signal });
     if (response.status === 200) return response.json();
-    await new Promise((resolve) => setTimeout(resolve, 2000));
+    await response.body?.cancel();
+    await pollDelay(signal);
   }
   throw new Error("Timed out waiting for full_results_json");
 }

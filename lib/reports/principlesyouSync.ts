@@ -3,6 +3,7 @@ import { pathToFileURL } from "node:url";
 import type { TalentProfile, TalentTrait } from "./assessmentProfile";
 import * as bundledCollector from "./principlesyouCollector";
 import { generateLocalTalentProfile } from "./principlesyouLocal";
+import { withTimeout } from "./timeout";
 
 export type TalentAnswers = Record<number, number>;
 
@@ -15,6 +16,8 @@ export interface TalentProfileResult {
 export interface TalentProfileOptions {
   retries?: number;
   timeoutMs?: number;
+  /** Shared by all attempts; local scoring starts when this budget is exhausted. */
+  totalTimeoutMs?: number;
 }
 
 function hashJSON(value: unknown) {
@@ -86,20 +89,29 @@ async function importCollector() {
   // Some embedded runtimes (or node --eval smoke checks) do not set argv[1].
   process.argv[1] ||= "next-server.mjs";
   return import(/* webpackIgnore: true */ pathToFileURL(collectPath).href) as Promise<{
-    createSession: () => Promise<any>;
-    getQuestions: (session: any) => Promise<any>;
-    postAnswers: (session: any, answers: Array<{ question_number: number; answer_number: number }>) => Promise<any>;
-    score: (session: any) => Promise<any>;
+    supportsAbortSignal?: boolean;
+    createSession: (signal?: AbortSignal) => Promise<any>;
+    getQuestions: (session: any, signal?: AbortSignal) => Promise<any>;
+    postAnswers: (session: any, answers: Array<{ question_number: number; answer_number: number }>, signal?: AbortSignal) => Promise<any>;
+    score: (session: any, signal?: AbortSignal) => Promise<any>;
   }>;
 }
 
-export async function syncOriginalTalentProfile(answers: TalentAnswers): Promise<TalentProfile> {
+export async function syncOriginalTalentProfile(answers: TalentAnswers, signal?: AbortSignal): Promise<TalentProfile> {
+  signal?.throwIfAborted();
   const collector = await importCollector();
-  const session = await collector.createSession();
-  let current = await collector.getQuestions(session);
+  signal?.throwIfAborted();
+  // Legacy external collectors cannot safely be abandoned while their polling continues.
+  if (!collector.supportsAbortSignal) throw new Error("original_sync_collector_missing_abort_support");
+  const session = await collector.createSession(signal);
+  signal?.throwIfAborted();
+  let current = await collector.getQuestions(session, signal);
   let answered = 0;
+  let pages = 0;
 
   while (!current.assessment_complete) {
+    signal?.throwIfAborted();
+    if (++pages > 252 || !current.questions?.length) throw new Error("original_sync_no_progress");
     const pageAnswers = (current.questions || []).map((question: any) => {
       answered += 1;
       return {
@@ -107,10 +119,12 @@ export async function syncOriginalTalentProfile(answers: TalentAnswers): Promise
         answer_number: answers[question.number] ?? 4,
       };
     });
-    current = await collector.postAnswers(session, pageAnswers);
+    current = await collector.postAnswers(session, pageAnswers, signal);
   }
 
-  const results = await collector.score(session);
+  signal?.throwIfAborted();
+  const results = await collector.score(session, signal);
+  signal?.throwIfAborted();
   return mapOriginalResultsToTalentProfile(answers, results, {
     provider: "principlesyou",
     session_id: session.userAssessmentId ? String(session.userAssessmentId) : undefined,
@@ -119,31 +133,27 @@ export async function syncOriginalTalentProfile(answers: TalentAnswers): Promise
   });
 }
 
-async function withOptionalTimeout<T>(promise: Promise<T>, timeoutMs?: number): Promise<T> {
-  if (!timeoutMs || timeoutMs <= 0) return promise;
-
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error(`original_sync_timeout_${timeoutMs}ms`)), timeoutMs);
-  });
-
-  try {
-    return await Promise.race([promise, timeout]);
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
-}
-
 export async function generateTalentProfileWithFallback(
   answers: TalentAnswers,
   options: TalentProfileOptions = {}
 ): Promise<TalentProfileResult> {
-  const retries = options.retries ?? 2;
-  let lastError: unknown = null;
+  const retries = Number.isFinite(options.retries) ? Math.max(0, Math.floor(options.retries!)) : 2;
+  const timeoutMs = Number.isFinite(options.timeoutMs) ? Math.max(1, options.timeoutMs!) : 40000;
+  const totalTimeoutMs = Number.isFinite(options.totalTimeoutMs) ? Math.max(0, options.totalTimeoutMs!) : 80000;
+  const deadline = performance.now() + totalTimeoutMs;
+  let lastError: unknown = new Error("original_sync_budget_exhausted");
+  let attempts = 0;
 
   for (let attempt = 1; attempt <= retries + 1; attempt++) {
+    const remainingMs = deadline - performance.now();
+    if (remainingMs <= 0) break;
+    attempts = attempt;
     try {
-      const profile = await withOptionalTimeout(syncOriginalTalentProfile(answers), options.timeoutMs);
+      const profile = await withTimeout(
+        (signal) => syncOriginalTalentProfile(answers, signal),
+        Math.min(timeoutMs, remainingMs),
+        "original_sync_timeout",
+      );
       profile.evidence = {
         provider: "principlesyou",
         ...profile.evidence,
@@ -163,7 +173,7 @@ export async function generateTalentProfileWithFallback(
   profile.evidence = {
     provider: "local",
     ...profile.evidence,
-    retry_count: retries,
+    retry_count: Math.max(0, attempts - 1),
   };
-  return { profile, source: "local", attempts: retries + 1 };
+  return { profile, source: "local", attempts };
 }

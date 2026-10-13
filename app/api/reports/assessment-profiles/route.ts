@@ -7,6 +7,9 @@ import { appendPublicAccessToken } from "@/lib/auth/publicAccess";
 import { canSeeOwnedRecord, toReportAuthContext } from "@/lib/auth/tenant";
 import { growthStore } from "@/lib/growth/store";
 import { generateTalentProfileWithFallback } from "@/lib/reports/principlesyouSync";
+import { talentQuestionNumbers } from "@/lib/reports/principlesyouQuestions";
+import { SUBMISSION_BUDGET, submissionHash, submissionResourceId } from "@/lib/reports/assessmentSubmission";
+import { withTimeout } from "@/lib/reports/timeout";
 import { reportStore } from "@/lib/reports/store";
 import type { AssessmentProfile } from "@/lib/reports/assessmentProfile";
 import type { ReportOrder } from "@/lib/reports/store";
@@ -26,6 +29,7 @@ const valueProfileSchema = z.object({
 });
 
 const bodySchema = z.object({
+  submission_id: z.string().uuid(),
   customer_name: z.string().min(1).max(80),
   customer_contact: z.string().max(120).optional(),
   survey_answers: z.record(z.unknown()).default({}),
@@ -56,25 +60,6 @@ function publicReportLinks(profileId: string) {
     deep_pdf_url: appendPublicAccessToken(`/api/reports/deep/${profileId}/pdf`, "deep-report", profileId),
     direction_survey_url: appendPublicAccessToken(`/survey/directions/${profileId}`, "direction-session", profileId),
   };
-}
-
-/** 每份底稿自动登记一条初步诊断报告订单，让交付后台看到所有进来的测评 */
-async function createDeliveryOrder(profile: AssessmentProfile): Promise<ReportOrder | null> {
-  try {
-    const settings = await growthStore().getBusinessSettings(profile.tenant_id);
-    return await reportStore().createReportOrder({
-      tenant_id: profile.tenant_id,
-      assessment_profile_id: profile.id,
-      report_type: "lite",
-      price_cents: priceTextToCents(settings?.report_lite_price),
-      customer_name: profile.customer_name,
-      customer_contact: profile.customer_contact,
-      status: "delivering",
-    });
-  } catch (error) {
-    console.warn("[assessment-profiles] 自动创建交付订单失败：", (error as Error)?.message);
-    return null;
-  }
 }
 
 export async function GET(req: Request) {
@@ -165,59 +150,105 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: Request) {
-  const body = await req.json().catch(() => null);
-  const parsed = bodySchema.safeParse(body);
-  if (!parsed.success) {
-    return NextResponse.json({ error: "validation", issues: parsed.error.flatten() }, { status: 400 });
+  const deadline = performance.now() + SUBMISSION_BUDGET.responseMs;
+  const remaining = (cap: number) => Math.max(0, Math.min(cap, deadline - performance.now()));
+  const step = <T,>(operation: (signal: AbortSignal) => PromiseLike<T>, cap: number) =>
+    withTimeout(operation, remaining(cap), "submission_step_timeout");
+  let savedProfile: AssessmentProfile | null = null;
+  try {
+    const body = await step(() => req.json().catch(() => null), SUBMISSION_BUDGET.bodyMs);
+    const parsed = bodySchema.safeParse(body);
+    if (!parsed.success) {
+      return NextResponse.json({ error: "validation", message: "提交内容不完整或缺少有效提交编号，请刷新页面后重试，草稿会保留。", issues: parsed.error.flatten() }, { status: 400 });
+    }
+    const questionNumbers = talentQuestionNumbers();
+    if (Object.keys(parsed.data.talent_answers).length !== questionNumbers.length ||
+        !questionNumbers.every((number) => Object.hasOwn(parsed.data.talent_answers, String(number)))) {
+      return NextResponse.json(
+        { error: "incomplete_talent_answers", message: "需要完整提交 252 题天赋测评答案。" },
+        { status: 400 }
+      );
+    }
+
+    const { submission_id: submissionId, ...input } = parsed.data;
+    const profileId = submissionResourceId(DEFAULT_TENANT_ID, submissionId, "profile");
+    const orderId = submissionResourceId(DEFAULT_TENANT_ID, submissionId, "lite-order");
+    const hash = submissionHash(input);
+    // Validate signing configuration before any write.
+    const links = publicReportLinks(profileId);
+    const store = reportStore();
+    let profile = await step((signal) => store.getAssessmentProfile(profileId, signal), SUBMISSION_BUDGET.lookupMs);
+    if (!profile) {
+      const talentAnswers = numericAnswers(input.talent_answers);
+      const talentResult = await generateTalentProfileWithFallback(talentAnswers, {
+        retries: 1,
+        timeoutMs: SUBMISSION_BUDGET.attemptMs,
+        totalTimeoutMs: Math.max(0, Math.min(SUBMISSION_BUDGET.syncMs, remaining(Infinity) - SUBMISSION_BUDGET.persistenceReserveMs)),
+      });
+      const timestamp = new Date().toISOString();
+      const candidate: AssessmentProfile = {
+        ...input,
+        id: profileId,
+        tenant_id: DEFAULT_TENANT_ID,
+        submission_hash: hash,
+        submission_attempts: talentResult.attempts,
+        talent_answers: talentAnswers,
+        talent_profile: talentResult.profile,
+        created_at: timestamp,
+        updated_at: timestamp,
+      };
+      profile = await step((signal) => store.createAssessmentProfileIfAbsent(candidate, signal), SUBMISSION_BUDGET.saveMs);
+    }
+    // Check after insert too: another instance may have won the primary-key race.
+    if (profile.tenant_id !== DEFAULT_TENANT_ID || profile.submission_hash !== hash) {
+      return NextResponse.json({ error: "submission_conflict", message: "同一提交编号不能用于不同测评内容。", retryable: false }, { status: 409 });
+    }
+    savedProfile = profile;
+
+    // Recover partial writes and lost responses without overwriting paid/delivered orders.
+    let order = await step((signal) => store.getReportOrder(orderId, signal), SUBMISSION_BUDGET.lookupMs);
+    if (!order) {
+      const settings = await step((signal) => growthStore().getBusinessSettings(profile.tenant_id, signal), SUBMISSION_BUDGET.settingsMs);
+      order = await step((signal) => store.createReportOrder({
+        id: orderId,
+        tenant_id: profile.tenant_id,
+        assessment_profile_id: profile.id,
+        report_type: "lite",
+        price_cents: priceTextToCents(settings?.report_lite_price),
+        customer_name: profile.customer_name,
+        customer_contact: profile.customer_contact,
+        status: "delivering",
+      }, signal), SUBMISSION_BUDGET.orderMs);
+    }
+    await step((signal) => logActivity({
+      tenantId: profile.tenant_id,
+      userId: null,
+      action: "profile_submitted",
+      entityType: "assessment_profile",
+      entityId: profile.id,
+      metadata: { customer_name: profile.customer_name },
+    }, signal), SUBMISSION_BUDGET.activityMs).catch(() => {
+      console.warn("[assessment-profiles] activity log timed out");
+    });
+
+    return NextResponse.json({
+      profile,
+      order,
+      talent_source: profile.talent_profile.mode,
+      attempts: profile.submission_attempts ?? 0,
+      initial_report_url: links.initial_report_url,
+      links,
+    });
+  } catch {
+    // A timed-out write may have committed. Only a retry with the same key can resolve it.
+    console.warn("[assessment-profiles] submission incomplete", { profile_saved: Boolean(savedProfile) });
+    return NextResponse.json({
+      error: "submission_retryable",
+      retryable: true,
+      profile_saved: Boolean(savedProfile),
+      message: savedProfile
+        ? "测评答案已保存，订单登记未完成，请直接重试，无需重新填写。"
+        : "暂未确认提交完成，请保留草稿并直接重试，不会重复创建底稿或订单。",
+    }, { status: 503, headers: { "Retry-After": "2" } });
   }
-  if (Object.keys(parsed.data.talent_answers).length < 252) {
-    return NextResponse.json(
-      { error: "incomplete_talent_answers", message: "需要完整提交 252 题天赋测评答案。" },
-      { status: 400 }
-    );
-  }
-
-  const timestamp = new Date().toISOString();
-  const talentAnswers = numericAnswers(parsed.data.talent_answers);
-  const talentResult = await generateTalentProfileWithFallback(talentAnswers, {
-    retries: 1,
-    timeoutMs: 90000,
-  });
-  const profile: AssessmentProfile = {
-    id: crypto.randomUUID(),
-    tenant_id: DEFAULT_TENANT_ID,
-    customer_name: parsed.data.customer_name,
-    customer_contact: parsed.data.customer_contact,
-    survey_answers: parsed.data.survey_answers,
-    value_profile: parsed.data.value_profile,
-    talent_answers: talentAnswers,
-    talent_profile: talentResult.profile,
-    created_at: timestamp,
-    updated_at: timestamp,
-  };
-
-  const store = reportStore();
-  await store.saveAssessmentProfile(profile);
-
-  // 交付模块登记：每份底稿自动生成一条初步诊断订单（状态：交付中）
-  const order = await createDeliveryOrder(profile);
-  await logActivity({
-    tenantId: profile.tenant_id,
-    userId: null,
-    action: "profile_submitted",
-    entityType: "assessment_profile",
-    entityId: profile.id,
-    metadata: { customer_name: profile.customer_name },
-  });
-
-  const links = publicReportLinks(profile.id);
-
-  return NextResponse.json({
-    profile,
-    order,
-    talent_source: talentResult.source,
-    attempts: talentResult.attempts,
-    initial_report_url: links.initial_report_url,
-    links,
-  });
 }
