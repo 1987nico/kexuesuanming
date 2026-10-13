@@ -50,7 +50,7 @@ export interface GrowthStore {
   getReviewByDraft(draftId: string): Promise<GrowthReview | null>;
   listReviewsByAccount(accountId: string): Promise<GrowthReview[]>;
   saveUsage(event: Omit<UsageEvent, "id" | "created_at">): Promise<void>;
-  getBusinessSettings(tenantId: string): Promise<BusinessSettings>;
+  getBusinessSettings(tenantId: string, signal?: AbortSignal): Promise<BusinessSettings>;
   saveBusinessSettings(settings: BusinessSettings): Promise<void>;
 }
 
@@ -491,12 +491,13 @@ class SupabaseGrowthStore implements GrowthStore {
     if (error) throw error;
   }
 
-  async getBusinessSettings(tenantId: string) {
-    const { data, error } = await this.db
+  async getBusinessSettings(tenantId: string, signal?: AbortSignal) {
+    signal?.throwIfAborted();
+    const query = this.db
       .from("growth_business_settings")
       .select("payload")
-      .eq("tenant_id", tenantId)
-      .maybeSingle();
+      .eq("tenant_id", tenantId);
+    const { data, error } = await (signal ? query.abortSignal(signal) : query).maybeSingle();
     if (error) throw error;
     return (data?.payload as BusinessSettings) ?? defaultBusinessSettings(tenantId);
   }

@@ -4,9 +4,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { talentModeLabel, type AssessmentProfile } from "@/lib/reports/assessmentProfile";
 import type { TalentQuestionForClient } from "@/lib/reports/principlesyouQuestions";
 import type { ReportOrder } from "@/lib/reports/store";
+import { prepareSubmission } from "@/lib/reports/submissionDraft";
 
 const QUESTIONS_PER_PAGE = 4;
 const STORAGE_KEY = "mianba.report-intake.v1";
+const SUBMISSION_KEY = `${STORAGE_KEY}.submission`;
 
 interface SubmittedReportLinks {
   initial_report_url?: string;
@@ -248,6 +250,7 @@ export default function NewReportProfilePage() {
 
   function clearLocalDraft() {
     localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem(SUBMISSION_KEY);
     setCustomerName("");
     setCustomerPhone("");
     setCustomerEmail("");
@@ -273,6 +276,7 @@ export default function NewReportProfilePage() {
   }
 
   async function submitProfile() {
+    if (loading) return;
     if (profile) {
       setMessage("底稿已生成，请使用下方链接查看或下载报告。");
       return;
@@ -295,7 +299,7 @@ export default function NewReportProfilePage() {
       const res = await fetch("/api/reports/assessment-profiles", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({
+        body: JSON.stringify(prepareSubmission(localStorage, SUBMISSION_KEY, {
           customer_name: customerName || "未命名客户",
           customer_contact:
             [customerPhone.trim() && `手机：${customerPhone.trim()}`, customerEmail.trim() && `邮箱：${customerEmail.trim()}`]
@@ -304,7 +308,7 @@ export default function NewReportProfilePage() {
           survey_answers: intakeAnswers,
           value_profile: buildValueProfile(),
           talent_answers: answers,
-        }),
+        })),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || data.error || "生成底稿失败");

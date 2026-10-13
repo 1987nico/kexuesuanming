@@ -24,6 +24,8 @@ export interface ReportOrder {
 }
 
 export interface CreateReportOrderInput {
+  /** Stable ID for retryable automatic delivery orders; omitted for ordinary new orders. */
+  id?: string;
   tenant_id: string;
   owner_user_id?: string | null;
   assessment_profile_id: string;
@@ -39,13 +41,14 @@ export function isReportOrderStatus(status: string): status is ReportOrderStatus
 }
 
 export interface ReportStore {
+  createAssessmentProfileIfAbsent(profile: AssessmentProfile, signal?: AbortSignal): Promise<AssessmentProfile>;
   saveAssessmentProfile(profile: AssessmentProfile): Promise<void>;
-  getAssessmentProfile(id: string): Promise<AssessmentProfile | null>;
+  getAssessmentProfile(id: string, signal?: AbortSignal): Promise<AssessmentProfile | null>;
   getLatestAssessmentProfile(tenantId: string, customerContact?: string): Promise<AssessmentProfile | null>;
   listAssessmentProfiles(tenantId: string, limit?: number): Promise<AssessmentProfile[]>;
-  createReportOrder(input: CreateReportOrderInput): Promise<ReportOrder>;
+  createReportOrder(input: CreateReportOrderInput, signal?: AbortSignal): Promise<ReportOrder>;
   listReportOrders(tenantId: string): Promise<ReportOrder[]>;
-  getReportOrder(id: string): Promise<ReportOrder | null>;
+  getReportOrder(id: string, signal?: AbortSignal): Promise<ReportOrder | null>;
   updateReportOrderStatus(id: string, status: ReportOrderStatus): Promise<ReportOrder | null>;
   updateReportOrderOwner(id: string, ownerUserId: string | null): Promise<ReportOrder | null>;
 }
@@ -131,6 +134,14 @@ export class MemoryReportStore implements ReportStore {
   private profiles = new Map<string, AssessmentProfile>();
   private orders = new Map<string, ReportOrder>();
 
+  async createAssessmentProfileIfAbsent(profile: AssessmentProfile, signal?: AbortSignal) {
+    signal?.throwIfAborted();
+    const existing = this.profiles.get(profile.id);
+    if (existing) return existing;
+    this.profiles.set(profile.id, profile);
+    return profile;
+  }
+
   async saveAssessmentProfile(profile: AssessmentProfile) {
     this.profiles.set(profile.id, mergeAssessmentProfileForSave(this.profiles.get(profile.id), profile));
   }
@@ -158,10 +169,13 @@ export class MemoryReportStore implements ReportStore {
       .slice(0, limit);
   }
 
-  async createReportOrder(input: CreateReportOrderInput) {
+  async createReportOrder(input: CreateReportOrderInput, signal?: AbortSignal) {
+    signal?.throwIfAborted();
+    const existing = input.id ? this.orders.get(input.id) : undefined;
+    if (existing) return existing;
     const timestamp = new Date().toISOString();
     const order: ReportOrder = {
-      id: crypto.randomUUID(),
+      id: input.id ?? crypto.randomUUID(),
       tenant_id: input.tenant_id,
       owner_user_id: input.owner_user_id ?? null,
       assessment_profile_id: input.assessment_profile_id,
@@ -219,6 +233,16 @@ export class FileReportStore implements ReportStore {
     writeFileState(this.state);
   }
 
+  async createAssessmentProfileIfAbsent(profile: AssessmentProfile, signal?: AbortSignal) {
+    signal?.throwIfAborted();
+    const existing = this.state.profiles.find((item) => item.id === profile.id);
+    if (existing) return existing;
+    const next = { ...this.state, profiles: [...this.state.profiles, profile] };
+    writeFileState(next);
+    this.state = next;
+    return profile;
+  }
+
   async saveAssessmentProfile(profile: AssessmentProfile) {
     const index = this.state.profiles.findIndex((item) => item.id === profile.id);
     const merged = mergeAssessmentProfileForSave(index >= 0 ? this.state.profiles[index] : null, profile);
@@ -250,10 +274,13 @@ export class FileReportStore implements ReportStore {
       .slice(0, limit);
   }
 
-  async createReportOrder(input: CreateReportOrderInput) {
+  async createReportOrder(input: CreateReportOrderInput, signal?: AbortSignal) {
+    signal?.throwIfAborted();
+    const existing = input.id ? this.state.orders.find((order) => order.id === input.id) : undefined;
+    if (existing) return existing;
     const timestamp = new Date().toISOString();
     const order: ReportOrder = {
-      id: crypto.randomUUID(),
+      id: input.id ?? crypto.randomUUID(),
       tenant_id: input.tenant_id,
       owner_user_id: input.owner_user_id ?? null,
       assessment_profile_id: input.assessment_profile_id,
@@ -265,8 +292,9 @@ export class FileReportStore implements ReportStore {
       created_at: timestamp,
       updated_at: timestamp,
     };
-    this.state.orders.push(order);
-    this.persist();
+    const next = { ...this.state, orders: [...this.state.orders, order] };
+    writeFileState(next);
+    this.state = next;
     return order;
   }
 
@@ -299,9 +327,21 @@ export class FileReportStore implements ReportStore {
   }
 }
 
-class SupabaseReportStore implements ReportStore {
+export class SupabaseReportStore implements ReportStore {
   private get db() {
     return supabaseServer();
+  }
+
+  async createAssessmentProfileIfAbsent(profile: AssessmentProfile, signal?: AbortSignal) {
+    signal?.throwIfAborted();
+    const query = this.db.from("assessment_profiles").insert(assessmentProfileRow(profile)).select("payload");
+    const { data, error } = await (signal ? query.abortSignal(signal) : query).single();
+    if (!error) return data.payload as AssessmentProfile;
+    if (error.code !== "23505") throw error;
+    // The primary key arbitrates concurrent submissions across server instances.
+    const existing = await this.getAssessmentProfile(profile.id, signal);
+    if (!existing) throw error;
+    return existing;
   }
 
   async saveAssessmentProfile(profile: AssessmentProfile) {
@@ -340,12 +380,13 @@ class SupabaseReportStore implements ReportStore {
     throw new Error(`[reportStore] assessment profile ${profile.id} 保存冲突过多，请重试。`);
   }
 
-  async getAssessmentProfile(id: string) {
-    const { data, error } = await this.db
+  async getAssessmentProfile(id: string, signal?: AbortSignal) {
+    signal?.throwIfAborted();
+    const query = this.db
       .from("assessment_profiles")
       .select("payload")
-      .eq("id", id)
-      .maybeSingle();
+      .eq("id", id);
+    const { data, error } = await (signal ? query.abortSignal(signal) : query).maybeSingle();
     if (error) throw error;
     return (data?.payload as AssessmentProfile) ?? null;
   }
@@ -374,10 +415,12 @@ class SupabaseReportStore implements ReportStore {
     return (data ?? []).map((row) => row.payload as AssessmentProfile);
   }
 
-  async createReportOrder(input: CreateReportOrderInput) {
-    const { data, error } = await this.db
+  async createReportOrder(input: CreateReportOrderInput, signal?: AbortSignal) {
+    signal?.throwIfAborted();
+    const query = this.db
       .from("report_orders")
       .insert({
+        ...(input.id ? { id: input.id } : {}),
         tenant_id: input.tenant_id,
         owner_user_id: input.owner_user_id ?? null,
         assessment_profile_id: input.assessment_profile_id,
@@ -387,8 +430,12 @@ class SupabaseReportStore implements ReportStore {
         customer_contact: input.customer_contact ?? null,
         status: input.status ?? "unpaid",
       })
-      .select("*")
-      .single();
+      .select("*");
+    const { data, error } = await (signal ? query.abortSignal(signal) : query).single();
+    if (error?.code === "23505" && input.id) {
+      const existing = await this.getReportOrder(input.id, signal);
+      if (existing) return existing;
+    }
     if (error) throw error;
     return data as ReportOrder;
   }
@@ -403,8 +450,10 @@ class SupabaseReportStore implements ReportStore {
     return (data ?? []) as ReportOrder[];
   }
 
-  async getReportOrder(id: string) {
-    const { data, error } = await this.db.from("report_orders").select("*").eq("id", id).maybeSingle();
+  async getReportOrder(id: string, signal?: AbortSignal) {
+    signal?.throwIfAborted();
+    const query = this.db.from("report_orders").select("*").eq("id", id);
+    const { data, error } = await (signal ? query.abortSignal(signal) : query).maybeSingle();
     if (error) throw error;
     return (data as ReportOrder | null) ?? null;
   }
